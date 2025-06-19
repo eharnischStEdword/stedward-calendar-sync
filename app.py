@@ -162,9 +162,15 @@ async def get_events_from_shared(client, calendar_id):
 async def create_event_in_shared(client, calendar_id, event):
     """Create event in shared mailbox calendar"""
     try:
+        # Create empty body to ensure no meeting details are copied
+        from msgraph.generated.models.item_body import ItemBody
+        empty_body = ItemBody()
+        empty_body.content = ""
+        empty_body.content_type = "text"
+        
         new_event = Event(
             subject=event.subject,
-            body=None,  # Exclude meeting details/notes for privacy
+            body=empty_body,  # Explicitly set empty body for privacy
             start=event.start,
             end=event.end,
             location=event.location,
@@ -187,9 +193,15 @@ async def create_event_in_shared(client, calendar_id, event):
 async def update_event_in_shared(client, calendar_id, event_id, source_event):
     """Update an existing event in shared mailbox calendar"""
     try:
+        # Create empty body to ensure no meeting details are copied
+        from msgraph.generated.models.item_body import ItemBody
+        empty_body = ItemBody()
+        empty_body.content = ""
+        empty_body.content_type = "text"
+        
         updated_event = Event(
             subject=source_event.subject,
-            body=None,  # Exclude meeting details/notes for privacy
+            body=empty_body,  # Explicitly set empty body for privacy
             start=source_event.start,
             end=source_event.end,
             location=source_event.location,
