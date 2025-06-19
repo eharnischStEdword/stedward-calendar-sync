@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>St. Edward Calendar Sync</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .status-box {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .sync-button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+        .sync-button:hover {
+            background-color: #0056b3;
+        }
+        .sync-button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .success {
+            color: #28a745;
+            font-weight: bold;
+        }
+        .error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .info {
+            color: #17a2b8;
+        }
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .recent-activity {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #dee2e6;
+        }
+        .activity-item {
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .timestamp {
+            color: #6c757d;
+            font-size: 14px;
+        }
+        .message {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .message.show {
+            display: block;
+        }
+        .message.success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .message.error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🗓️ St. Edward Calendar Sync</h1>
+        
+        <div class="status-box">
+            <h3>Current Status</h3>
+            <p><strong>Last automatic sync:</strong> 
+                <span id="last-sync">
+                    {% if last_sync_time %}
+                        {{ last_sync_time.strftime('%I:%M %p on %B %d, %Y') }}
+                    {% else %}
+                        Never
+                    {% endif %}
+                </span>
+            </p>
+            <p><strong>Status:</strong> 
+                <span id="sync-status" class="{% if last_sync_result.success %}success{% else %}error{% endif %}">
+                    {% if last_sync_result.success %}
+                        ✅ {{ last_sync_result.message }}
+                    {% else %}
+                        ❌ {{ last_sync_result.message }}
+                    {% endif %}
+                </span>
+            </p>
+        </div>
+
+        <button id="sync-btn" class="sync-button" onclick="syncNow()" 
+                {% if sync_in_progress %}disabled{% endif %}>
+            {% if sync_in_progress %}
+                <span class="spinner"></span> Syncing...
+            {% else %}
+                Sync Calendars Now
+            {% endif %}
+        </button>
+
+        <div id="message" class="message"></div>
+
+        <div class="recent-activity">
+            <h3>How This Works</h3>
+            <div class="activity-item">
+                <strong>Automatic Sync:</strong> The calendars sync automatically every hour
+            </div>
+            <div class="activity-item">
+                <strong>Manual Sync:</strong> Click the button above to sync immediately
+            </div>
+            <div class="activity-item">
+                <strong>What Gets Synced:</strong> Events marked as "Public" in the main calendar are copied to the public calendar
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let syncInProgress = {{ 'true' if sync_in_progress else 'false' }};
+
+        function syncNow() {
+            if (syncInProgress) return;
+            
+            syncInProgress = true;
+            updateButton();
+            hideMessage();
+            
+            fetch('/sync', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage('Sync started successfully! Results will appear shortly.', 'success');
+                    // Check for results every 2 seconds
+                    checkSyncStatus();
+                } else {
+                    showMessage('Failed to start sync: ' + data.message, 'error');
+                    syncInProgress = false;
+                    updateButton();
+                }
+            })
+            .catch(error => {
+                showMessage('Error: ' + error.message, 'error');
+                syncInProgress = false;
+                updateButton();
+            });
+        }
+
+        function checkSyncStatus() {
+            fetch('/status')
+            .then(response => response.json())
+            .then(data => {
+                if (!syncInProgress) {
+                    // Sync completed, update display
+                    document.getElementById('last-sync').textContent = 
+                        data.last_sync_time ? new Date(data.last_sync_time).toLocaleString() : 'Never';
+                    
+                    const statusElement = document.getElementById('sync-status');
+                    if (data.last_sync_result.success) {
+                        statusElement.className = 'success';
+                        statusElement.textContent = '✅ ' + data.last_sync_result.message;
+                        
+                        if (data.last_sync_result.changes > 0) {
+                            let details = [];
+                            if (data.last_sync_result.added) details.push(`${data.last_sync_result.added} added`);
+                            if (data.last_sync_result.updated) details.push(`${data.last_sync_result.updated} updated`);
+                            if (data.last_sync_result.deleted) details.push(`${data.last_sync_result.deleted} deleted`);
+                            showMessage(`Sync completed! ${details.join(', ')}.`, 'success');
+                        } else {
+                            showMessage('Sync completed! No changes were needed.', 'success');
+                        }
+                    } else {
+                        statusElement.className = 'error';
+                        statusElement.textContent = '❌ ' + data.last_sync_result.message;
+                        showMessage('Sync failed: ' + data.last_sync_result.message, 'error');
+                    }
+                    
+                    syncInProgress = false;
+                    updateButton();
+                } else {
+                    // Still syncing, check again in 2 seconds
+                    setTimeout(checkSyncStatus, 2000);
+                }
+            })
+            .catch(error => {
+                console.error('Error checking status:', error);
+                setTimeout(checkSyncStatus, 2000);
+            });
+        }
+
+        function updateButton() {
+            const button = document.getElementById('sync-btn');
+            if (syncInProgress) {
+                button.disabled = true;
+                button.innerHTML = '<span class="spinner"></span> Syncing...';
+            } else {
+                button.disabled = false;
+                button.innerHTML = 'Sync Calendars Now';
+            }
+        }
+
+        function showMessage(text, type) {
+            const messageDiv = document.getElementById('message');
+            messageDiv.textContent = text;
+            messageDiv.className = 'message show ' + type;
+        }
+
+        function hideMessage() {
+            const messageDiv = document.getElementById('message');
+            messageDiv.className = 'message';
+        }
+
+        // Auto-refresh status every 30 seconds
+        setInterval(() => {
+            if (!syncInProgress) {
+                fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('last-sync').textContent = 
+                        data.last_sync_time ? new Date(data.last_sync_time).toLocaleString() : 'Never';
+                });
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
