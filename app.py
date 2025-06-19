@@ -162,9 +162,9 @@ async def get_events_from_shared(client, calendar_id):
 async def create_event_in_shared(client, calendar_id, event):
     """Create event in shared mailbox calendar"""
     try:
+        # Create the new event
         new_event = Event(
             subject=event.subject,
-            body=None,  # Explicitly exclude meeting details for privacy
             start=event.start,
             end=event.end,
             location=event.location,
@@ -178,6 +178,14 @@ async def create_event_in_shared(client, calendar_id, event):
             recurrence=event.recurrence if hasattr(event, 'recurrence') and event.recurrence else None
         )
         
+        # Create empty body object to ensure no meeting details
+        class EmptyBody:
+            def __init__(self):
+                self.content = ""
+                self.content_type = "text"
+        
+        new_event.body = EmptyBody()
+        
         created = await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(calendar_id).events.post(new_event)
         return created
     except Exception as e:
@@ -189,7 +197,6 @@ async def update_event_in_shared(client, calendar_id, event_id, source_event):
     try:
         updated_event = Event(
             subject=source_event.subject,
-            body=None,  # Explicitly exclude meeting details for privacy
             start=source_event.start,
             end=source_event.end,
             location=source_event.location,
@@ -202,6 +209,14 @@ async def update_event_in_shared(client, calendar_id, event_id, source_event):
             # Copy recurrence pattern if it exists
             recurrence=source_event.recurrence if hasattr(source_event, 'recurrence') and source_event.recurrence else None
         )
+        
+        # Create empty body object to clear any existing meeting details
+        class EmptyBody:
+            def __init__(self):
+                self.content = ""
+                self.content_type = "text"
+        
+        updated_event.body = EmptyBody()
         
         await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(calendar_id).events.by_event_id(event_id).patch(updated_event)
         return True
@@ -328,10 +343,21 @@ async def sync_calendars():
         # Check for events to add or update
         for key, source_event in source_lookup.items():
             if key in target_lookup:
-                # Event exists - always update to ensure privacy (remove any existing body content)
+                # Event exists - check if it needs updating
                 target_event = target_lookup[key]
-                events_to_update.append((target_event.id, source_event, target_event.subject))
-                print(f"Scheduling update for privacy: {target_event.subject}")
+                source_sig = create_event_signature(source_event)
+                target_sig = create_event_signature(target_event)
+                
+                # Always update if target event has body content (to clear private details)
+                has_body_content = (hasattr(target_event, 'body') and 
+                                  target_event.body and 
+                                  hasattr(target_event.body, 'content') and 
+                                  target_event.body.content)
+                
+                if source_sig != target_sig or has_body_content:
+                    events_to_update.append((target_event.id, source_event, target_event.subject))
+                    if has_body_content:
+                        print(f"Clearing body content from: {target_event.subject}")
             else:
                 # Event doesn't exist - add it
                 events_to_add.append(source_event)
