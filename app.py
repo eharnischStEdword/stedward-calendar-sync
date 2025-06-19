@@ -4,18 +4,21 @@ Calendar Sync Web Application for Render.com
 Simple web interface for rcarroll + automatic hourly sync
 """
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, redirect, session, url_for
 import asyncio
 import os
 import json
 from datetime import datetime, timedelta
-from azure.identity import DeviceCodeCredential
+from azure.identity import AuthorizationCodeCredential
 from msgraph import GraphServiceClient
 from msgraph.generated.models.event import Event
 import threading
 import time
+import requests
+import urllib.parse
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
 
 # Configuration
 SHARED_MAILBOX = "calendar@stedward.org"
@@ -25,23 +28,66 @@ TARGET_CALENDAR = "St. Edward Public Calendar"
 # Azure AD App Registration
 CLIENT_ID = "e139467d-fdeb-40bb-be62-718b007c8e0a"
 TENANT_ID = "8ccf96b2-b7eb-470b-a715-ec1696d83ebd"
+CLIENT_SECRET = os.environ.get('CLIENT_SECRET', '')
+REDIRECT_URI = "https://stedward-calendar-sync.onrender.com/auth/callback"
 
 # Global variables for tracking sync status
 last_sync_time = None
 last_sync_result = {"success": False, "message": "Not synced yet"}
 sync_in_progress = False
+access_token = None
+
+def get_auth_url():
+    """Generate Microsoft OAuth URL"""
+    params = {
+        'client_id': CLIENT_ID,
+        'response_type': 'code',
+        'redirect_uri': REDIRECT_URI,
+        'scope': 'https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/User.Read https://graph.microsoft.com/Calendars.ReadWrite.Shared offline_access',
+        'response_mode': 'query'
+    }
+    
+    auth_url = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/authorize?" + urllib.parse.urlencode(params)
+    return auth_url
+
+def exchange_code_for_token(auth_code):
+    """Exchange authorization code for access token"""
+    global access_token
+    
+    token_url = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
+    
+    data = {
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'code': auth_code,
+        'redirect_uri': REDIRECT_URI,
+        'grant_type': 'authorization_code',
+        'scope': 'https://graph.microsoft.com/Calendars.ReadWrite https://graph.microsoft.com/User.Read https://graph.microsoft.com/Calendars.ReadWrite.Shared offline_access'
+    }
+    
+    response = requests.post(token_url, data=data)
+    if response.status_code == 200:
+        tokens = response.json()
+        access_token = tokens.get('access_token')
+        return True
+    return False
 
 def create_graph_client():
-    """Initialize Graph client with device code credentials"""
-    credential = DeviceCodeCredential(
-        client_id=CLIENT_ID,
-        tenant_id=TENANT_ID
-    )
+    """Create Graph client with stored access token"""
+    if not access_token:
+        return None
     
-    return GraphServiceClient(
-        credentials=credential,
-        scopes=['Calendars.ReadWrite', 'User.Read', 'Calendars.ReadWrite.Shared']
-    )
+    # Simple bearer token authentication
+    class BearerTokenCredential:
+        def __init__(self, token):
+            self.token = token
+        
+        def get_token(self, *scopes, **kwargs):
+            from azure.core.credentials import AccessToken
+            return AccessToken(self.token, int(time.time()) + 3600)
+    
+    credential = BearerTokenCredential(access_token)
+    return GraphServiceClient(credentials=credential)
 
 def parse_date(event):
     """Extract date from event"""
@@ -171,12 +217,19 @@ async def sync_calendars():
     if sync_in_progress:
         return {"success": False, "message": "Sync already in progress"}
     
+    if not access_token:
+        return {"success": False, "message": "Not authenticated - please sign in first"}
+    
     sync_in_progress = True
     print(f"Starting calendar sync at {datetime.now()}")
     
     try:
         # Create Graph client
         client = create_graph_client()
+        if not client:
+            result = {"success": False, "message": "Authentication failed"}
+            last_sync_result = result
+            return result
         
         # Get shared mailbox calendars
         calendars = await get_shared_calendars(client)
@@ -304,6 +357,10 @@ async def sync_calendars():
 
 def run_sync():
     """Run sync in asyncio event loop"""
+    if not access_token:
+        print("Cannot run sync - not authenticated")
+        return {"success": False, "message": "Not authenticated"}
+    
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -320,14 +377,41 @@ def run_sync():
 @app.route('/')
 def index():
     """Main page for rcarroll"""
+    if not access_token:
+        auth_url = get_auth_url()
+        return f'''
+        <html>
+        <head><title>St. Edward Calendar Sync - Sign In</title></head>
+        <body style="font-family: Arial; text-align: center; margin-top: 100px;">
+            <h1>🗓️ St. Edward Calendar Sync</h1>
+            <p>You need to sign in with your Microsoft account to access the calendar sync.</p>
+            <a href="{auth_url}" style="background: #0078d4; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 18px;">
+                Sign in with Microsoft
+            </a>
+        </body>
+        </html>
+        '''
+    
     return render_template('index.html', 
                          last_sync_time=last_sync_time,
                          last_sync_result=last_sync_result,
                          sync_in_progress=sync_in_progress)
 
+@app.route('/auth/callback')
+def auth_callback():
+    """Handle OAuth callback"""
+    auth_code = request.args.get('code')
+    if auth_code and exchange_code_for_token(auth_code):
+        return redirect(url_for('index'))
+    else:
+        return "Authentication failed", 400
+
 @app.route('/sync', methods=['POST'])
 def manual_sync():
     """Manual sync trigger"""
+    if not access_token:
+        return jsonify({"success": False, "message": "Not authenticated"})
+    
     def sync_thread():
         run_sync()
     
@@ -343,20 +427,16 @@ def status():
     return jsonify({
         "last_sync_time": last_sync_time.isoformat() if last_sync_time else None,
         "last_sync_result": last_sync_result,
-        "sync_in_progress": sync_in_progress
+        "sync_in_progress": sync_in_progress,
+        "authenticated": access_token is not None
     })
 
-# Background sync scheduler
-def schedule_sync():
-    """Run sync every hour"""
-    while True:
-        time.sleep(3600)  # Sleep for 1 hour
-        print("Running scheduled sync...")
-        run_sync()
-
-# Start background scheduler
-scheduler_thread = threading.Thread(target=schedule_sync, daemon=True)
-scheduler_thread.start()
+@app.route('/logout')
+def logout():
+    """Clear authentication"""
+    global access_token
+    access_token = None
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
