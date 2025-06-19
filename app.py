@@ -137,10 +137,7 @@ def create_event_signature(event):
         if hasattr(event.location, 'display_name'):
             sig_parts.append(f"location:{event.location.display_name}")
     
-    # Body (first 100 chars)
-    if hasattr(event, 'body') and event.body and hasattr(event.body, 'content'):
-        content = event.body.content[:100] if event.body.content else ""
-        sig_parts.append(f"body:{content}")
+    # Note: Excluding body/meeting details for privacy - not included in signature
     
     return "|".join(sig_parts)
 
@@ -167,7 +164,7 @@ async def create_event_in_shared(client, calendar_id, event):
     try:
         new_event = Event(
             subject=event.subject,
-            body=event.body,
+            body=None,  # Exclude meeting details/notes for privacy
             start=event.start,
             end=event.end,
             location=event.location,
@@ -192,7 +189,7 @@ async def update_event_in_shared(client, calendar_id, event_id, source_event):
     try:
         updated_event = Event(
             subject=source_event.subject,
-            body=source_event.body,
+            body=None,  # Exclude meeting details/notes for privacy
             start=source_event.start,
             end=source_event.end,
             location=source_event.location,
