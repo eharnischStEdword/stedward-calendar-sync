@@ -9,6 +9,7 @@ import asyncio
 import os
 import json
 from datetime import datetime, timedelta
+import pytz
 from azure.identity import AuthorizationCodeCredential
 from msgraph import GraphServiceClient
 from msgraph.generated.models.event import Event
@@ -357,8 +358,10 @@ async def sync_calendars():
         
         if total_changes == 0:
             result = {"success": True, "message": "Calendars already in sync", "changes": 0}
+            # Convert to Central Time for display
+            central_tz = pytz.timezone('US/Central')
             last_sync_result = result
-            last_sync_time = datetime.now()
+            last_sync_time = datetime.now(central_tz)
             return result
         
         # Perform sync operations
@@ -390,13 +393,18 @@ async def sync_calendars():
             "deleted": len(events_to_delete)
         }
         
+        # Convert to Central Time for display
+        central_tz = pytz.timezone('US/Central')
         last_sync_result = result
-        last_sync_time = datetime.now()
+        last_sync_time = datetime.now(central_tz)
         return result
         
     except Exception as e:
         result = {"success": False, "message": f"Sync failed: {str(e)}"}
+        # Convert to Central Time for display
+        central_tz = pytz.timezone('US/Central')
         last_sync_result = result
+        last_sync_time = datetime.now(central_tz)
         return result
     finally:
         sync_in_progress = False
