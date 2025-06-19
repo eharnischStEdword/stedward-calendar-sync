@@ -328,13 +328,10 @@ async def sync_calendars():
         # Check for events to add or update
         for key, source_event in source_lookup.items():
             if key in target_lookup:
-                # Event exists - check if it needs updating
+                # Event exists - always update to ensure privacy (remove any existing body content)
                 target_event = target_lookup[key]
-                source_sig = create_event_signature(source_event)
-                target_sig = create_event_signature(target_event)
-                
-                if source_sig != target_sig:
-                    events_to_update.append((target_event.id, source_event, target_event.subject))
+                events_to_update.append((target_event.id, source_event, target_event.subject))
+                print(f"Scheduling update for privacy: {target_event.subject}")
             else:
                 # Event doesn't exist - add it
                 events_to_add.append(source_event)
