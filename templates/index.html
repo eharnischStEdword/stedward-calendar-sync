@@ -183,7 +183,7 @@
                     checkSyncStatus();
                 } else {
                     showMessage('Failed to start sync: ' + data.message, 'error');
-                    syncInProgress = false;
+                    syncInProgress = data.sync_in_progress;
                     updateButton();
                 }
             })
@@ -198,7 +198,7 @@
             fetch('/status')
             .then(response => response.json())
             .then(data => {
-                if (!syncInProgress) {
+                if (!data.sync_in_progress) {
                     // Sync completed, update display
                     document.getElementById('last-sync').textContent = 
                         data.last_sync_time ? new Date(data.last_sync_time).toLocaleString() : 'Never';
