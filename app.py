@@ -361,8 +361,16 @@ def run_sync():
         print("Cannot run sync - not authenticated")
         return {"success": False, "message": "Not authenticated"}
     
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    try:
+        # Try to get the current event loop
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("Event loop is closed")
+    except RuntimeError:
+        # Create a new event loop if none exists or it's closed
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
     try:
         result = loop.run_until_complete(sync_calendars())
         print(f"Sync result: {result}")
@@ -370,8 +378,6 @@ def run_sync():
     except Exception as e:
         print(f"Sync error: {e}")
         return {"success": False, "message": str(e)}
-    finally:
-        loop.close()
 
 # Web Routes
 @app.route('/')
