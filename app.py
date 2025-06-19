@@ -111,19 +111,26 @@ def create_event_signature(event):
     # Subject
     sig_parts.append(f"subject:{event.subject}")
     
-    # Start time
-    if hasattr(event, 'start'):
-        if hasattr(event.start, 'date'):
-            sig_parts.append(f"start_date:{event.start.date}")
-        elif hasattr(event.start, 'date_time'):
-            sig_parts.append(f"start_datetime:{event.start.date_time}")
-    
-    # End time
-    if hasattr(event, 'end'):
-        if hasattr(event.end, 'date'):
-            sig_parts.append(f"end_date:{event.end.date}")
-        elif hasattr(event.end, 'date_time'):
-            sig_parts.append(f"end_datetime:{event.end.date_time}")
+    # For recurring events, use the series master ID or recurrence pattern
+    if hasattr(event, 'recurrence') and event.recurrence:
+        sig_parts.append(f"recurring:true")
+        # Add recurrence pattern to signature
+        if hasattr(event.recurrence, 'pattern'):
+            sig_parts.append(f"pattern:{event.recurrence.pattern}")
+    else:
+        # Start time for non-recurring events
+        if hasattr(event, 'start'):
+            if hasattr(event.start, 'date'):
+                sig_parts.append(f"start_date:{event.start.date}")
+            elif hasattr(event.start, 'date_time'):
+                sig_parts.append(f"start_datetime:{event.start.date_time}")
+        
+        # End time for non-recurring events
+        if hasattr(event, 'end'):
+            if hasattr(event.end, 'date'):
+                sig_parts.append(f"end_date:{event.end.date}")
+            elif hasattr(event.end, 'date_time'):
+                sig_parts.append(f"end_datetime:{event.end.date_time}")
     
     # Location
     if hasattr(event, 'location') and event.location:
@@ -169,7 +176,9 @@ async def create_event_in_shared(client, calendar_id, event):
             is_reminder_on=event.is_reminder_on if hasattr(event, 'is_reminder_on') else False,
             importance=event.importance if hasattr(event, 'importance') else None,
             sensitivity=event.sensitivity if hasattr(event, 'sensitivity') else None,
-            show_as=event.show_as if hasattr(event, 'show_as') else None
+            show_as=event.show_as if hasattr(event, 'show_as') else None,
+            # Copy recurrence pattern if it exists
+            recurrence=event.recurrence if hasattr(event, 'recurrence') and event.recurrence else None
         )
         
         created = await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(calendar_id).events.post(new_event)
@@ -192,7 +201,9 @@ async def update_event_in_shared(client, calendar_id, event_id, source_event):
             is_reminder_on=source_event.is_reminder_on if hasattr(source_event, 'is_reminder_on') else False,
             importance=source_event.importance if hasattr(source_event, 'importance') else None,
             sensitivity=source_event.sensitivity if hasattr(source_event, 'sensitivity') else None,
-            show_as=source_event.show_as if hasattr(source_event, 'show_as') else None
+            show_as=source_event.show_as if hasattr(source_event, 'show_as') else None,
+            # Copy recurrence pattern if it exists
+            recurrence=source_event.recurrence if hasattr(source_event, 'recurrence') and source_event.recurrence else None
         )
         
         await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(calendar_id).events.by_event_id(event_id).patch(updated_event)
@@ -259,29 +270,58 @@ async def sync_calendars():
         
         # Filter source events for public ones in date range
         public_events = []
+        recurring_events = []  # Track master recurring events
         now = datetime.now()
         future_limit = now + timedelta(days=30)
         
         for event in source_events:
             if hasattr(event, 'categories') and event.categories and "Public" in event.categories:
-                event_date = parse_date(event)
-                if event_date and now.date() <= event_date.date() <= future_limit.date():
-                    public_events.append(event)
+                # Check if this is a recurring event master or instance
+                if hasattr(event, 'recurrence') and event.recurrence:
+                    # This is a master recurring event
+                    recurring_events.append(event)
+                    print(f"Found recurring master event: {event.subject}")
+                elif hasattr(event, 'type') and event.type == 'occurrence':
+                    # This is an instance of a recurring event - skip it, we'll handle the master
+                    print(f"Skipping recurring instance: {event.subject}")
+                    continue
+                else:
+                    # Regular single event
+                    event_date = parse_date(event)
+                    if event_date and now.date() <= event_date.date() <= future_limit.date():
+                        public_events.append(event)
+        
+        # Add all recurring events (they manage their own date ranges)
+        public_events.extend(recurring_events)
         
         # Create lookup dictionaries
         source_lookup = {}
         for event in public_events:
-            event_date = parse_date(event)
-            if event_date:
-                key = f"{event.subject}|{event_date.date()}"
-                source_lookup[key] = event
+            if hasattr(event, 'recurrence') and event.recurrence:
+                # For recurring events, use subject as key
+                key = f"recurring:{event.subject}"
+            else:
+                # For single events, use subject+date as key
+                event_date = parse_date(event)
+                if event_date:
+                    key = f"single:{event.subject}|{event_date.date()}"
+                else:
+                    key = f"single:{event.subject}|no_date"
+            source_lookup[key] = event
         
         target_lookup = {}
         for event in target_events:
-            event_date = parse_date(event)
-            if event_date:
-                key = f"{event.subject}|{event_date.date()}"
-                target_lookup[key] = event
+            if hasattr(event, 'recurrence') and event.recurrence:
+                # For recurring events, use subject as key
+                key = f"recurring:{event.subject}"
+            else:
+                # For single events, use subject+date as key
+                event_date = parse_date(event)
+                if event_date:
+                    key = f"single:{event.subject}|{event_date.date()}"
+                else:
+                    key = f"single:{event.subject}|no_date"
+            target_lookup[key] = event
         
         # Determine actions needed
         events_to_add = []
