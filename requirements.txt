@@ -3,3 +3,4 @@ azure-identity==1.15.0
 msgraph-sdk==1.0.0
 gunicorn==21.2.0
 requests==2.31.0
+pytz==2023.3
