@@ -162,9 +162,9 @@ async def get_events_from_shared(client, calendar_id):
 async def create_event_in_shared(client, calendar_id, event):
     """Create event in shared mailbox calendar"""
     try:
-        # Create the new event
         new_event = Event(
             subject=event.subject,
+            # Don't set body field to avoid copying meeting details
             start=event.start,
             end=event.end,
             location=event.location,
@@ -172,19 +172,11 @@ async def create_event_in_shared(client, calendar_id, event):
             is_all_day=event.is_all_day if hasattr(event, 'is_all_day') else False,
             is_reminder_on=event.is_reminder_on if hasattr(event, 'is_reminder_on') else False,
             importance=event.importance if hasattr(event, 'importance') else None,
-            sensitivity=event.sensitivity if hasattr(event, 'sensitivity') else None,
+            sensitivity=event.sensitivity if hasattr(source_event, 'sensitivity') else None,
             show_as=event.show_as if hasattr(event, 'show_as') else None,
             # Copy recurrence pattern if it exists
             recurrence=event.recurrence if hasattr(event, 'recurrence') and event.recurrence else None
         )
-        
-        # Create empty body object to ensure no meeting details
-        class EmptyBody:
-            def __init__(self):
-                self.content = ""
-                self.content_type = "text"
-        
-        new_event.body = EmptyBody()
         
         created = await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(calendar_id).events.post(new_event)
         return created
@@ -210,13 +202,7 @@ async def update_event_in_shared(client, calendar_id, event_id, source_event):
             recurrence=source_event.recurrence if hasattr(source_event, 'recurrence') and source_event.recurrence else None
         )
         
-        # Create empty body object to clear any existing meeting details
-        class EmptyBody:
-            def __init__(self):
-                self.content = ""
-                self.content_type = "text"
-        
-        updated_event.body = EmptyBody()
+        # Don't set body at all - let it default to empty
         
         await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(calendar_id).events.by_event_id(event_id).patch(updated_event)
         return True
