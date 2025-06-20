@@ -761,56 +761,50 @@ def debug_all_events():
         if not access_token:
             return jsonify({"error": "Not authenticated"}), 401
         
-        # Create credentials using the stored access token (same as your sync function)
-        credential = AuthorizationCodeCredential(
-            tenant_id=TENANT_ID,
-            client_id=CLIENT_ID,
-            authorization_code="dummy",  # Not used for existing token
-            redirect_uri=REDIRECT_URI,
-            client_secret=CLIENT_SECRET
-        )
+        # Use the same approach as your working sync function
+        # Make a direct API call using requests instead of the Graph SDK
         
-        # Manually set the token
-        credential._token = {
-            'access_token': access_token,
-            'token_type': 'Bearer',
-            'expires_on': time.time() + 3600
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
         }
         
-        graph_client = GraphServiceClient(credentials=credential, scopes=['https://graph.microsoft.com/.default'])
-        
         # Get all calendars first
-        calendars_response = graph_client.users.by_user_id("calendar@stedward.org").calendars.get()
-        calendars = calendars_response.value if hasattr(calendars_response, 'value') else calendars_response
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
         
-        source_calendar = None
-        for calendar in calendars:
-            if calendar.name == "Calendar":
-                source_calendar = calendar
+        if calendars_response.status_code != 200:
+            return jsonify({"error": f"Failed to get calendars: {calendars_response.status_code}"})
+        
+        calendars_data = calendars_response.json()
+        source_calendar_id = None
+        
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'Calendar':
+                source_calendar_id = calendar.get('id')
                 break
         
-        if not source_calendar:
+        if not source_calendar_id:
             return jsonify({"error": "Source calendar 'Calendar' not found"})
         
-        # Get ALL events from source calendar (no filters)
-        # Extended date range to catch everything
+        # Get ALL events from source calendar with extended date range
         start_time = datetime.now(pytz.UTC)
         end_time = start_time + timedelta(days=365)  # Look ahead 1 year
         
-        from msgraph.generated.users.item.calendars.item.calendar_view.calendar_view_request_builder import CalendarViewRequestBuilder
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/calendarView"
+        params = {
+            'startDateTime': start_time.isoformat(),
+            'endDateTime': end_time.isoformat(),
+            '$top': 100
+        }
         
-        query_params = CalendarViewRequestBuilder.CalendarViewRequestBuilderGetQueryParameters(
-            start_date_time=start_time.isoformat(),
-            end_date_time=end_time.isoformat(),
-            top=100
-        )
+        events_response = requests.get(events_url, headers=headers, params=params)
         
-        request_config = CalendarViewRequestBuilder.CalendarViewRequestBuilderGetRequestConfiguration(
-            query_parameters=query_params
-        )
+        if events_response.status_code != 200:
+            return jsonify({"error": f"Failed to get events: {events_response.status_code}"})
         
-        events_response = graph_client.users.by_user_id("calendar@stedward.org").calendars.by_calendar_id(source_calendar.id).calendar_view.get(request_configuration=request_config)
-        all_events = events_response.value if hasattr(events_response, 'value') else events_response
+        events_data = events_response.json()
+        all_events = events_data.get('value', [])
         
         # Process all events
         debug_info = {
@@ -820,13 +814,13 @@ def debug_all_events():
         
         for event in all_events:
             event_info = {
-                "subject": event.subject,
-                "start": event.start.date_time if event.start else "No start time",
-                "is_recurring": event.type == "seriesMaster",
-                "type": event.type,
-                "categories": event.categories if event.categories else [],
-                "is_public": "Public" in (event.categories or []),
-                "sensitivity": event.sensitivity.value if event.sensitivity else "normal"
+                "subject": event.get('subject', 'No subject'),
+                "start": event.get('start', {}).get('dateTime', 'No start time'),
+                "type": event.get('type', 'unknown'),
+                "categories": event.get('categories', []),
+                "is_public": "Public" in event.get('categories', []),
+                "sensitivity": event.get('sensitivity', 'normal'),
+                "is_recurring": event.get('type') == 'seriesMaster'
             }
             debug_info["events"].append(event_info)
         
