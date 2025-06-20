@@ -752,41 +752,6 @@ def run_diagnostics_endpoint():
     
     return jsonify({"success": True, "message": "Diagnostics started"})
 
-@app.route('/status')
-def status():
-    """Get current sync status - FIXED: JSON serialization issue"""
-    # Convert last sync time to Central Time for display
-    central_tz = pytz.timezone('US/Central')
-    display_sync_time = None
-    if last_sync_time:
-        if last_sync_time.tzinfo is None:
-            # If no timezone info, assume UTC and convert
-            utc_time = pytz.utc.localize(last_sync_time)
-            display_sync_time = utc_time.astimezone(central_tz)
-        else:
-            # Already has timezone info, convert to Central
-            display_sync_time = last_sync_time.astimezone(central_tz)
-    
-    return jsonify({
-        "last_sync_time": display_sync_time.isoformat() if display_sync_time else None,
-        "last_sync_result": make_json_serializable(last_sync_result),
-        "sync_in_progress": sync_in_progress,
-        "authenticated": access_token is not None,
-        "scheduler_running": scheduler_running
-    })
-
-@app.route('/logout')
-def logout():
-    """Clear authentication"""
-    global access_token
-    access_token = None
-    stop_scheduler()
-    return redirect(url_for('index'))
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
-
 # Add this route to your app.py to debug ALL events in source calendar
 
 @app.route('/debug-all-events')
@@ -856,3 +821,40 @@ def debug_all_events():
         
     except Exception as e:
         return jsonify({"error": f"Debug failed: {str(e)}"}), 500
+
+@app.route('/status')
+def status():
+    """Get current sync status - FIXED: JSON serialization issue"""
+    # Convert last sync time to Central Time for display
+    central_tz = pytz.timezone('US/Central')
+    display_sync_time = None
+    if last_sync_time:
+        if last_sync_time.tzinfo is None:
+            # If no timezone info, assume UTC and convert
+            utc_time = pytz.utc.localize(last_sync_time)
+            display_sync_time = utc_time.astimezone(central_tz)
+        else:
+            # Already has timezone info, convert to Central
+            display_sync_time = last_sync_time.astimezone(central_tz)
+    
+    return jsonify({
+        "last_sync_time": display_sync_time.isoformat() if display_sync_time else None,
+        "last_sync_result": make_json_serializable(last_sync_result),
+        "sync_in_progress": sync_in_progress,
+        "authenticated": access_token is not None,
+        "scheduler_running": scheduler_running
+    })
+
+@app.route('/logout')
+def logout():
+    """Clear authentication"""
+    global access_token
+    access_token = None
+    stop_scheduler()
+    return redirect(url_for('index'))
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+
+
