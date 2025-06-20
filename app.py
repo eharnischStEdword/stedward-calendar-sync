@@ -183,7 +183,7 @@ async def create_event_in_shared(client, calendar_id, event):
             is_all_day=event.is_all_day if hasattr(event, 'is_all_day') else False,
             is_reminder_on=event.is_reminder_on if hasattr(event, 'is_reminder_on') else False,
             importance=event.importance if hasattr(event, 'importance') else None,
-            sensitivity=event.sensitivity if hasattr(source_event, 'sensitivity') else None,
+            sensitivity=event.sensitivity if hasattr(event, 'sensitivity') else None,
             show_as=event.show_as if hasattr(event, 'show_as') else None,
             # Copy recurrence pattern if it exists
             recurrence=event.recurrence if hasattr(event, 'recurrence') and event.recurrence else None
