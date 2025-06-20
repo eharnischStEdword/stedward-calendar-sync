@@ -39,23 +39,10 @@
         }
 
         .logo-img {
-            width: 350px;
+            width: 280px;
             height: auto;
             margin-bottom: 1rem;
             filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
-            transition: all 0.3s ease;
-        }
-
-        .header.scrolled .logo-img {
-            width: 140px;
-        }
-
-        .header.scrolled {
-            padding: 0.5rem 0;
-        }
-
-        .header.scrolled .church-subtitle {
-            font-size: 0.9rem;
         }
 
         .church-subtitle {
@@ -664,16 +651,6 @@
         
         // Auto-refresh status every 30 seconds
         setInterval(refreshStatus, 30000);
-
-        // Add scroll effect for header
-        window.addEventListener('scroll', function() {
-            const header = document.querySelector('.header');
-            if (window.scrollY > 100) {
-                header.classList.add('scrolled');
-            } else {
-                header.classList.remove('scrolled');
-            }
-        });
     </script>
 </body>
 </html>
