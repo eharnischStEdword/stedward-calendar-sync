@@ -996,6 +996,74 @@ def search_mass_events():
         import traceback
         return jsonify({"error": f"Search failed: {str(e)}", "traceback": traceback.format_exc()}), 500
 
+@app.route('/search-master-events')
+def search_master_events():
+    """Search for master recurring events (not instances)"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get calendars
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        source_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'Calendar':
+                source_calendar_id = calendar.get('id')
+                break
+        
+        if not source_calendar_id:
+            return jsonify({"error": "Source calendar not found"})
+        
+        # Search for EVENTS (not calendarView) to get master recurring events
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
+        params = {
+            '$top': 200,
+            '$filter': "type eq 'seriesMaster'"  # Only get recurring master events
+        }
+        
+        events_response = requests.get(events_url, headers=headers, params=params)
+        events_data = events_response.json()
+        master_events = events_data.get('value', [])
+        
+        # Process master events
+        all_masters = []
+        mass_masters = []
+        
+        for event in master_events:
+            subject = event.get('subject', '')
+            event_info = {
+                "subject": subject,
+                "type": event.get('type'),
+                "categories": event.get('categories', []),
+                "is_public": "Public" in event.get('categories', []),
+                "start": event.get('start', {}).get('dateTime', 'No start time'),
+                "recurrence": event.get('recurrence', {})
+            }
+            
+            all_masters.append(event_info)
+            
+            if 'Mass' in subject:
+                mass_masters.append(event_info)
+        
+        return jsonify({
+            "total_master_events": len(all_masters),
+            "all_master_subjects": [e['subject'] for e in all_masters],
+            "mass_master_events": mass_masters,
+            "mass_master_count": len(mass_masters)
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Search failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
 @app.route('/logout')
 def logout():
     """Clear authentication"""
