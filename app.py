@@ -243,7 +243,7 @@ async def run_diagnostics():
     return diagnostics
 
 def sync_calendars():
-    """FIXED: Sync function using direct HTTP requests like successful master events search"""
+    """FIXED: Sync function handles BOTH recurring master events AND single events"""
     global last_sync_time, last_sync_result, sync_in_progress
     
     if sync_in_progress:
@@ -256,7 +256,6 @@ def sync_calendars():
         if not access_token:
             return {"error": "Not authenticated"}
         
-        # Use the same authentication approach as master events search
         headers = {
             'Authorization': f'Bearer {access_token}',
             'Content-Type': 'application/json'
@@ -282,11 +281,11 @@ def sync_calendars():
         if not source_calendar_id or not target_calendar_id:
             return {"error": "Required calendars not found"}
         
-        # Get source events using EVENTS endpoint (not calendarView) to get master recurring events
+        # FIXED: Get BOTH recurring master events AND single events
         source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
         source_params = {
             '$top': 200,
-            '$filter': "type eq 'seriesMaster'"  # Only get recurring master events
+            # REMOVED the filter so we get ALL event types, not just seriesMaster
         }
         
         source_response = requests.get(source_events_url, headers=headers, params=source_params)
@@ -295,11 +294,11 @@ def sync_calendars():
         
         source_events = source_response.json().get('value', [])
         
-        # Get target events using the same approach
+        # Get target events using the same approach  
         target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
         target_params = {
             '$top': 200,
-            '$filter': "type eq 'seriesMaster'"  # Only get recurring master events
+            # REMOVED the filter here too
         }
         
         target_response = requests.get(target_events_url, headers=headers, params=target_params)
@@ -314,7 +313,10 @@ def sync_calendars():
             categories = event.get('categories', [])
             if 'Public' in categories:
                 print(f"🔍 Processing public event: {event.get('subject')}")
-                if event.get('type') == 'seriesMaster':
+                
+                # Handle BOTH recurring master events AND single events
+                event_type = event.get('type', 'unknown')
+                if event_type == 'seriesMaster':
                     print(f"✅ Found recurring master event: {event.get('subject')}")
                     # Clear body content for privacy
                     event_copy = event.copy()
@@ -322,8 +324,18 @@ def sync_calendars():
                         event_copy['body'] = {'contentType': 'html', 'content': ''}
                     print(f"Clearing body content from: {event.get('subject')}")
                     public_events.append(event_copy)
+                    
+                elif event_type == 'singleInstance':
+                    print(f"✅ Found single event: {event.get('subject')}")
+                    # Clear body content for privacy
+                    event_copy = event.copy()
+                    if 'body' in event_copy:
+                        event_copy['body'] = {'contentType': 'html', 'content': ''}
+                    print(f"Clearing body content from: {event.get('subject')}")
+                    public_events.append(event_copy)
+                    
                 else:
-                    print(f"⚠️ Skipped non-master event: {event.get('subject')}")
+                    print(f"⚠️ Skipped event type '{event_type}': {event.get('subject')}")
             else:
                 print(f"⚠️ Skipped non-public event: {event.get('subject')}")
         
@@ -333,14 +345,35 @@ def sync_calendars():
         source_events_dict = {}
         for event in public_events:
             subject = event.get('subject', '')
-            key = f"recurring:{subject}"
+            event_type = event.get('type', 'unknown')
+            
+            # Create different key formats for recurring vs single events
+            if event_type == 'seriesMaster':
+                key = f"recurring:{subject}"
+            else:
+                # For single events, include start date to make them unique
+                start_date = event.get('start', {}).get('dateTime', 'no-date')
+                if 'T' in start_date:
+                    start_date = start_date.split('T')[0]  # Just the date part
+                key = f"single:{subject}:{start_date}"
+                
             source_events_dict[key] = event
             print(f"🔑 Source key: {key}")
         
         target_events_dict = {}
         for event in target_events:
             subject = event.get('subject', '')
-            key = f"recurring:{subject}"
+            event_type = event.get('type', 'unknown')
+            
+            # Create matching key format
+            if event_type == 'seriesMaster':
+                key = f"recurring:{subject}"
+            else:
+                start_date = event.get('start', {}).get('dateTime', 'no-date')
+                if 'T' in start_date:
+                    start_date = start_date.split('T')[0]
+                key = f"single:{subject}:{start_date}"
+                
             target_events_dict[key] = event
             print(f"🎯 Target key: {key}")
         
@@ -362,11 +395,14 @@ def sync_calendars():
         print(f"📋 Sync plan: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
         
         for key, _ in to_add:
-            print(f"  ➕ Will add: {key.replace('recurring:', '')}")
+            event_name = key.split(':', 1)[1] if ':' in key else key
+            print(f"  ➕ Will add: {event_name}")
         for key, _, _ in to_update:
-            print(f"  ✏️ Will update: {key.replace('recurring:', '')}")
+            event_name = key.split(':', 1)[1] if ':' in key else key  
+            print(f"  ✏️ Will update: {event_name}")
         for key, _ in to_delete:
-            print(f"  🗑️ Will delete: {key.replace('recurring:', '')}")
+            event_name = key.split(':', 1)[1] if ':' in key else key
+            print(f"  🗑️ Will delete: {event_name}")
         
         # Execute sync operations
         successful_operations = 0
@@ -381,16 +417,21 @@ def sync_calendars():
                     'start': source_event.get('start'),
                     'end': source_event.get('end'),
                     'categories': source_event.get('categories'),
-                    'recurrence': source_event.get('recurrence'),
                     'body': {'contentType': 'html', 'content': ''},  # Always clear body
-                    'location': source_event.get('location', {})
+                    'location': source_event.get('location', {}),
+                    'isAllDay': source_event.get('isAllDay', False)
                 }
+                
+                # Only add recurrence for recurring events
+                if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
+                    create_data['recurrence'] = source_event.get('recurrence')
                 
                 create_response = requests.post(create_url, headers=headers, json=create_data)
                 if create_response.status_code in [200, 201]:
                     successful_operations += 1
+                    print(f"✅ Successfully added: {key}")
                 else:
-                    print(f"❌ Failed to add {key}: {create_response.status_code}")
+                    print(f"❌ Failed to add {key}: {create_response.status_code} - {create_response.text}")
             except Exception as e:
                 print(f"❌ Error adding {key}: {str(e)}")
         
@@ -403,16 +444,21 @@ def sync_calendars():
                     'start': source_event.get('start'),
                     'end': source_event.get('end'),
                     'categories': source_event.get('categories'),
-                    'recurrence': source_event.get('recurrence'),
                     'body': {'contentType': 'html', 'content': ''},  # Always clear body
-                    'location': source_event.get('location', {})
+                    'location': source_event.get('location', {}),
+                    'isAllDay': source_event.get('isAllDay', False)
                 }
+                
+                # Only add recurrence for recurring events
+                if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
+                    update_data['recurrence'] = source_event.get('recurrence')
                 
                 update_response = requests.patch(update_url, headers=headers, json=update_data)
                 if update_response.status_code == 200:
                     successful_operations += 1
+                    print(f"✅ Successfully updated: {key}")
                 else:
-                    print(f"❌ Failed to update {key}: {update_response.status_code}")
+                    print(f"❌ Failed to update {key}: {update_response.status_code} - {update_response.text}")
             except Exception as e:
                 print(f"❌ Error updating {key}: {str(e)}")
         
@@ -423,6 +469,7 @@ def sync_calendars():
                 delete_response = requests.delete(delete_url, headers=headers)
                 if delete_response.status_code in [200, 204]:
                     successful_operations += 1
+                    print(f"✅ Successfully deleted: {key}")
                 else:
                     print(f"❌ Failed to delete {key}: {delete_response.status_code}")
             except Exception as e:
