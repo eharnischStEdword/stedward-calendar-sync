@@ -786,3 +786,73 @@ def logout():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+
+# Add this route to your app.py to debug ALL events in source calendar
+
+@app.route('/debug-all-events')
+def debug_all_events():
+    """Debug: Show ALL events in source calendar regardless of public/private status"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        graph_client = GraphServiceClient(credentials=ClientSecretCredential(
+            tenant_id=TENANT_ID,
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET
+        ), scopes=['https://graph.microsoft.com/.default'])
+        
+        # Get all calendars first
+        calendars = graph_client.users.by_user_id("calendar@stedward.org").calendars.get()
+        source_calendar = None
+        
+        for calendar in calendars.value:
+            if calendar.name == "Calendar":
+                source_calendar = calendar
+                break
+        
+        if not source_calendar:
+            return jsonify({"error": "Source calendar 'Calendar' not found"})
+        
+        # Get ALL events from source calendar (no filters)
+        # Extended date range to catch everything
+        start_time = datetime.now(pytz.UTC)
+        end_time = start_time + timedelta(days=365)  # Look ahead 1 year
+        
+        query_params = CalendarViewRequestBuilder.CalendarViewRequestBuilderGetQueryParameters(
+            start_date_time=start_time.isoformat(),
+            end_date_time=end_time.isoformat(),
+            top=100
+        )
+        
+        request_config = CalendarViewRequestBuilder.CalendarViewRequestBuilderGetRequestConfiguration(
+            query_parameters=query_params
+        )
+        
+        all_events = graph_client.users.by_user_id("calendar@stedward.org").calendars.by_calendar_id(source_calendar.id).calendar_view.get(request_configuration=request_config)
+        
+        # Process all events
+        debug_info = {
+            "total_events": len(all_events.value),
+            "events": []
+        }
+        
+        for event in all_events.value:
+            event_info = {
+                "subject": event.subject,
+                "start": event.start.date_time if event.start else "No start time",
+                "is_recurring": event.type == "seriesMaster",
+                "type": event.type,
+                "categories": event.categories if event.categories else [],
+                "is_public": "Public" in (event.categories or []),
+                "sensitivity": event.sensitivity.value if event.sensitivity else "normal"
+            }
+            debug_info["events"].append(event_info)
+        
+        # Sort by subject for easier reading
+        debug_info["events"].sort(key=lambda x: x["subject"] or "")
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        return jsonify({"error": f"Debug failed: {str(e)}"}), 500
