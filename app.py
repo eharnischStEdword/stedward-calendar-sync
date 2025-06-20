@@ -761,17 +761,30 @@ def debug_all_events():
         if not access_token:
             return jsonify({"error": "Not authenticated"}), 401
         
-        graph_client = GraphServiceClient(credentials=ClientSecretCredential(
+        # Create credentials using the stored access token (same as your sync function)
+        credential = AuthorizationCodeCredential(
             tenant_id=TENANT_ID,
             client_id=CLIENT_ID,
+            authorization_code="dummy",  # Not used for existing token
+            redirect_uri=REDIRECT_URI,
             client_secret=CLIENT_SECRET
-        ), scopes=['https://graph.microsoft.com/.default'])
+        )
+        
+        # Manually set the token
+        credential._token = {
+            'access_token': access_token,
+            'token_type': 'Bearer',
+            'expires_on': time.time() + 3600
+        }
+        
+        graph_client = GraphServiceClient(credentials=credential, scopes=['https://graph.microsoft.com/.default'])
         
         # Get all calendars first
-        calendars = graph_client.users.by_user_id("calendar@stedward.org").calendars.get()
-        source_calendar = None
+        calendars_response = graph_client.users.by_user_id("calendar@stedward.org").calendars.get()
+        calendars = calendars_response.value if hasattr(calendars_response, 'value') else calendars_response
         
-        for calendar in calendars.value:
+        source_calendar = None
+        for calendar in calendars:
             if calendar.name == "Calendar":
                 source_calendar = calendar
                 break
@@ -784,6 +797,8 @@ def debug_all_events():
         start_time = datetime.now(pytz.UTC)
         end_time = start_time + timedelta(days=365)  # Look ahead 1 year
         
+        from msgraph.generated.users.item.calendars.item.calendar_view.calendar_view_request_builder import CalendarViewRequestBuilder
+        
         query_params = CalendarViewRequestBuilder.CalendarViewRequestBuilderGetQueryParameters(
             start_date_time=start_time.isoformat(),
             end_date_time=end_time.isoformat(),
@@ -794,15 +809,16 @@ def debug_all_events():
             query_parameters=query_params
         )
         
-        all_events = graph_client.users.by_user_id("calendar@stedward.org").calendars.by_calendar_id(source_calendar.id).calendar_view.get(request_configuration=request_config)
+        events_response = graph_client.users.by_user_id("calendar@stedward.org").calendars.by_calendar_id(source_calendar.id).calendar_view.get(request_configuration=request_config)
+        all_events = events_response.value if hasattr(events_response, 'value') else events_response
         
         # Process all events
         debug_info = {
-            "total_events": len(all_events.value),
+            "total_events": len(all_events),
             "events": []
         }
         
-        for event in all_events.value:
+        for event in all_events:
             event_info = {
                 "subject": event.subject,
                 "start": event.start.date_time if event.start else "No start time",
@@ -820,7 +836,8 @@ def debug_all_events():
         return jsonify(debug_info)
         
     except Exception as e:
-        return jsonify({"error": f"Debug failed: {str(e)}"}), 500
+        import traceback
+        return jsonify({"error": f"Debug failed: {str(e)}", "traceback": traceback.format_exc()}), 500
 
 @app.route('/status')
 def status():
