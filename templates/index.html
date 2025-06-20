@@ -30,7 +30,7 @@
             padding: 20px;
             margin-bottom: 20px;
         }
-        .sync-button {
+        .sync-button, .diagnostics-button {
             background-color: #007bff;
             color: white;
             border: none;
@@ -39,14 +39,22 @@
             border-radius: 5px;
             cursor: pointer;
             width: 100%;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
         }
-        .sync-button:hover {
+        .sync-button:hover, .diagnostics-button:hover {
             background-color: #0056b3;
         }
-        .sync-button:disabled {
+        .sync-button:disabled, .diagnostics-button:disabled {
             background-color: #6c757d;
             cursor: not-allowed;
+        }
+        .diagnostics-button {
+            background-color: #17a2b8;
+            font-size: 16px;
+            padding: 12px 24px;
+        }
+        .diagnostics-button:hover {
+            background-color: #138496;
         }
         .success {
             color: #28a745;
@@ -110,6 +118,31 @@
             border: 1px solid #f5c6cb;
             color: #721c24;
         }
+        .diagnostics-results {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+            display: none;
+        }
+        .diagnostics-results.show {
+            display: block;
+        }
+        .diagnostic-item {
+            margin-bottom: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .diagnostic-success {
+            color: #28a745;
+        }
+        .diagnostic-error {
+            color: #dc3545;
+        }
+        .diagnostic-info {
+            color: #17a2b8;
+        }
     </style>
 </head>
 <body>
@@ -152,7 +185,16 @@
             {% endif %}
         </button>
 
+        <button id="diagnostics-btn" class="diagnostics-button" onclick="runDiagnostics()">
+            🔍 Run Diagnostics
+        </button>
+
         <div id="message" class="message"></div>
+
+        <div id="diagnostics-results" class="diagnostics-results">
+            <h4>🔍 Diagnostic Results</h4>
+            <div id="diagnostic-content"></div>
+        </div>
 
         <div class="recent-activity">
             <h3>How This Works</h3>
@@ -161,6 +203,9 @@
             </div>
             <div class="activity-item">
                 <strong>Manual Sync:</strong> Click the button above to sync immediately
+            </div>
+            <div class="activity-item">
+                <strong>Diagnostics:</strong> Use the diagnostics button to check if calendar names or permissions have changed
             </div>
             <div class="activity-item">
                 <strong>What Gets Synced:</strong> Events marked as "Public" in the main calendar are copied to the public calendar
@@ -177,6 +222,7 @@
             syncInProgress = true;
             updateButton();
             hideMessage();
+            hideDiagnostics();
             
             fetch('/sync', {
                 method: 'POST',
@@ -201,6 +247,127 @@
                 syncInProgress = false;
                 updateButton();
             });
+        }
+
+        function runDiagnostics() {
+            hideMessage();
+            hideDiagnostics();
+            
+            document.getElementById('diagnostics-btn').innerHTML = '<span class="spinner"></span> Running Diagnostics...';
+            document.getElementById('diagnostics-btn').disabled = true;
+            
+            fetch('/diagnostics', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage('Diagnostics started! Results will appear shortly.', 'success');
+                    // Check for results every 2 seconds
+                    checkDiagnosticsStatus();
+                } else {
+                    showMessage('Failed to start diagnostics: ' + data.message, 'error');
+                    resetDiagnosticsButton();
+                }
+            })
+            .catch(error => {
+                showMessage('Error: ' + error.message, 'error');
+                resetDiagnosticsButton();
+            });
+        }
+
+        function checkDiagnosticsStatus() {
+            fetch('/status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.last_sync_result && data.last_sync_result.findings) {
+                    // Diagnostics completed, show results
+                    displayDiagnostics(data.last_sync_result);
+                    resetDiagnosticsButton();
+                } else {
+                    // Still running, check again in 2 seconds
+                    setTimeout(checkDiagnosticsStatus, 2000);
+                }
+            })
+            .catch(error => {
+                console.error('Error checking diagnostics status:', error);
+                setTimeout(checkDiagnosticsStatus, 2000);
+            });
+        }
+
+        function displayDiagnostics(result) {
+            const content = document.getElementById('diagnostic-content');
+            const resultsDiv = document.getElementById('diagnostics-results');
+            
+            let html = '';
+            
+            if (result.success) {
+                html += '<div class="diagnostic-item diagnostic-success">✅ Diagnostics completed successfully</div>';
+            } else {
+                html += '<div class="diagnostic-item diagnostic-error">❌ Diagnostics failed: ' + result.message + '</div>';
+            }
+            
+            html += '<div class="diagnostic-item diagnostic-info">📊 Configuration Check:</div>';
+            html += '<div class="diagnostic-item">   • Shared Mailbox: ' + result.shared_mailbox + '</div>';
+            html += '<div class="diagnostic-item">   • Expected Source: "' + result.expected_source + '"</div>';
+            html += '<div class="diagnostic-item">   • Expected Target: "' + result.expected_target + '"</div>';
+            
+            if (result.findings) {
+                const f = result.findings;
+                
+                if (f.available_calendars) {
+                    html += '<div class="diagnostic-item diagnostic-info">📋 Available Calendars (' + f.calendar_count + '):</div>';
+                    f.available_calendars.forEach(cal => {
+                        html += '<div class="diagnostic-item">   • "' + cal.name + '"</div>';
+                    });
+                }
+                
+                if (f.source_calendar_found !== undefined) {
+                    if (f.source_calendar_found) {
+                        html += '<div class="diagnostic-item diagnostic-success">✅ Source calendar found</div>';
+                        if (f.public_events_count !== undefined) {
+                            html += '<div class="diagnostic-item">   📅 Public events: ' + f.public_events_count + '</div>';
+                        }
+                    } else {
+                        html += '<div class="diagnostic-item diagnostic-error">❌ Source calendar "' + result.expected_source + '" NOT found</div>';
+                    }
+                }
+                
+                if (f.target_calendar_found !== undefined) {
+                    if (f.target_calendar_found) {
+                        html += '<div class="diagnostic-item diagnostic-success">✅ Target calendar found</div>';
+                        if (f.target_events_count !== undefined) {
+                            html += '<div class="diagnostic-item">   📅 Current events: ' + f.target_events_count + '</div>';
+                        }
+                    } else {
+                        html += '<div class="diagnostic-item diagnostic-error">❌ Target calendar "' + result.expected_target + '" NOT found</div>';
+                    }
+                }
+                
+                if (f.source_access_error || f.target_access_error || f.mailbox_access_error) {
+                    html += '<div class="diagnostic-item diagnostic-error">⚠️ Access Errors:</div>';
+                    if (f.mailbox_access_error) {
+                        html += '<div class="diagnostic-item">   • Mailbox: ' + f.mailbox_access_error + '</div>';
+                    }
+                    if (f.source_access_error) {
+                        html += '<div class="diagnostic-item">   • Source: ' + f.source_access_error + '</div>';
+                    }
+                    if (f.target_access_error) {
+                        html += '<div class="diagnostic-item">   • Target: ' + f.target_access_error + '</div>';
+                    }
+                }
+            }
+            
+            content.innerHTML = html;
+            resultsDiv.classList.add('show');
+        }
+
+        function resetDiagnosticsButton() {
+            document.getElementById('diagnostics-btn').innerHTML = '🔍 Run Diagnostics';
+            document.getElementById('diagnostics-btn').disabled = false;
         }
 
         function checkSyncStatus() {
@@ -265,6 +432,11 @@
         function hideMessage() {
             const messageDiv = document.getElementById('message');
             messageDiv.className = 'message';
+        }
+
+        function hideDiagnostics() {
+            const diagnosticsDiv = document.getElementById('diagnostics-results');
+            diagnosticsDiv.classList.remove('show');
         }
 
         function updateSchedulerStatus(isRunning) {
