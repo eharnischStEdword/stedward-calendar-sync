@@ -1150,6 +1150,296 @@ def logout():
     stop_scheduler()
     return redirect(url_for('index'))
 
+# Add these endpoints to your app.py file (paste them before the "if __name__ == '__main__':" line)
+
+@app.route('/list-all-events')
+def list_all_events():
+    """List all events in public calendar with full details for manual inspection"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar ID
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Get ALL events with full details
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        params = {'$top': 500}
+        
+        events_response = requests.get(events_url, headers=headers, params=params)
+        if events_response.status_code != 200:
+            return jsonify({"error": f"Failed to get events: {events_response.status_code}"})
+        
+        all_events = events_response.json().get('value', [])
+        
+        # Format events for easy reading
+        formatted_events = []
+        for i, event in enumerate(all_events, 1):
+            formatted_event = {
+                "number": i,
+                "id": event.get('id'),
+                "subject": event.get('subject'),
+                "start": event.get('start', {}).get('dateTime', 'No start time'),
+                "type": event.get('type'),
+                "categories": event.get('categories', []),
+                "organizer_email": event.get('organizer', {}).get('emailAddress', {}).get('address', 'Unknown'),
+                "isOrganizer": event.get('isOrganizer', False),
+                "created": event.get('createdDateTime', 'Unknown'),
+                "modified": event.get('lastModifiedDateTime', 'Unknown'),
+                "recurrence": "Yes" if event.get('recurrence') else "No",
+                "seriesMasterId": event.get('seriesMasterId', 'None'),
+                "webLink": event.get('webLink', 'No link'),
+                "delete_test_url": f"/force-delete-event/{event.get('id')}"
+            }
+            formatted_events.append(formatted_event)
+        
+        # Sort by start date
+        formatted_events.sort(key=lambda x: x['start'] if x['start'] != 'No start time' else '9999')
+        
+        return jsonify({
+            "total_events": len(formatted_events),
+            "calendar_name": "St. Edward Public Calendar",
+            "events": formatted_events,
+            "instructions": [
+                "Look through this list to identify events you're having trouble deleting",
+                "Copy the event ID of any problematic event",
+                "Visit /force-delete-event/EVENT_ID to attempt deletion",
+                "Pay attention to 'type' field - 'occurrence' events need master deleted instead"
+            ]
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Failed to list events: {str(e)}", "traceback": traceback.format_exc()}), 500
+
+@app.route('/find-visual-duplicates')
+def find_visual_duplicates():
+    """Find events that LOOK like duplicates to users (more aggressive matching)"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar ID
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Get ALL events from public calendar
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        params = {'$top': 500}
+        
+        events_response = requests.get(events_url, headers=headers, params=params)
+        if events_response.status_code != 200:
+            return jsonify({"error": f"Failed to get events: {events_response.status_code}"})
+        
+        all_events = events_response.json().get('value', [])
+        
+        # Group by SUBJECT ONLY (most aggressive duplicate detection)
+        subject_groups = {}
+        for event in all_events:
+            subject = (event.get('subject', 'No Subject') or 'No Subject').strip()
+            
+            if subject not in subject_groups:
+                subject_groups[subject] = []
+            
+            subject_groups[subject].append({
+                'id': event.get('id'),
+                'subject': subject,
+                'start': event.get('start', {}).get('dateTime', 'No Start'),
+                'type': event.get('type', 'unknown'),
+                'created': event.get('createdDateTime', 'Unknown'),
+                'categories': event.get('categories', []),
+                'seriesMasterId': event.get('seriesMasterId')
+            })
+        
+        # Find ANY subject that appears more than once
+        visual_duplicates = []
+        all_duplicates_to_delete = []
+        
+        for subject, events in subject_groups.items():
+            if len(events) > 1:
+                print(f"Found {len(events)} events with subject: '{subject}'")
+                
+                # Sort by type preference: seriesMaster > singleInstance > occurrence
+                # Then by creation date (oldest first)
+                def sort_key(event):
+                    type_priority = {
+                        'seriesMaster': 1,
+                        'singleInstance': 2, 
+                        'occurrence': 3,
+                        'unknown': 4
+                    }
+                    return (type_priority.get(event['type'], 5), event['created'])
+                
+                events.sort(key=sort_key)
+                
+                keep_event = events[0]  # Keep the "best" one
+                delete_events = events[1:]  # Delete the rest
+                
+                visual_duplicates.append({
+                    'subject': subject,
+                    'total_count': len(events),
+                    'keeping': {
+                        'id': keep_event['id'],
+                        'type': keep_event['type'],
+                        'start': keep_event['start'],
+                        'created': keep_event['created']
+                    },
+                    'deleting': [{
+                        'id': e['id'],
+                        'type': e['type'], 
+                        'start': e['start'],
+                        'created': e['created']
+                    } for e in delete_events],
+                    'delete_count': len(delete_events)
+                })
+                
+                all_duplicates_to_delete.extend([e['id'] for e in delete_events])
+        
+        # Also show all events for manual review
+        all_events_summary = []
+        for event in all_events:
+            all_events_summary.append({
+                'subject': event.get('subject'),
+                'type': event.get('type'),
+                'start': event.get('start', {}).get('dateTime', '').split('T')[0] if event.get('start', {}).get('dateTime') else 'No date',
+                'time': event.get('start', {}).get('dateTime', '').split('T')[1][:5] if 'T' in event.get('start', {}).get('dateTime', '') else 'No time',
+                'id_short': event.get('id', '')[:8] + '...'
+            })
+        
+        # Sort by subject for easy reading
+        all_events_summary.sort(key=lambda x: x['subject'] or 'zzz')
+        
+        return jsonify({
+            "analysis_type": "Visual duplicates (same subject)",
+            "total_events_in_calendar": len(all_events),
+            "subjects_with_duplicates": len(visual_duplicates),
+            "total_events_to_delete": len(all_duplicates_to_delete),
+            "visual_duplicates": visual_duplicates,
+            "all_events_list": all_events_summary,
+            "events_to_delete_ids": all_duplicates_to_delete,
+            "next_step": "Review the duplicates above, then visit /execute-visual-duplicate-cleanup"
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Visual duplicate analysis failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
+@app.route('/execute-visual-duplicate-cleanup')
+def execute_visual_duplicate_cleanup():
+    """Delete the visual duplicates found by the enhanced finder"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        # First run the analysis to get current duplicates
+        analysis_result = find_visual_duplicates()
+        if 'error' in analysis_result.get_json():
+            return analysis_result
+        
+        analysis = analysis_result.get_json()
+        events_to_delete = analysis.get('events_to_delete_ids', [])
+        
+        if not events_to_delete:
+            return jsonify({"message": "No visual duplicates found to delete", "deleted_count": 0})
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar ID
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Delete the duplicate events
+        deletion_results = []
+        successful_deletions = 0
+        
+        for event_id in events_to_delete:
+            try:
+                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event_id}"
+                delete_response = requests.delete(delete_url, headers=headers)
+                
+                success = delete_response.status_code in [200, 204]
+                if success:
+                    successful_deletions += 1
+                
+                deletion_results.append({
+                    "event_id": event_id[:8] + "...",
+                    "status_code": delete_response.status_code,
+                    "success": success,
+                    "error": None if success else delete_response.text[:100]
+                })
+                
+                print(f"{'✅' if success else '❌'} Delete {event_id[:8]}... - Status: {delete_response.status_code}")
+                
+            except Exception as e:
+                deletion_results.append({
+                    "event_id": event_id[:8] + "...",
+                    "success": False,
+                    "error": str(e)
+                })
+                print(f"❌ Error deleting {event_id[:8]}...: {str(e)}")
+        
+        return jsonify({
+            "cleanup_completed": True,
+            "total_attempted": len(events_to_delete),
+            "successful_deletions": successful_deletions,
+            "failed_deletions": len(events_to_delete) - successful_deletions,
+            "deletion_details": deletion_results,
+            "next_steps": [
+                "Check your public calendar to see if duplicates are gone",
+                "Wait a few minutes for changes to propagate",
+                "Run a manual sync to repopulate any missing events",
+                "Re-enable automatic sync if everything looks good"
+            ]
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Visual cleanup execution failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
