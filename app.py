@@ -856,6 +856,75 @@ def status():
         "scheduler_running": scheduler_running
     })
 
+@app.route('/search-8am')
+def search_8am():
+    """Search specifically for any events containing '8:00' or '8am'"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get calendars
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        source_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'Calendar':
+                source_calendar_id = calendar.get('id')
+                break
+        
+        if not source_calendar_id:
+            return jsonify({"error": "Source calendar not found"})
+        
+        # Search with a much larger range and higher limit
+        start_time = datetime.now(pytz.UTC) - timedelta(days=30)  # Look back 30 days too
+        end_time = start_time + timedelta(days=400)  # Look ahead 400 days
+        
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/calendarView"
+        params = {
+            'startDateTime': start_time.isoformat(),
+            'endDateTime': end_time.isoformat(),
+            '$top': 500  # Much higher limit
+        }
+        
+        events_response = requests.get(events_url, headers=headers, params=params)
+        events_data = events_response.json()
+        all_events = events_data.get('value', [])
+        
+        # Search for any event containing "8:00", "8am", or "Mass- 8"
+        search_terms = ["8:00", "8am", "Mass- 8", "8 am"]
+        found_events = []
+        
+        for event in all_events:
+            subject = event.get('subject', '').lower()
+            for term in search_terms:
+                if term.lower() in subject:
+                    found_events.append({
+                        "subject": event.get('subject'),
+                        "start": event.get('start', {}).get('dateTime'),
+                        "type": event.get('type'),
+                        "categories": event.get('categories', []),
+                        "is_public": "Public" in event.get('categories', [])
+                    })
+                    break
+        
+        return jsonify({
+            "total_events_searched": len(all_events),
+            "search_terms": search_terms,
+            "found_events": found_events,
+            "found_count": len(found_events)
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Search failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
 @app.route('/logout')
 def logout():
     """Clear authentication"""
