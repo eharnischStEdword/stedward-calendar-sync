@@ -951,6 +951,197 @@ def force_delete_event(event_id):
         import traceback
         return jsonify({"error": f"Force delete failed: {str(e)}", "traceback": traceback.format_exc()}), 500
 
+@app.route('/clean-duplicates')
+def clean_duplicates():
+    """Find and remove duplicate events from public calendar"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar ID
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Get ALL events from public calendar
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        params = {'$top': 500}
+        
+        events_response = requests.get(events_url, headers=headers, params=params)
+        if events_response.status_code != 200:
+            return jsonify({"error": f"Failed to get events: {events_response.status_code}"})
+        
+        all_events = events_response.json().get('value', [])
+        
+        # Group events by subject and start date to find duplicates
+        event_groups = {}
+        for event in all_events:
+            subject = event.get('subject', 'No Subject')
+            start_time = event.get('start', {}).get('dateTime', 'No Start')
+            event_type = event.get('type', 'unknown')
+            
+            # Create a key for grouping
+            # For recurring events, use just subject
+            # For single events, use subject + start date
+            if event_type == 'seriesMaster':
+                key = f"recurring:{subject}"
+            else:
+                # Extract just the date part for single events
+                start_date = start_time.split('T')[0] if 'T' in start_time else start_time
+                key = f"single:{subject}:{start_date}"
+            
+            if key not in event_groups:
+                event_groups[key] = []
+            
+            event_groups[key].append({
+                'id': event.get('id'),
+                'subject': subject,
+                'start': start_time,
+                'type': event_type,
+                'created': event.get('createdDateTime'),
+                'modified': event.get('lastModifiedDateTime')
+            })
+        
+        # Find groups with duplicates
+        duplicates_found = []
+        events_to_delete = []
+        
+        for key, events in event_groups.items():
+            if len(events) > 1:
+                # Sort by creation date - keep the oldest, delete the rest
+                events.sort(key=lambda x: x.get('created', ''))
+                
+                keep_event = events[0]  # Keep the first (oldest) one
+                delete_events = events[1:]  # Delete the rest
+                
+                duplicates_found.append({
+                    'group_key': key,
+                    'total_count': len(events),
+                    'keeping': f"{keep_event['subject']} (ID: {keep_event['id'][:8]}...)",
+                    'deleting_count': len(delete_events),
+                    'deleting': [f"{e['subject']} (ID: {e['id'][:8]}...)" for e in delete_events]
+                })
+                
+                # Add to deletion list
+                events_to_delete.extend([e['id'] for e in delete_events])
+        
+        return jsonify({
+            "total_events_in_calendar": len(all_events),
+            "duplicate_groups_found": len(duplicates_found),
+            "events_to_delete": len(events_to_delete),
+            "duplicates_analysis": duplicates_found,
+            "deletion_preview": events_to_delete,
+            "next_step": "Visit /execute-duplicate-cleanup to actually delete the duplicates",
+            "warning": "This will permanently delete the duplicate events. Make sure you review the list above first!"
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Duplicate analysis failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
+@app.route('/execute-duplicate-cleanup')
+def execute_duplicate_cleanup():
+    """Actually delete the duplicate events (DANGEROUS - USE WITH CAUTION)"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        # First run the analysis again to get current duplicates
+        analysis_result = clean_duplicates()
+        if 'error' in analysis_result.get_json():
+            return analysis_result
+        
+        analysis = analysis_result.get_json()
+        events_to_delete = analysis.get('deletion_preview', [])
+        
+        if not events_to_delete:
+            return jsonify({"message": "No duplicates found to delete", "deleted_count": 0})
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar ID again
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Delete the duplicate events
+        deletion_results = []
+        successful_deletions = 0
+        
+        for event_id in events_to_delete:
+            try:
+                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event_id}"
+                delete_response = requests.delete(delete_url, headers=headers)
+                
+                success = delete_response.status_code in [200, 204]
+                if success:
+                    successful_deletions += 1
+                
+                deletion_results.append({
+                    "event_id": event_id[:8] + "...",
+                    "status_code": delete_response.status_code,
+                    "success": success,
+                    "error": None if success else delete_response.text[:100]
+                })
+                
+            except Exception as e:
+                deletion_results.append({
+                    "event_id": event_id[:8] + "...",
+                    "success": False,
+                    "error": str(e)
+                })
+        
+        return jsonify({
+            "cleanup_completed": True,
+            "total_attempted": len(events_to_delete),
+            "successful_deletions": successful_deletions,
+            "failed_deletions": len(events_to_delete) - successful_deletions,
+            "deletion_details": deletion_results,
+            "recommendation": "Run another sync to ensure calendar is clean, then re-enable automatic sync"
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Cleanup execution failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
+@app.route('/stop-scheduler')
+def stop_scheduler_endpoint():
+    """Manually stop the automatic scheduler"""
+    stop_scheduler()
+    return jsonify({"message": "Automatic sync scheduler stopped", "scheduler_running": False})
+
+@app.route('/start-scheduler')  
+def start_scheduler_endpoint():
+    """Manually start the automatic scheduler"""
+    start_scheduler()
+    return jsonify({"message": "Automatic sync scheduler started", "scheduler_running": True})
+
 @app.route('/logout')
 def logout():
     """Clear authentication"""
