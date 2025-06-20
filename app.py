@@ -16,7 +16,7 @@ import time
 import requests
 import urllib.parse
 import schedule
-from azure.identity import AuthorizationCodeCredential
+from azure.identity import AuthorizationCodeCredential, ClientSecretCredential
 from msgraph import GraphServiceClient
 from msgraph.generated.models.event import Event
 import atexit
