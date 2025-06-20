@@ -419,7 +419,8 @@ def sync_calendars():
                     'categories': source_event.get('categories'),
                     'body': {'contentType': 'html', 'content': ''},  # Always clear body
                     'location': source_event.get('location', {}),
-                    'isAllDay': source_event.get('isAllDay', False)
+                    'isAllDay': source_event.get('isAllDay', False),
+                    'showAs': source_event.get('showAs', 'free')  # Preserve free/busy status
                 }
                 
                 # Only add recurrence for recurring events
@@ -446,7 +447,8 @@ def sync_calendars():
                     'categories': source_event.get('categories'),
                     'body': {'contentType': 'html', 'content': ''},  # Always clear body
                     'location': source_event.get('location', {}),
-                    'isAllDay': source_event.get('isAllDay', False)
+                    'isAllDay': source_event.get('isAllDay', False),
+                    'showAs': source_event.get('showAs', 'free')  # Preserve free/busy status
                 }
                 
                 # Only add recurrence for recurring events
