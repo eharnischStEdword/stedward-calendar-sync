@@ -1,4 +1,6 @@
-<!DOCTYPE html>
+.church-subtitle {
+                font-size: 1rem;
+            }<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -19,7 +21,7 @@
         }
 
         .header {
-            background: rgba(238, 244, 241, 0.95);
+            background: #005921;
             backdrop-filter: blur(10px);
             box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
             padding: 1rem 0;
@@ -32,31 +34,25 @@
             max-width: 1200px;
             margin: 0 auto;
             display: flex;
+            flex-direction: column;
             align-items: center;
+            text-align: center;
             padding: 0 2rem;
         }
 
-        .logo {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #005921;
-            margin-right: 1rem;
-        }
-
-        .church-info {
-            flex-grow: 1;
-        }
-
-        .church-name {
-            font-size: 1.5rem;
-            font-weight: 600;
-            color: #005921;
-            margin-bottom: 0.25rem;
+        .logo-img {
+            width: 350px;
+            height: auto;
+            margin-bottom: 1rem;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
         }
 
         .church-subtitle {
-            color: #666;
-            font-size: 0.9rem;
+            color: rgba(238, 244, 241, 0.9);
+            font-size: 1.1rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
         .container {
@@ -304,9 +300,10 @@
                 padding: 0 1rem;
             }
 
-            .logo {
+            .logo-img {
                 margin-right: 0;
                 margin-bottom: 0.5rem;
+                height: 50px;
             }
 
             .container {
@@ -326,11 +323,8 @@
 <body>
     <header class="header">
         <div class="header-content">
-            <div class="logo">⛪</div>
-            <div class="church-info">
-                <div class="church-name">St. Edward Church & School</div>
-                <div class="church-subtitle">Calendar Synchronization Management</div>
-            </div>
+            <img src="https://static.wixstatic.com/media/14d135_81ed99cf365c40aba6c8135ef226e937~mv2.png" alt="St. Edward Church & School Logo" class="logo-img">
+            <div class="church-subtitle">Calendar Synchronization Management</div>
         </div>
     </header>
 
@@ -564,6 +558,55 @@
             if (status.sync_in_progress) {
                 showAlert('🔄 Sync operation in progress...', 'warning');
             }
+            
+            // Show detailed diagnostics results if available
+            if (status.last_sync_result && status.last_sync_result.findings) {
+                showDiagnosticsResults(status.last_sync_result);
+            }
+        }
+
+        function showDiagnosticsResults(diagnostics) {
+            const findings = diagnostics.findings;
+            let html = '<div class="alert alert-success"><h4>🔍 Diagnostics Results</h4>';
+            
+            if (findings.available_calendars) {
+                html += '<p><strong>📋 Available Calendars:</strong></p><ul>';
+                findings.available_calendars.forEach(cal => {
+                    html += `<li>"${cal.name}" (${cal.can_edit === 'True' ? 'Editable' : 'Read-only'})</li>`;
+                });
+                html += '</ul>';
+            }
+            
+            if (findings.source_calendar_found !== undefined) {
+                html += `<p><strong>📅 Source Calendar:</strong> ${findings.source_calendar_found ? '✅ Found' : '❌ Not Found'}</p>`;
+            }
+            
+            if (findings.target_calendar_found !== undefined) {
+                html += `<p><strong>🎯 Target Calendar:</strong> ${findings.target_calendar_found ? '✅ Found' : '❌ Not Found'}</p>`;
+            }
+            
+            if (findings.source_events_count !== undefined) {
+                html += `<p><strong>📊 Source Events:</strong> ${findings.source_events_count} total</p>`;
+            }
+            
+            if (findings.public_events_count !== undefined) {
+                html += `<p><strong>🔓 Public Events:</strong> ${findings.public_events_count} events</p>`;
+            }
+            
+            if (findings.target_events_count !== undefined) {
+                html += `<p><strong>🎯 Target Events:</strong> ${findings.target_events_count} events</p>`;
+            }
+            
+            if (findings.source_access_error || findings.target_access_error || findings.mailbox_access_error) {
+                html += '<p><strong>⚠️ Errors Found:</strong></p><ul>';
+                if (findings.source_access_error) html += `<li>Source: ${findings.source_access_error}</li>`;
+                if (findings.target_access_error) html += `<li>Target: ${findings.target_access_error}</li>`;
+                if (findings.mailbox_access_error) html += `<li>Mailbox: ${findings.mailbox_access_error}</li>`;
+                html += '</ul>';
+            }
+            
+            html += '</div>';
+            document.getElementById('results-area').innerHTML = html;
         }
 
         function startStatusMonitoring() {
