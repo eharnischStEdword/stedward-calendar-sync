@@ -422,27 +422,36 @@ async def sync_calendars():
         public_events = []
         recurring_events = []  # Track master recurring events
         now = datetime.now()
-        future_limit = now + timedelta(days=30)
+        # FIXED: Extend sync window to June 30, 2026 for long-term planning
+        future_limit = datetime(2026, 6, 30)
         
         for event in source_events:
             if hasattr(event, 'categories') and event.categories and "Public" in event.categories:
+                print(f"🔍 Processing public event: {event.subject}")
                 # Check if this is a recurring event master or instance
                 if hasattr(event, 'recurrence') and event.recurrence:
                     # This is a master recurring event
                     recurring_events.append(event)
-                    print(f"Found recurring master event: {event.subject}")
+                    print(f"✅ Found recurring master event: {event.subject}")
                 elif hasattr(event, 'type') and event.type == 'occurrence':
                     # This is an instance of a recurring event - skip it, we'll handle the master
-                    print(f"Skipping recurring instance: {event.subject}")
+                    print(f"⏩ Skipping recurring instance: {event.subject}")
                     continue
                 else:
                     # Regular single event
                     event_date = parse_date(event)
                     if event_date and now.date() <= event_date.date() <= future_limit.date():
                         public_events.append(event)
+                        print(f"✅ Added single event: {event.subject} on {event_date.date()}")
+                    else:
+                        print(f"❌ Skipped single event (date issue): {event.subject} - {event_date}")
+            else:
+                print(f"⚠️ Skipped non-public event: {event.subject}")
         
         # Add all recurring events (they manage their own date ranges)
         public_events.extend(recurring_events)
+        
+        print(f"📊 Sync summary: {len(public_events)} total public events to sync ({len(recurring_events)} recurring + {len(public_events) - len(recurring_events)} single)")
         
         # Create lookup dictionaries
         source_lookup = {}
@@ -458,6 +467,7 @@ async def sync_calendars():
                 else:
                     key = f"single:{event.subject}|no_date"
             source_lookup[key] = event
+            print(f"🔑 Source key: {key}")
         
         target_lookup = {}
         for event in target_events:
@@ -472,6 +482,7 @@ async def sync_calendars():
                 else:
                     key = f"single:{event.subject}|no_date"
             target_lookup[key] = event
+            print(f"🎯 Target key: {key}")
         
         # Determine actions needed
         events_to_add = []
@@ -506,6 +517,17 @@ async def sync_calendars():
                 events_to_delete.append((target_event.id, target_event.subject))
         
         total_changes = len(events_to_add) + len(events_to_update) + len(events_to_delete)
+        
+        print(f"📋 Sync plan: {len(events_to_add)} to add, {len(events_to_update)} to update, {len(events_to_delete)} to delete")
+        if events_to_add:
+            for event in events_to_add:
+                print(f"  ➕ Will add: {event.subject}")
+        if events_to_update:
+            for event_id, source_event, subject in events_to_update:
+                print(f"  ✏️ Will update: {subject}")
+        if events_to_delete:
+            for event_id, subject in events_to_delete:
+                print(f"  ❌ Will delete: {subject}")
         
         if total_changes == 0:
             result = {"success": True, "message": "Calendars already in sync", "changes": 0}
