@@ -307,14 +307,14 @@ def sync_calendars():
         
         target_events = target_response.json().get('value', [])
         
-        # Process public events from source
+        # Process public events from source - FILTER OUT INSTANCES
         public_events = []
         for event in source_events:
             categories = event.get('categories', [])
             if 'Public' in categories:
                 print(f"🔍 Processing public event: {event.get('subject')}")
                 
-                # Handle BOTH recurring master events AND single events
+                # Handle ONLY recurring masters AND true single events, skip instances
                 event_type = event.get('type', 'unknown')
                 if event_type == 'seriesMaster':
                     print(f"✅ Found recurring master event: {event.get('subject')}")
@@ -325,7 +325,8 @@ def sync_calendars():
                     print(f"Clearing body content from: {event.get('subject')}")
                     public_events.append(event_copy)
                     
-                elif event_type == 'singleInstance':
+                elif event_type == 'singleInstance' and not event.get('seriesMasterId'):
+                    # Only include single events that are NOT part of a recurring series
                     print(f"✅ Found single event: {event.get('subject')}")
                     # Clear body content for privacy
                     event_copy = event.copy()
@@ -333,6 +334,9 @@ def sync_calendars():
                         event_copy['body'] = {'contentType': 'html', 'content': ''}
                     print(f"Clearing body content from: {event.get('subject')}")
                     public_events.append(event_copy)
+                    
+                elif event_type == 'occurrence':
+                    print(f"⏩ Skipping recurring instance: {event.get('subject')} (will sync via master)")
                     
                 else:
                     print(f"⚠️ Skipped event type '{event_type}': {event.get('subject')}")
