@@ -293,15 +293,17 @@
 
         @media (max-width: 768px) {
             .header-content {
-                flex-direction: column;
-                text-align: center;
                 padding: 0 1rem;
             }
 
             .logo-img {
-                margin-right: 0;
-                margin-bottom: 0.5rem;
-                height: 50px;
+                width: 90%;
+                max-width: 280px;
+                margin-bottom: 0.75rem;
+            }
+
+            .church-subtitle {
+                font-size: 0.9rem;
             }
 
             .container {
@@ -314,6 +316,10 @@
 
             .actions-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .card-header h1 {
+                font-size: 1.5rem;
             }
         }
     </style>
