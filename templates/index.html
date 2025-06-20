@@ -43,6 +43,19 @@
             height: auto;
             margin-bottom: 1rem;
             filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+            transition: all 0.3s ease;
+        }
+
+        .header.scrolled .logo-img {
+            width: 140px;
+        }
+
+        .header.scrolled {
+            padding: 0.5rem 0;
+        }
+
+        .header.scrolled .church-subtitle {
+            font-size: 0.9rem;
         }
 
         .church-subtitle {
@@ -318,6 +331,14 @@
                 grid-template-columns: 1fr;
             }
 
+            .header.scrolled .logo-img {
+                width: 100px;
+            }
+
+            .header.scrolled {
+                padding: 0.3rem 0;
+            }
+
             .card-header h1 {
                 font-size: 1.5rem;
             }
@@ -327,7 +348,7 @@
 <body>
     <header class="header">
         <div class="header-content">
-            <img src="https://static.wixstatic.com/media/14d135_81ed99cf365c40aba6c8135ef226e937~mv2.png" alt="St. Edward Church & School Logo" class="logo-img">
+            <img src="https://static.wixstatic.com/media/14d135_cacfd4daea32497f8e3982453de34768~mv2.png" alt="St. Edward Church & School Logo" class="logo-img">
             <div class="church-subtitle">Calendar Synchronization Management</div>
         </div>
     </header>
@@ -643,6 +664,16 @@
         
         // Auto-refresh status every 30 seconds
         setInterval(refreshStatus, 30000);
+
+        // Add scroll effect for header
+        window.addEventListener('scroll', function() {
+            const header = document.querySelector('.header');
+            if (window.scrollY > 100) {
+                header.classList.add('scrolled');
+            } else {
+                header.classList.remove('scrolled');
+            }
+        });
     </script>
 </body>
 </html>
