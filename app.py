@@ -2,6 +2,7 @@
 """
 Calendar Sync Web Application for Render.com
 Simple web interface for rcarroll + automatic hourly sync + diagnostics
+FIXED: JSON serialization issue in /status endpoint
 """
 
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
@@ -43,6 +44,22 @@ access_token = None
 # Scheduler control
 scheduler_running = False
 scheduler_thread = None
+
+def make_json_serializable(obj):
+    """Convert objects to JSON-serializable format"""
+    if obj is None:
+        return None
+    elif isinstance(obj, (str, int, float, bool)):
+        return obj
+    elif isinstance(obj, dict):
+        return {key: make_json_serializable(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(item) for item in obj]
+    elif hasattr(obj, 'isoformat'):  # datetime objects
+        return obj.isoformat()
+    else:
+        # Convert any other object to string
+        return str(obj)
 
 def get_auth_url():
     """Generate Microsoft OAuth URL"""
@@ -133,10 +150,10 @@ async def run_diagnostics():
                 available_calendars = []
                 for cal in calendars.value:
                     available_calendars.append({
-                        "id": cal.id,
-                        "name": cal.name,
-                        "owner": getattr(cal, 'owner', 'Unknown'),
-                        "can_edit": getattr(cal, 'can_edit', 'Unknown')
+                        "id": str(cal.id) if cal.id else "Unknown",
+                        "name": str(cal.name) if cal.name else "Unknown",
+                        "owner": str(getattr(cal, 'owner', 'Unknown')),
+                        "can_edit": str(getattr(cal, 'can_edit', 'Unknown'))
                     })
                 
                 diagnostics["findings"]["available_calendars"] = available_calendars
@@ -144,7 +161,7 @@ async def run_diagnostics():
                 
                 print(f"📋 Found {len(available_calendars)} calendars:")
                 for cal in available_calendars:
-                    print(f"   - '{cal['name']}' (ID: {cal['id'][:20]}...)")
+                    print(f"   - '{cal['name']}'")
                 
                 # Test 2: Do our expected calendars exist?
                 source_found = None
@@ -684,7 +701,10 @@ def manual_sync():
         return jsonify({"success": False, "message": "Not authenticated"})
     
     def sync_thread():
-        run_sync()
+        global last_sync_result
+        result = run_sync()
+        # Ensure result is JSON serializable
+        last_sync_result = make_json_serializable(result)
     
     # Run sync in background thread
     thread = threading.Thread(target=sync_thread)
@@ -701,8 +721,8 @@ def run_diagnostics_endpoint():
     def diagnostics_thread():
         global last_sync_result
         result = run_diagnostics_sync()
-        # Store result in global variable so we can display it
-        last_sync_result = result
+        # FIXED: Ensure result is JSON serializable before storing
+        last_sync_result = make_json_serializable(result)
     
     # Run diagnostics in background thread
     thread = threading.Thread(target=diagnostics_thread)
@@ -712,7 +732,7 @@ def run_diagnostics_endpoint():
 
 @app.route('/status')
 def status():
-    """Get current sync status"""
+    """Get current sync status - FIXED: JSON serialization issue"""
     # Convert last sync time to Central Time for display
     central_tz = pytz.timezone('US/Central')
     display_sync_time = None
@@ -727,7 +747,7 @@ def status():
     
     return jsonify({
         "last_sync_time": display_sync_time.isoformat() if display_sync_time else None,
-        "last_sync_result": last_sync_result,
+        "last_sync_result": make_json_serializable(last_sync_result),
         "sync_in_progress": sync_in_progress,
         "authenticated": access_token is not None,
         "scheduler_running": scheduler_running
