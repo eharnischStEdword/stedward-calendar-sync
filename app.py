@@ -18,10 +18,7 @@ import schedule
 from azure.identity import AuthorizationCodeCredential
 from msgraph import GraphServiceClient
 from msgraph.generated.models.event import Event
-import threading
-import time
-import requests
-import urllib.parse
+import atexit
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
@@ -42,6 +39,10 @@ last_sync_time = None
 last_sync_result = {"success": False, "message": "Not synced yet"}
 sync_in_progress = False
 access_token = None
+
+# Scheduler control
+scheduler_running = False
+scheduler_thread = None
 
 def get_auth_url():
     """Generate Microsoft OAuth URL"""
@@ -75,6 +76,10 @@ def exchange_code_for_token(auth_code):
     if response.status_code == 200:
         tokens = response.json()
         access_token = tokens.get('access_token')
+        
+        # Start the scheduler when we get authenticated
+        start_scheduler()
+        
         return True
     return False
 
@@ -438,6 +443,47 @@ def run_sync():
         print(f"Sync error: {e}")
         return {"success": False, "message": str(e)}
 
+def scheduled_sync():
+    """Function to be called by the scheduler"""
+    print(f"Running scheduled sync at {datetime.now()}")
+    run_sync()
+
+def run_scheduler():
+    """Run the scheduler in a background thread"""
+    global scheduler_running
+    scheduler_running = True
+    
+    # Schedule the sync to run every hour
+    schedule.every().hour.do(scheduled_sync)
+    
+    print("Scheduler started - sync will run every hour")
+    
+    while scheduler_running:
+        schedule.run_pending()
+        time.sleep(60)  # Check every minute
+    
+    print("Scheduler stopped")
+
+def start_scheduler():
+    """Start the scheduler thread if not already running"""
+    global scheduler_thread, scheduler_running
+    
+    if scheduler_thread is None or not scheduler_thread.is_alive():
+        print("Starting scheduler thread...")
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+    else:
+        print("Scheduler already running")
+
+def stop_scheduler():
+    """Stop the scheduler"""
+    global scheduler_running
+    scheduler_running = False
+    print("Stopping scheduler...")
+
+# Register cleanup function
+atexit.register(stop_scheduler)
+
 # Web Routes
 @app.route('/')
 def index():
@@ -517,7 +563,8 @@ def status():
         "last_sync_time": display_sync_time.isoformat() if display_sync_time else None,
         "last_sync_result": last_sync_result,
         "sync_in_progress": sync_in_progress,
-        "authenticated": access_token is not None
+        "authenticated": access_token is not None,
+        "scheduler_running": scheduler_running
     })
 
 @app.route('/logout')
@@ -525,6 +572,7 @@ def logout():
     """Clear authentication"""
     global access_token
     access_token = None
+    stop_scheduler()
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
