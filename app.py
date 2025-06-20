@@ -1440,6 +1440,216 @@ def execute_visual_duplicate_cleanup():
         import traceback
         return jsonify({"error": f"Visual cleanup execution failed: {str(e)}", "traceback": traceback.format_exc()}), 500
 
+@app.route('/find-orphaned-events')
+def find_orphaned_events():
+    """Find events that exist in public calendar but not in source calendar"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get calendars
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        source_calendar_id = None
+        target_calendar_id = None
+        
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'Calendar':
+                source_calendar_id = calendar.get('id')
+            elif calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+        
+        if not source_calendar_id or not target_calendar_id:
+            return jsonify({"error": "Required calendars not found"})
+        
+        # Get source events
+        source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
+        source_params = {'$top': 200}
+        source_response = requests.get(source_events_url, headers=headers, params=source_params)
+        source_events = source_response.json().get('value', [])
+        
+        # Get target events
+        target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        target_params = {'$top': 200}
+        target_response = requests.get(target_events_url, headers=headers, params=target_params)
+        target_events = target_response.json().get('value', [])
+        
+        # Build list of public events that SHOULD exist (from source)
+        should_exist = set()
+        source_event_details = []
+        
+        for event in source_events:
+            categories = event.get('categories', [])
+            if 'Public' in categories:
+                event_type = event.get('type', 'unknown')
+                subject = event.get('subject', '')
+                
+                # Only include masters and true single events
+                if event_type == 'seriesMaster':
+                    should_exist.add(f"recurring:{subject}")
+                elif event_type == 'singleInstance' and not event.get('seriesMasterId'):
+                    start_date = event.get('start', {}).get('dateTime', 'no-date')
+                    if 'T' in start_date:
+                        start_date = start_date.split('T')[0]
+                    should_exist.add(f"single:{subject}:{start_date}")
+                
+                source_event_details.append({
+                    'subject': subject,
+                    'type': event_type,
+                    'should_sync': True
+                })
+        
+        # Check what actually exists in target
+        actually_exists = []
+        orphaned_events = []
+        
+        for event in target_events:
+            subject = event.get('subject', '')
+            event_type = event.get('type', 'unknown')
+            event_id = event.get('id')
+            
+            # Create the same key format
+            if event_type == 'seriesMaster':
+                key = f"recurring:{subject}"
+            else:
+                start_date = event.get('start', {}).get('dateTime', 'no-date')
+                if 'T' in start_date:
+                    start_date = start_date.split('T')[0]
+                key = f"single:{subject}:{start_date}"
+            
+            actually_exists.append({
+                'key': key,
+                'subject': subject,
+                'type': event_type,
+                'id': event_id,
+                'should_exist': key in should_exist
+            })
+            
+            # If this event is NOT in the should_exist list, it's orphaned
+            if key not in should_exist:
+                orphaned_events.append({
+                    'subject': subject,
+                    'type': event_type,
+                    'id': event_id,
+                    'key': key,
+                    'start': event.get('start', {}).get('dateTime', 'No start'),
+                    'created': event.get('createdDateTime', 'Unknown'),
+                    'delete_url': f"/force-delete-event/{event_id}"
+                })
+        
+        return jsonify({
+            "analysis": "Orphaned events (exist in public but not in source)",
+            "source_public_events": len([e for e in source_event_details if e['should_sync']]),
+            "target_events_total": len(target_events),
+            "should_exist_count": len(should_exist),
+            "orphaned_events_found": len(orphaned_events),
+            "orphaned_events": orphaned_events,
+            "source_events_that_should_sync": source_event_details,
+            "all_target_events": actually_exists,
+            "next_step": "Review orphaned events above, then visit /cleanup-orphaned-events to delete them"
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Orphan analysis failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
+@app.route('/cleanup-orphaned-events')
+def cleanup_orphaned_events():
+    """Delete orphaned events that exist in public but not in source"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        # First get the orphaned events
+        orphan_analysis = find_orphaned_events()
+        if 'error' in orphan_analysis.get_json():
+            return orphan_analysis
+        
+        analysis = orphan_analysis.get_json()
+        orphaned_events = analysis.get('orphaned_events', [])
+        
+        if not orphaned_events:
+            return jsonify({"message": "No orphaned events found to delete", "deleted_count": 0})
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar ID
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Delete the orphaned events
+        deletion_results = []
+        successful_deletions = 0
+        
+        for orphan in orphaned_events:
+            event_id = orphan['id']
+            subject = orphan['subject']
+            
+            try:
+                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event_id}"
+                delete_response = requests.delete(delete_url, headers=headers)
+                
+                success = delete_response.status_code in [200, 204]
+                if success:
+                    successful_deletions += 1
+                
+                deletion_results.append({
+                    "subject": subject,
+                    "event_id": event_id[:8] + "...",
+                    "status_code": delete_response.status_code,
+                    "success": success,
+                    "error": None if success else delete_response.text[:100]
+                })
+                
+                print(f"{'✅' if success else '❌'} Delete orphaned '{subject}' - Status: {delete_response.status_code}")
+                
+            except Exception as e:
+                deletion_results.append({
+                    "subject": subject,
+                    "event_id": event_id[:8] + "...",
+                    "success": False,
+                    "error": str(e)
+                })
+                print(f"❌ Error deleting orphaned '{subject}': {str(e)}")
+        
+        return jsonify({
+            "cleanup_completed": True,
+            "total_orphaned_events": len(orphaned_events),
+            "successful_deletions": successful_deletions,
+            "failed_deletions": len(orphaned_events) - successful_deletions,
+            "deletion_details": deletion_results,
+            "recommendation": "Run a manual sync to ensure everything is properly synchronized",
+            "next_steps": [
+                "Check your public calendar to verify orphaned events are gone",
+                "Run a manual sync to repopulate any legitimate events",
+                "The automatic hourly sync will keep things clean going forward"
+            ]
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Orphan cleanup failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
