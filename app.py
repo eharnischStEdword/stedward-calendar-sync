@@ -925,6 +925,77 @@ def search_8am():
         import traceback
         return jsonify({"error": f"Search failed: {str(e)}", "traceback": traceback.format_exc()}), 500
 
+@app.route('/search-mass-events')
+def search_mass_events():
+    """Search for all events containing 'Mass' to see what actually exists"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get calendars
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        source_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'Calendar':
+                source_calendar_id = calendar.get('id')
+                break
+        
+        if not source_calendar_id:
+            return jsonify({"error": "Source calendar not found"})
+        
+        # Get events with extended range
+        start_time = datetime.now(pytz.UTC) - timedelta(days=30)
+        end_time = start_time + timedelta(days=400)
+        
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/calendarView"
+        params = {
+            'startDateTime': start_time.isoformat(),
+            'endDateTime': end_time.isoformat(),
+            '$top': 500
+        }
+        
+        events_response = requests.get(events_url, headers=headers, params=params)
+        events_data = events_response.json()
+        all_events = events_data.get('value', [])
+        
+        # Find all Mass events and get unique subjects
+        mass_events = []
+        unique_subjects = set()
+        
+        for event in all_events:
+            subject = event.get('subject', '')
+            if 'Mass' in subject and subject not in unique_subjects:
+                unique_subjects.add(subject)
+                mass_events.append({
+                    "subject": subject,
+                    "start": event.get('start', {}).get('dateTime'),
+                    "type": event.get('type'),
+                    "categories": event.get('categories', []),
+                    "is_public": "Public" in event.get('categories', [])
+                })
+        
+        # Sort by subject
+        mass_events.sort(key=lambda x: x['subject'])
+        
+        return jsonify({
+            "total_events_searched": len(all_events),
+            "unique_mass_subjects": sorted(list(unique_subjects)),
+            "mass_events_details": mass_events,
+            "unique_mass_count": len(unique_subjects)
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Search failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
 @app.route('/logout')
 def logout():
     """Clear authentication"""
