@@ -59,6 +59,10 @@
         .info {
             color: #17a2b8;
         }
+        .warning {
+            color: #ffc107;
+            font-weight: bold;
+        }
         .spinner {
             display: inline-block;
             width: 20px;
@@ -114,6 +118,11 @@
         
         <div class="status-box">
             <h3>Current Status</h3>
+            <p><strong>Automatic Sync:</strong> 
+                <span id="scheduler-status" class="info">
+                    ⏰ Running (syncs every hour)
+                </span>
+            </p>
             <p><strong>Last automatic sync:</strong> 
                 <span id="last-sync">
                     {% if last_sync_time %}
@@ -148,7 +157,7 @@
         <div class="recent-activity">
             <h3>How This Works</h3>
             <div class="activity-item">
-                <strong>Automatic Sync:</strong> The calendars sync automatically every hour
+                <strong>Automatic Sync:</strong> The calendars sync automatically every hour when you're authenticated
             </div>
             <div class="activity-item">
                 <strong>Manual Sync:</strong> Click the button above to sync immediately
@@ -258,6 +267,17 @@
             messageDiv.className = 'message';
         }
 
+        function updateSchedulerStatus(isRunning) {
+            const schedulerElement = document.getElementById('scheduler-status');
+            if (isRunning) {
+                schedulerElement.className = 'success';
+                schedulerElement.textContent = '⏰ Running (syncs every hour)';
+            } else {
+                schedulerElement.className = 'warning';
+                schedulerElement.textContent = '⚠️ Not running - authenticate to start';
+            }
+        }
+
         // Auto-refresh status every 30 seconds
         setInterval(() => {
             if (!syncInProgress) {
@@ -266,9 +286,22 @@
                 .then(data => {
                     document.getElementById('last-sync').textContent = 
                         data.last_sync_time ? new Date(data.last_sync_time).toLocaleString() : 'Never';
+                    
+                    // Update scheduler status
+                    updateSchedulerStatus(data.scheduler_running);
                 });
             }
         }, 30000);
+
+        // Initial scheduler status check
+        fetch('/status')
+        .then(response => response.json())
+        .then(data => {
+            updateSchedulerStatus(data.scheduler_running);
+        })
+        .catch(error => {
+            console.error('Error checking initial status:', error);
+        });
     </script>
 </body>
 </html>
