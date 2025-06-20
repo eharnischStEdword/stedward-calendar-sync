@@ -1079,6 +1079,147 @@ def debug_sync_events():
         import traceback
         return jsonify({"error": f"Debug failed: {str(e)}", "traceback": traceback.format_exc()}), 500
 
+@app.route('/debug-undeletable-events')
+def debug_undeletable_events():
+    """Debug: Analyze events in public calendar that might be causing delete issues"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get calendars
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar 'St. Edward Public Calendar' not found"})
+        
+        # Get ALL events from public calendar (not just calendarView)
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        params = {
+            '$top': 500,  # Get lots of events
+            '$select': 'id,subject,start,end,type,organizer,createdBy,lastModifiedBy,isOrganizer,responseStatus,webLink,categories,recurrence,seriesMasterId'
+        }
+        
+        events_response = requests.get(events_url, headers=headers, params=params)
+        if events_response.status_code != 200:
+            return jsonify({"error": f"Failed to get target events: {events_response.status_code} - {events_response.text}"})
+        
+        target_events = events_response.json().get('value', [])
+        
+        # Analyze each event for potential delete issues
+        problematic_events = []
+        normal_events = []
+        
+        for event in target_events:
+            event_analysis = {
+                "id": event.get('id'),
+                "subject": event.get('subject'),
+                "type": event.get('type'),
+                "start": event.get('start', {}).get('dateTime', 'No start'),
+                "organizer": event.get('organizer', {}).get('emailAddress', {}).get('address', 'Unknown'),
+                "isOrganizer": event.get('isOrganizer', False),
+                "createdBy": event.get('createdBy', {}).get('emailAddress', {}).get('address', 'Unknown'),
+                "lastModifiedBy": event.get('lastModifiedBy', {}).get('emailAddress', {}).get('address', 'Unknown'),
+                "categories": event.get('categories', []),
+                "seriesMasterId": event.get('seriesMasterId'),
+                "recurrence": event.get('recurrence') is not None,
+                "potential_issues": []
+            }
+            
+            # Check for potential delete issues
+            
+            # Issue 1: Not the organizer
+            if not event_analysis["isOrganizer"]:
+                event_analysis["potential_issues"].append("Not the organizer of this event")
+            
+            # Issue 2: Different creator
+            creator = event_analysis["createdBy"]
+            if creator != "calendar@stedward.org" and creator != "Unknown":
+                event_analysis["potential_issues"].append(f"Created by different user: {creator}")
+            
+            # Issue 3: Recurring event instance (not master)
+            if event_analysis["type"] == "occurrence":
+                event_analysis["potential_issues"].append("This is a recurring event instance - delete the master instead")
+            
+            # Issue 4: External organizer
+            organizer = event_analysis["organizer"]
+            if organizer != "calendar@stedward.org" and organizer != "Unknown":
+                event_analysis["potential_issues"].append(f"External organizer: {organizer}")
+            
+            # Issue 5: System-generated events
+            subject = event_analysis["subject"] or ""
+            if any(keyword in subject.lower() for keyword in ["cancelled:", "updated:", "fw:", "re:"]):
+                event_analysis["potential_issues"].append("Appears to be system-generated or forwarded event")
+            
+            if event_analysis["potential_issues"]:
+                problematic_events.append(event_analysis)
+            else:
+                normal_events.append(event_analysis)
+        
+        # Test deletion on a few problematic events (just test, don't actually delete)
+        deletion_test_results = []
+        for event in problematic_events[:3]:  # Test first 3 problematic events
+            test_result = {
+                "event_id": event["id"],
+                "subject": event["subject"],
+                "can_delete": False,
+                "error_message": None
+            }
+            
+            # Try to get detailed permissions on this specific event
+            try:
+                event_detail_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event['id']}"
+                detail_response = requests.get(event_detail_url, headers=headers)
+                
+                if detail_response.status_code == 200:
+                    test_result["can_delete"] = True
+                    test_result["error_message"] = "Event is accessible - deletion should work"
+                else:
+                    test_result["error_message"] = f"Cannot access event: {detail_response.status_code}"
+                    
+            except Exception as e:
+                test_result["error_message"] = f"Access test failed: {str(e)}"
+            
+            deletion_test_results.append(test_result)
+        
+        return jsonify({
+            "total_events_in_public_calendar": len(target_events),
+            "problematic_events_count": len(problematic_events),
+            "normal_events_count": len(normal_events),
+            "problematic_events": problematic_events,
+            "deletion_test_results": deletion_test_results,
+            "summary": {
+                "most_common_issues": {
+                    "not_organizer": len([e for e in problematic_events if "Not the organizer" in str(e["potential_issues"])]),
+                    "external_creator": len([e for e in problematic_events if "Created by different user" in str(e["potential_issues"])]),
+                    "recurring_instances": len([e for e in problematic_events if "recurring event instance" in str(e["potential_issues"])]),
+                    "external_organizer": len([e for e in problematic_events if "External organizer" in str(e["potential_issues"])])
+                }
+            },
+            "recommendations": [
+                "If events have external organizers, you may need to decline/remove them instead of deleting",
+                "For recurring event instances, delete the series master instead",
+                "Events created by other users may require different permissions",
+                "Some events might be read-only due to calendar sharing settings"
+            ]
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Debug failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
 @app.route('/logout')
 def logout():
     """Clear authentication"""
