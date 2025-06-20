@@ -3,6 +3,7 @@
 Calendar Sync Web Application for Render.com
 Simple web interface for rcarroll + automatic hourly sync + diagnostics
 FIXED: JSON serialization issue in /status endpoint
+FIXED: sync_calendars function to use events endpoint like master events search
 """
 
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
@@ -241,365 +242,230 @@ async def run_diagnostics():
     print(f"🏁 Diagnostics completed")
     return diagnostics
 
-def parse_date(event):
-    """Extract date from event"""
-    try:
-        if hasattr(event, 'start'):
-            if hasattr(event.start, 'date') and event.start.date:
-                return datetime.strptime(event.start.date, '%Y-%m-%d')
-            elif hasattr(event.start, 'date_time') and event.start.date_time:
-                dt_str = event.start.date_time
-                if '.' in dt_str:
-                    dt_str = dt_str.split('.')[0]
-                return datetime.strptime(dt_str, '%Y-%m-%dT%H:%M:%S')
-    except Exception as e:
-        print(f"Date parse error: {e}")
-    return None
-
-def create_event_signature(event):
-    """Create a detailed signature for event comparison"""
-    sig_parts = []
-    
-    # Subject
-    sig_parts.append(f"subject:{event.subject}")
-    
-    # For recurring events, use the series master ID or recurrence pattern
-    if hasattr(event, 'recurrence') and event.recurrence:
-        sig_parts.append(f"recurring:true")
-        # Add recurrence pattern to signature
-        if hasattr(event.recurrence, 'pattern'):
-            sig_parts.append(f"pattern:{event.recurrence.pattern}")
-    else:
-        # Start time for non-recurring events
-        if hasattr(event, 'start'):
-            if hasattr(event.start, 'date'):
-                sig_parts.append(f"start_date:{event.start.date}")
-            elif hasattr(event.start, 'date_time'):
-                sig_parts.append(f"start_datetime:{event.start.date_time}")
-        
-        # End time for non-recurring events
-        if hasattr(event, 'end'):
-            if hasattr(event.end, 'date'):
-                sig_parts.append(f"end_date:{event.end.date}")
-            elif hasattr(event.end, 'date_time'):
-                sig_parts.append(f"end_datetime:{event.end.date_time}")
-    
-    # Location
-    if hasattr(event, 'location') and event.location:
-        if hasattr(event.location, 'display_name'):
-            sig_parts.append(f"location:{event.location.display_name}")
-    
-    # Note: Excluding body/meeting details for privacy - not included in signature
-    
-    return "|".join(sig_parts)
-
-async def get_shared_calendars(client):
-    """Get calendars directly from shared mailbox"""
-    try:
-        calendars = await client.users.by_user_id(SHARED_MAILBOX).calendars.get()
-        return calendars.value
-    except Exception as e:
-        print(f"Error accessing shared mailbox: {e}")
-        return []
-
-async def get_events_from_shared(client, calendar_id):
-    """Get events from a shared mailbox calendar"""
-    try:
-        result = await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(calendar_id).events.get()
-        return result.value if result else []
-    except Exception as e:
-        print(f"Error getting events: {e}")
-        return []
-
-async def create_event_in_shared(client, calendar_id, event):
-    """Create event in shared mailbox calendar"""
-    try:
-        new_event = Event(
-            subject=event.subject,
-            # Don't set body field to avoid copying meeting details
-            start=event.start,
-            end=event.end,
-            location=event.location,
-            categories=["Public"],
-            is_all_day=event.is_all_day if hasattr(event, 'is_all_day') else False,
-            is_reminder_on=event.is_reminder_on if hasattr(event, 'is_reminder_on') else False,
-            importance=event.importance if hasattr(event, 'importance') else None,
-            sensitivity=event.sensitivity if hasattr(event, 'sensitivity') else None,
-            show_as=event.show_as if hasattr(event, 'show_as') else None,
-            # Copy recurrence pattern if it exists
-            recurrence=event.recurrence if hasattr(event, 'recurrence') and event.recurrence else None
-        )
-        
-        created = await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(calendar_id).events.post(new_event)
-        return created
-    except Exception as e:
-        print(f"Error creating event: {e}")
-        return None
-
-async def update_event_in_shared(client, calendar_id, event_id, source_event):
-    """Update an existing event in shared mailbox calendar"""
-    try:
-        updated_event = Event(
-            subject=source_event.subject,
-            start=source_event.start,
-            end=source_event.end,
-            location=source_event.location,
-            categories=["Public"],
-            is_all_day=source_event.is_all_day if hasattr(source_event, 'is_all_day') else False,
-            is_reminder_on=source_event.is_reminder_on if hasattr(source_event, 'is_reminder_on') else False,
-            importance=source_event.importance if hasattr(source_event, 'importance') else None,
-            sensitivity=source_event.sensitivity if hasattr(source_event, 'sensitivity') else None,
-            show_as=source_event.show_as if hasattr(source_event, 'show_as') else None,
-            # Copy recurrence pattern if it exists
-            recurrence=source_event.recurrence if hasattr(source_event, 'recurrence') and source_event.recurrence else None
-        )
-        
-        # Don't set body at all - let it default to empty
-        
-        await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(calendar_id).events.by_event_id(event_id).patch(updated_event)
-        return True
-    except Exception as e:
-        print(f"Error updating event: {e}")
-        return False
-
-async def delete_event_from_shared(client, calendar_id, event_id):
-    """Delete event from shared mailbox calendar"""
-    try:
-        await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(calendar_id).events.by_event_id(event_id).delete()
-        return True
-    except Exception as e:
-        print(f"Error deleting event: {e}")
-        return False
-
-async def sync_calendars():
-    """Main sync function with full synchronization"""
+def sync_calendars():
+    """FIXED: Sync function using direct HTTP requests like successful master events search"""
     global last_sync_time, last_sync_result, sync_in_progress
     
     if sync_in_progress:
-        return {"success": False, "message": "Sync already in progress"}
-    
-    if not access_token:
-        return {"success": False, "message": "Not authenticated - please sign in first"}
+        return {"error": "Sync already in progress"}
     
     sync_in_progress = True
     print(f"Starting calendar sync at {datetime.now()}")
     
     try:
-        # Create Graph client
-        client = create_graph_client()
-        if not client:
-            result = {"success": False, "message": "Authentication failed"}
-            last_sync_result = result
-            return result
+        if not access_token:
+            return {"error": "Not authenticated"}
         
-        # Get shared mailbox calendars
-        calendars = await get_shared_calendars(client)
-        if not calendars:
-            result = {"success": False, "message": "Could not access calendars"}
-            last_sync_result = result
-            return result
-        
-        # Find source and target
-        source_cal = None
-        target_cal = None
-        
-        for cal in calendars:
-            if cal.name == SOURCE_CALENDAR:
-                source_cal = cal
-            elif cal.name == TARGET_CALENDAR:
-                target_cal = cal
-        
-        if not source_cal or not target_cal:
-            result = {"success": False, "message": "Could not find required calendars"}
-            last_sync_result = result
-            return result
-        
-        # Get all events from both calendars
-        source_events = await get_events_from_shared(client, source_cal.id)
-        target_events = await get_events_from_shared(client, target_cal.id)
-        
-        # Filter source events for public ones in date range
-        public_events = []
-        recurring_events = []  # Track master recurring events
-        now = datetime.now()
-        # FIXED: Extend sync window to June 30, 2026 for long-term planning
-        future_limit = datetime(2026, 6, 30)
-        
-        for event in source_events:
-            if hasattr(event, 'categories') and event.categories and "Public" in event.categories:
-                print(f"🔍 Processing public event: {event.subject}")
-                # Check if this is a recurring event master or instance
-                if hasattr(event, 'recurrence') and event.recurrence:
-                    # This is a master recurring event
-                    recurring_events.append(event)
-                    print(f"✅ Found recurring master event: {event.subject}")
-                elif hasattr(event, 'type') and event.type == 'occurrence':
-                    # This is an instance of a recurring event - skip it, we'll handle the master
-                    print(f"⏩ Skipping recurring instance: {event.subject}")
-                    continue
-                else:
-                    # Regular single event
-                    event_date = parse_date(event)
-                    if event_date and now.date() <= event_date.date() <= future_limit.date():
-                        public_events.append(event)
-                        print(f"✅ Added single event: {event.subject} on {event_date.date()}")
-                    else:
-                        print(f"❌ Skipped single event (date issue): {event.subject} - {event_date}")
-            else:
-                print(f"⚠️ Skipped non-public event: {event.subject}")
-        
-        # Add all recurring events (they manage their own date ranges)
-        public_events.extend(recurring_events)
-        
-        print(f"📊 Sync summary: {len(public_events)} total public events to sync ({len(recurring_events)} recurring + {len(public_events) - len(recurring_events)} single)")
-        
-        # Create lookup dictionaries
-        source_lookup = {}
-        for event in public_events:
-            if hasattr(event, 'recurrence') and event.recurrence:
-                # For recurring events, use subject as key
-                key = f"recurring:{event.subject}"
-            else:
-                # For single events, use subject+date as key
-                event_date = parse_date(event)
-                if event_date:
-                    key = f"single:{event.subject}|{event_date.date()}"
-                else:
-                    key = f"single:{event.subject}|no_date"
-            source_lookup[key] = event
-            print(f"🔑 Source key: {key}")
-        
-        target_lookup = {}
-        for event in target_events:
-            if hasattr(event, 'recurrence') and event.recurrence:
-                # For recurring events, use subject as key
-                key = f"recurring:{event.subject}"
-            else:
-                # For single events, use subject+date as key
-                event_date = parse_date(event)
-                if event_date:
-                    key = f"single:{event.subject}|{event_date.date()}"
-                else:
-                    key = f"single:{event.subject}|no_date"
-            target_lookup[key] = event
-            print(f"🎯 Target key: {key}")
-        
-        # Determine actions needed
-        events_to_add = []
-        events_to_update = []
-        events_to_delete = []
-        
-        # Check for events to add or update
-        for key, source_event in source_lookup.items():
-            if key in target_lookup:
-                # Event exists - check if it needs updating
-                target_event = target_lookup[key]
-                source_sig = create_event_signature(source_event)
-                target_sig = create_event_signature(target_event)
-                
-                # Always update if target event has body content (to clear private details)
-                has_body_content = (hasattr(target_event, 'body') and 
-                                  target_event.body and 
-                                  hasattr(target_event.body, 'content') and 
-                                  target_event.body.content)
-                
-                if source_sig != target_sig or has_body_content:
-                    events_to_update.append((target_event.id, source_event, target_event.subject))
-                    if has_body_content:
-                        print(f"Clearing body content from: {target_event.subject}")
-            else:
-                # Event doesn't exist - add it
-                events_to_add.append(source_event)
-        
-        # Check for events to delete (in target but not in source)
-        for key, target_event in target_lookup.items():
-            if key not in source_lookup:
-                events_to_delete.append((target_event.id, target_event.subject))
-        
-        total_changes = len(events_to_add) + len(events_to_update) + len(events_to_delete)
-        
-        print(f"📋 Sync plan: {len(events_to_add)} to add, {len(events_to_update)} to update, {len(events_to_delete)} to delete")
-        if events_to_add:
-            for event in events_to_add:
-                print(f"  ➕ Will add: {event.subject}")
-        if events_to_update:
-            for event_id, source_event, subject in events_to_update:
-                print(f"  ✏️ Will update: {subject}")
-        if events_to_delete:
-            for event_id, subject in events_to_delete:
-                print(f"  ❌ Will delete: {subject}")
-        
-        if total_changes == 0:
-            result = {"success": True, "message": "Calendars already in sync", "changes": 0}
-            # Convert to Central Time for display
-            central_tz = pytz.timezone('US/Central')
-            last_sync_result = result
-            last_sync_time = datetime.now(central_tz)
-            return result
-        
-        # Perform sync operations
-        success_count = 0
-        
-        # Add new events
-        for event in events_to_add:
-            result = await create_event_in_shared(client, target_cal.id, event)
-            if result:
-                success_count += 1
-        
-        # Update existing events
-        for event_id, source_event, subject in events_to_update:
-            if await update_event_in_shared(client, target_cal.id, event_id, source_event):
-                success_count += 1
-        
-        # Delete removed events
-        for event_id, subject in events_to_delete:
-            if await delete_event_from_shared(client, target_cal.id, event_id):
-                success_count += 1
-        
-        result = {
-            "success": True,
-            "message": f"Sync complete: {success_count}/{total_changes} operations successful",
-            "changes": total_changes,
-            "successful_operations": success_count,
-            "added": len(events_to_add),
-            "updated": len(events_to_update),
-            "deleted": len(events_to_delete)
+        # Use the same authentication approach as master events search
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
         }
         
-        # Convert to Central Time for display
-        central_tz = pytz.timezone('US/Central')
+        # Get calendars
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        
+        if calendars_response.status_code != 200:
+            return {"error": f"Failed to get calendars: {calendars_response.status_code}"}
+        
+        calendars_data = calendars_response.json()
+        source_calendar_id = None
+        target_calendar_id = None
+        
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'Calendar':
+                source_calendar_id = calendar.get('id')
+            elif calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+        
+        if not source_calendar_id or not target_calendar_id:
+            return {"error": "Required calendars not found"}
+        
+        # Get source events using EVENTS endpoint (not calendarView) to get master recurring events
+        source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
+        source_params = {
+            '$top': 200,
+            '$filter': "type eq 'seriesMaster'"  # Only get recurring master events
+        }
+        
+        source_response = requests.get(source_events_url, headers=headers, params=source_params)
+        if source_response.status_code != 200:
+            return {"error": f"Failed to get source events: {source_response.status_code}"}
+        
+        source_events = source_response.json().get('value', [])
+        
+        # Get target events using the same approach
+        target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        target_params = {
+            '$top': 200,
+            '$filter': "type eq 'seriesMaster'"  # Only get recurring master events
+        }
+        
+        target_response = requests.get(target_events_url, headers=headers, params=target_params)
+        if target_response.status_code != 200:
+            return {"error": f"Failed to get target events: {target_response.status_code}"}
+        
+        target_events = target_response.json().get('value', [])
+        
+        # Process public events from source
+        public_events = []
+        for event in source_events:
+            categories = event.get('categories', [])
+            if 'Public' in categories:
+                print(f"🔍 Processing public event: {event.get('subject')}")
+                if event.get('type') == 'seriesMaster':
+                    print(f"✅ Found recurring master event: {event.get('subject')}")
+                    # Clear body content for privacy
+                    event_copy = event.copy()
+                    if 'body' in event_copy:
+                        event_copy['body'] = {'contentType': 'html', 'content': ''}
+                    print(f"Clearing body content from: {event.get('subject')}")
+                    public_events.append(event_copy)
+                else:
+                    print(f"⚠️ Skipped non-master event: {event.get('subject')}")
+            else:
+                print(f"⚠️ Skipped non-public event: {event.get('subject')}")
+        
+        print(f"📊 Sync summary: {len(public_events)} total public events to sync")
+        
+        # Create source and target dictionaries for comparison
+        source_events_dict = {}
+        for event in public_events:
+            subject = event.get('subject', '')
+            key = f"recurring:{subject}"
+            source_events_dict[key] = event
+            print(f"🔑 Source key: {key}")
+        
+        target_events_dict = {}
+        for event in target_events:
+            subject = event.get('subject', '')
+            key = f"recurring:{subject}"
+            target_events_dict[key] = event
+            print(f"🎯 Target key: {key}")
+        
+        # Determine what needs to be added, updated, or deleted
+        to_add = []
+        to_update = []
+        to_delete = []
+        
+        for key, source_event in source_events_dict.items():
+            if key in target_events_dict:
+                to_update.append((key, source_event, target_events_dict[key]))
+            else:
+                to_add.append((key, source_event))
+        
+        for key in target_events_dict:
+            if key not in source_events_dict:
+                to_delete.append((key, target_events_dict[key]))
+        
+        print(f"📋 Sync plan: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
+        
+        for key, _ in to_add:
+            print(f"  ➕ Will add: {key.replace('recurring:', '')}")
+        for key, _, _ in to_update:
+            print(f"  ✏️ Will update: {key.replace('recurring:', '')}")
+        for key, _ in to_delete:
+            print(f"  🗑️ Will delete: {key.replace('recurring:', '')}")
+        
+        # Execute sync operations
+        successful_operations = 0
+        total_operations = len(to_add) + len(to_update) + len(to_delete)
+        
+        # Add new events
+        for key, source_event in to_add:
+            try:
+                create_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+                create_data = {
+                    'subject': source_event.get('subject'),
+                    'start': source_event.get('start'),
+                    'end': source_event.get('end'),
+                    'categories': source_event.get('categories'),
+                    'recurrence': source_event.get('recurrence'),
+                    'body': {'contentType': 'html', 'content': ''},  # Always clear body
+                    'location': source_event.get('location', {})
+                }
+                
+                create_response = requests.post(create_url, headers=headers, json=create_data)
+                if create_response.status_code in [200, 201]:
+                    successful_operations += 1
+                else:
+                    print(f"❌ Failed to add {key}: {create_response.status_code}")
+            except Exception as e:
+                print(f"❌ Error adding {key}: {str(e)}")
+        
+        # Update existing events
+        for key, source_event, target_event in to_update:
+            try:
+                update_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{target_event.get('id')}"
+                update_data = {
+                    'subject': source_event.get('subject'),
+                    'start': source_event.get('start'),
+                    'end': source_event.get('end'),
+                    'categories': source_event.get('categories'),
+                    'recurrence': source_event.get('recurrence'),
+                    'body': {'contentType': 'html', 'content': ''},  # Always clear body
+                    'location': source_event.get('location', {})
+                }
+                
+                update_response = requests.patch(update_url, headers=headers, json=update_data)
+                if update_response.status_code == 200:
+                    successful_operations += 1
+                else:
+                    print(f"❌ Failed to update {key}: {update_response.status_code}")
+            except Exception as e:
+                print(f"❌ Error updating {key}: {str(e)}")
+        
+        # Delete removed events
+        for key, target_event in to_delete:
+            try:
+                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{target_event.get('id')}"
+                delete_response = requests.delete(delete_url, headers=headers)
+                if delete_response.status_code in [200, 204]:
+                    successful_operations += 1
+                else:
+                    print(f"❌ Failed to delete {key}: {delete_response.status_code}")
+            except Exception as e:
+                print(f"❌ Error deleting {key}: {str(e)}")
+        
+        last_sync_time = datetime.now(pytz.UTC)
+        result = {
+            'success': True,
+            'message': f'Sync complete: {successful_operations}/{total_operations} operations successful',
+            'changes': successful_operations,
+            'successful_operations': successful_operations,
+            'added': len(to_add),
+            'updated': len(to_update),
+            'deleted': len(to_delete)
+        }
+        
         last_sync_result = result
-        last_sync_time = datetime.now(central_tz)
+        print(f"Sync result: {result}")
         return result
         
     except Exception as e:
-        result = {"success": False, "message": f"Sync failed: {str(e)}"}
-        # Convert to Central Time for display
-        central_tz = pytz.timezone('US/Central')
-        last_sync_result = result
-        last_sync_time = datetime.now(central_tz)
-        return result
+        import traceback
+        error_result = {
+            'success': False,
+            'message': f'Sync failed: {str(e)}',
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+        last_sync_result = error_result
+        print(f"Sync error: {error_result}")
+        return error_result
+    
     finally:
         sync_in_progress = False
 
 def run_sync():
-    """Run sync in asyncio event loop"""
+    """Run sync - NO LONGER ASYNC"""
     if not access_token:
         print("Cannot run sync - not authenticated")
         return {"success": False, "message": "Not authenticated"}
     
     try:
-        # Try to get the current event loop
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError("Event loop is closed")
-    except RuntimeError:
-        # Create a new event loop if none exists or it's closed
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    try:
-        result = loop.run_until_complete(sync_calendars())
+        result = sync_calendars()
         print(f"Sync result: {result}")
         return result
     except Exception as e:
@@ -752,17 +618,12 @@ def run_diagnostics_endpoint():
     
     return jsonify({"success": True, "message": "Diagnostics started"})
 
-# Add this route to your app.py to debug ALL events in source calendar
-
 @app.route('/debug-all-events')
 def debug_all_events():
     """Debug: Show ALL events in source calendar regardless of public/private status"""
     try:
         if not access_token:
             return jsonify({"error": "Not authenticated"}), 401
-        
-        # Use the same approach as your working sync function
-        # Make a direct API call using requests instead of the Graph SDK
         
         headers = {
             'Authorization': f'Bearer {access_token}',
@@ -1075,5 +936,3 @@ def logout():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
-
-
