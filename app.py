@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Calendar Sync Web Application for Render.com
-Simple web interface for rcarroll + automatic hourly sync
+Simple web interface for rcarroll + automatic hourly sync + diagnostics
 """
 
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
@@ -99,6 +99,130 @@ def create_graph_client():
     
     credential = BearerTokenCredential(access_token)
     return GraphServiceClient(credentials=credential)
+
+async def run_diagnostics():
+    """Run comprehensive diagnostics to check what's available"""
+    if not access_token:
+        return {"success": False, "message": "Not authenticated - please sign in first"}
+    
+    print(f"🔍 Starting diagnostics at {datetime.now()}")
+    diagnostics = {
+        "success": False,
+        "timestamp": datetime.now().isoformat(),
+        "shared_mailbox": SHARED_MAILBOX,
+        "expected_source": SOURCE_CALENDAR,
+        "expected_target": TARGET_CALENDAR,
+        "findings": {}
+    }
+    
+    try:
+        # Create Graph client
+        client = create_graph_client()
+        if not client:
+            diagnostics["message"] = "Could not create Graph client"
+            return diagnostics
+        
+        print("✅ Graph client created successfully")
+        
+        # Test 1: Can we access the shared mailbox?
+        try:
+            calendars = await client.users.by_user_id(SHARED_MAILBOX).calendars.get()
+            print(f"✅ Successfully accessed shared mailbox: {SHARED_MAILBOX}")
+            
+            if calendars and calendars.value:
+                available_calendars = []
+                for cal in calendars.value:
+                    available_calendars.append({
+                        "id": cal.id,
+                        "name": cal.name,
+                        "owner": getattr(cal, 'owner', 'Unknown'),
+                        "can_edit": getattr(cal, 'can_edit', 'Unknown')
+                    })
+                
+                diagnostics["findings"]["available_calendars"] = available_calendars
+                diagnostics["findings"]["calendar_count"] = len(available_calendars)
+                
+                print(f"📋 Found {len(available_calendars)} calendars:")
+                for cal in available_calendars:
+                    print(f"   - '{cal['name']}' (ID: {cal['id'][:20]}...)")
+                
+                # Test 2: Do our expected calendars exist?
+                source_found = None
+                target_found = None
+                
+                for cal in available_calendars:
+                    if cal["name"] == SOURCE_CALENDAR:
+                        source_found = cal
+                    elif cal["name"] == TARGET_CALENDAR:
+                        target_found = cal
+                
+                diagnostics["findings"]["source_calendar_found"] = source_found is not None
+                diagnostics["findings"]["target_calendar_found"] = target_found is not None
+                
+                if source_found:
+                    print(f"✅ Source calendar '{SOURCE_CALENDAR}' found")
+                    diagnostics["findings"]["source_calendar_details"] = source_found
+                else:
+                    print(f"❌ Source calendar '{SOURCE_CALENDAR}' NOT found")
+                
+                if target_found:
+                    print(f"✅ Target calendar '{TARGET_CALENDAR}' found")
+                    diagnostics["findings"]["target_calendar_details"] = target_found
+                else:
+                    print(f"❌ Target calendar '{TARGET_CALENDAR}' NOT found")
+                
+                # Test 3: Can we read events from the source calendar?
+                if source_found:
+                    try:
+                        source_events = await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(source_found["id"]).events.get()
+                        event_count = len(source_events.value) if source_events and source_events.value else 0
+                        diagnostics["findings"]["source_events_count"] = event_count
+                        print(f"📅 Source calendar has {event_count} total events")
+                        
+                        # Count public events
+                        public_count = 0
+                        if source_events and source_events.value:
+                            for event in source_events.value:
+                                if hasattr(event, 'categories') and event.categories and "Public" in event.categories:
+                                    public_count += 1
+                        
+                        diagnostics["findings"]["public_events_count"] = public_count
+                        print(f"🔓 Found {public_count} public events in source calendar")
+                        
+                    except Exception as e:
+                        diagnostics["findings"]["source_access_error"] = str(e)
+                        print(f"❌ Error accessing source calendar events: {e}")
+                
+                # Test 4: Can we read events from the target calendar?
+                if target_found:
+                    try:
+                        target_events = await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(target_found["id"]).events.get()
+                        target_event_count = len(target_events.value) if target_events and target_events.value else 0
+                        diagnostics["findings"]["target_events_count"] = target_event_count
+                        print(f"🎯 Target calendar has {target_event_count} events")
+                        
+                    except Exception as e:
+                        diagnostics["findings"]["target_access_error"] = str(e)
+                        print(f"❌ Error accessing target calendar events: {e}")
+                
+                diagnostics["success"] = True
+                diagnostics["message"] = "Diagnostics completed successfully"
+                
+            else:
+                diagnostics["message"] = "No calendars found in shared mailbox"
+                print("❌ No calendars found in shared mailbox")
+                
+        except Exception as e:
+            diagnostics["message"] = f"Error accessing shared mailbox: {str(e)}"
+            diagnostics["findings"]["mailbox_access_error"] = str(e)
+            print(f"❌ Error accessing shared mailbox: {e}")
+        
+    except Exception as e:
+        diagnostics["message"] = f"Diagnostics failed: {str(e)}"
+        print(f"💥 Diagnostics failed: {e}")
+    
+    print(f"🏁 Diagnostics completed")
+    return diagnostics
 
 def parse_date(event):
     """Extract date from event"""
@@ -443,6 +567,30 @@ def run_sync():
         print(f"Sync error: {e}")
         return {"success": False, "message": str(e)}
 
+def run_diagnostics_sync():
+    """Run diagnostics in asyncio event loop"""
+    if not access_token:
+        print("Cannot run diagnostics - not authenticated")
+        return {"success": False, "message": "Not authenticated"}
+    
+    try:
+        # Try to get the current event loop
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("Event loop is closed")
+    except RuntimeError:
+        # Create a new event loop if none exists or it's closed
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    try:
+        result = loop.run_until_complete(run_diagnostics())
+        print(f"Diagnostics result: {result}")
+        return result
+    except Exception as e:
+        print(f"Diagnostics error: {e}")
+        return {"success": False, "message": str(e)}
+
 def scheduled_sync():
     """Function to be called by the scheduler"""
     print(f"Running scheduled sync at {datetime.now()}")
@@ -543,6 +691,24 @@ def manual_sync():
     thread.start()
     
     return jsonify({"success": True, "message": "Sync started"})
+
+@app.route('/diagnostics', methods=['POST'])
+def run_diagnostics_endpoint():
+    """Run diagnostics to check calendar configuration"""
+    if not access_token:
+        return jsonify({"success": False, "message": "Not authenticated"})
+    
+    def diagnostics_thread():
+        global last_sync_result
+        result = run_diagnostics_sync()
+        # Store result in global variable so we can display it
+        last_sync_result = result
+    
+    # Run diagnostics in background thread
+    thread = threading.Thread(target=diagnostics_thread)
+    thread.start()
+    
+    return jsonify({"success": True, "message": "Diagnostics started"})
 
 @app.route('/status')
 def status():
