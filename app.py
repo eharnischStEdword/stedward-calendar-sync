@@ -980,6 +980,105 @@ def search_master_events():
         import traceback
         return jsonify({"error": f"Search failed: {str(e)}", "traceback": traceback.format_exc()}), 500
 
+@app.route('/debug-sync-events')
+def debug_sync_events():
+    """Debug: Show exactly what events the sync function will process"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get calendars
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        source_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'Calendar':
+                source_calendar_id = calendar.get('id')
+                break
+        
+        if not source_calendar_id:
+            return jsonify({"error": "Source calendar not found"})
+        
+        # Get ALL events from source (same as sync function)
+        source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
+        source_params = {'$top': 200}
+        
+        source_response = requests.get(source_events_url, headers=headers, params=source_params)
+        source_events = source_response.json().get('value', [])
+        
+        # Process events exactly like the sync function does
+        all_events = []
+        public_events_will_sync = []
+        
+        for event in source_events:
+            event_info = {
+                "subject": event.get('subject'),
+                "type": event.get('type'),
+                "categories": event.get('categories', []),
+                "is_public": "Public" in event.get('categories', []),
+                "start": event.get('start', {}).get('dateTime', 'No start'),
+                "seriesMasterId": event.get('seriesMasterId'),
+                "will_sync": False,
+                "sync_reason": ""
+            }
+            
+            # Apply the same logic as sync function
+            categories = event.get('categories', [])
+            if 'Public' in categories:
+                event_type = event.get('type', 'unknown')
+                if event_type == 'seriesMaster':
+                    event_info["will_sync"] = True
+                    event_info["sync_reason"] = "Recurring master event"
+                    public_events_will_sync.append(event_info)
+                elif event_type == 'singleInstance' and not event.get('seriesMasterId'):
+                    event_info["will_sync"] = True
+                    event_info["sync_reason"] = "True single event (no series master)"
+                    public_events_will_sync.append(event_info)
+                elif event_type == 'occurrence':
+                    event_info["sync_reason"] = "Skipped - recurring instance"
+                elif event_type == 'singleInstance' and event.get('seriesMasterId'):
+                    event_info["sync_reason"] = "Skipped - part of recurring series"
+                else:
+                    event_info["sync_reason"] = f"Skipped - unknown type '{event_type}'"
+            else:
+                event_info["sync_reason"] = "Not public"
+            
+            all_events.append(event_info)
+        
+        # Look for duplicates
+        subjects_count = {}
+        for event in public_events_will_sync:
+            subject = event["subject"]
+            if subject in subjects_count:
+                subjects_count[subject] += 1
+            else:
+                subjects_count[subject] = 1
+        
+        duplicates = {k: v for k, v in subjects_count.items() if v > 1}
+        
+        return jsonify({
+            "total_events_in_source": len(all_events),
+            "will_sync_count": len(public_events_will_sync),
+            "events_that_will_sync": public_events_will_sync,
+            "all_events_debug": all_events,
+            "duplicate_subjects": duplicates,
+            "analysis": {
+                "mass_8am_events": [e for e in all_events if "8:00" in e["subject"] or "8am" in e["subject"].lower()],
+                "totus_tuus_events": [e for e in all_events if "totus" in e["subject"].lower()]
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Debug failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
 @app.route('/logout')
 def logout():
     """Clear authentication"""
