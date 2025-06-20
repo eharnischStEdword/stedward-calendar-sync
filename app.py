@@ -10,6 +10,11 @@ import os
 import json
 from datetime import datetime, timedelta
 import pytz
+import threading
+import time
+import requests
+import urllib.parse
+import schedule
 from azure.identity import AuthorizationCodeCredential
 from msgraph import GraphServiceClient
 from msgraph.generated.models.event import Event
@@ -452,8 +457,20 @@ def index():
         </html>
         '''
     
+    # Convert last sync time to Central Time for display
+    central_tz = pytz.timezone('US/Central')
+    display_sync_time = None
+    if last_sync_time:
+        if last_sync_time.tzinfo is None:
+            # If no timezone info, assume UTC and convert
+            utc_time = pytz.utc.localize(last_sync_time)
+            display_sync_time = utc_time.astimezone(central_tz)
+        else:
+            # Already has timezone info, convert to Central
+            display_sync_time = last_sync_time.astimezone(central_tz)
+    
     return render_template('index.html', 
-                         last_sync_time=last_sync_time,
+                         last_sync_time=display_sync_time,
                          last_sync_result=last_sync_result,
                          sync_in_progress=sync_in_progress)
 
@@ -484,8 +501,20 @@ def manual_sync():
 @app.route('/status')
 def status():
     """Get current sync status"""
+    # Convert last sync time to Central Time for display
+    central_tz = pytz.timezone('US/Central')
+    display_sync_time = None
+    if last_sync_time:
+        if last_sync_time.tzinfo is None:
+            # If no timezone info, assume UTC and convert
+            utc_time = pytz.utc.localize(last_sync_time)
+            display_sync_time = utc_time.astimezone(central_tz)
+        else:
+            # Already has timezone info, convert to Central
+            display_sync_time = last_sync_time.astimezone(central_tz)
+    
     return jsonify({
-        "last_sync_time": last_sync_time.isoformat() if last_sync_time else None,
+        "last_sync_time": display_sync_time.isoformat() if display_sync_time else None,
         "last_sync_result": last_sync_result,
         "sync_in_progress": sync_in_progress,
         "authenticated": access_token is not None
