@@ -36,6 +36,29 @@
             align-items: center;
             text-align: center;
             padding: 0 2rem;
+            position: relative;
+        }
+
+        .logout-btn {
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            background: rgba(238, 244, 241, 0.2);
+            color: #EEF4F1;
+            border: 1px solid rgba(238, 244, 241, 0.3);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(5px);
+        }
+
+        .logout-btn:hover {
+            background: rgba(238, 244, 241, 0.3);
+            border-color: rgba(238, 244, 241, 0.5);
+            transform: translateY(-1px);
         }
 
         .logo-img {
@@ -228,6 +251,16 @@
             transform: translateY(-2px);
         }
 
+        .btn-warning {
+            background: #e74c3c;
+            color: #EEF4F1;
+        }
+
+        .btn-warning:hover {
+            background: #c0392b;
+            transform: translateY(-2px);
+        }
+
         .btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
@@ -257,6 +290,28 @@
             background: #f8d7da;
             border-color: #dc3545;
             color: #721c24;
+        }
+
+        .troubleshooting-section {
+            background: #fff8e1;
+            border: 1px solid #ffb74d;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .troubleshooting-section h4 {
+            color: #e65100;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .troubleshooting-section p {
+            color: #5d4037;
+            margin-bottom: 1rem;
+            line-height: 1.5;
         }
 
         .footer {
@@ -294,6 +349,12 @@
         @media (max-width: 768px) {
             .header-content {
                 padding: 0 1rem;
+            }
+
+            .logout-btn {
+                position: static;
+                margin-bottom: 1rem;
+                align-self: flex-end;
             }
 
             .logo-img {
@@ -335,6 +396,7 @@
 <body>
     <header class="header">
         <div class="header-content">
+            <a href="/logout" class="logout-btn">🚪 Sign Out</a>
             <img src="https://static.wixstatic.com/media/14d135_cacfd4daea32497f8e3982453de34768~mv2.png" alt="St. Edward Church & School Logo" class="logo-img">
             <div class="church-subtitle">Calendar Synchronization Management</div>
         </div>
@@ -433,7 +495,25 @@
                                 Refresh Status
                             </button>
                         </div>
+
+                        <div class="action-card">
+                            <div class="action-icon">🔧</div>
+                            <div class="action-title">Force Re-authentication</div>
+                            <div class="action-description">
+                                If sync is failing with token errors, sign out and back in to refresh credentials
+                            </div>
+                            <a href="/logout" class="btn btn-warning">
+                                Sign Out & Restart
+                            </a>
+                        </div>
                     </div>
+                </div>
+
+                <!-- Troubleshooting Section -->
+                <div class="troubleshooting-section">
+                    <h4>🔧 Troubleshooting</h4>
+                    <p><strong>If you see token expiration errors:</strong> Click "Sign Out & Restart" above, then sign back in. Microsoft tokens expire after about 1 hour, and this refreshes your authentication.</p>
+                    <p><strong>If sync isn't running hourly:</strong> The automatic sync only works while you're authenticated. Re-authentication restarts the hourly scheduler.</p>
                 </div>
 
                 <!-- Results Area -->
