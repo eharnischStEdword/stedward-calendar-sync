@@ -292,6 +292,12 @@
             color: #721c24;
         }
 
+        .alert-info {
+            background: #d1ecf1;
+            border-color: #0c5460;
+            color: #0c5460;
+        }
+
         .troubleshooting-section {
             background: #fff8e1;
             border: 1px solid #ffb74d;
@@ -312,6 +318,16 @@
             color: #5d4037;
             margin-bottom: 1rem;
             line-height: 1.5;
+        }
+
+        .rate-limit-warning {
+            background: #ffe0b2;
+            border: 1px solid #ff9800;
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            color: #e65100;
         }
 
         .footer {
@@ -344,6 +360,30 @@
             0% { opacity: 1; }
             50% { opacity: 0.5; }
             100% { opacity: 1; }
+        }
+
+        .token-status {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+
+        .token-status.valid {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .token-status.expiring {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .token-status.expired {
+            background: #f8d7da;
+            color: #721c24;
         }
 
         @media (max-width: 768px) {
@@ -418,6 +458,7 @@
                         <div class="status-item">
                             <div class="status-label">Authentication</div>
                             <div class="status-value success" id="auth-status">✓ Connected</div>
+                            <div id="token-status-badge"></div>
                         </div>
                         
                         <div class="status-item">
@@ -456,6 +497,10 @@
                         Deleted: {{ last_sync_result.deleted or 0 }}
                     </div>
                     {% endif %}
+                    
+                    <div id="rate-limit-info" class="rate-limit-warning" style="display: none;">
+                        ⚠️ Rate limit: <span id="rate-limit-remaining">20</span> sync requests remaining this hour
+                    </div>
                 </div>
 
                 <!-- Actions Section -->
@@ -487,7 +532,7 @@
 
                         <div class="action-card">
                             <div class="action-icon">📊</div>
-                            <div class="action-title">View Logs</div>
+                            <div class="action-title">View Status</div>
                             <div class="action-description">
                                 Monitor real-time sync status and view detailed operation logs
                             </div>
@@ -498,7 +543,7 @@
 
                         <div class="action-card">
                             <div class="action-icon">🔧</div>
-                            <div class="action-title">Force Re-authentication</div>
+                            <div class="action-title">Re-authenticate</div>
                             <div class="action-description">
                                 If sync is failing with token errors, sign out and back in to refresh credentials
                             </div>
@@ -511,9 +556,10 @@
 
                 <!-- Troubleshooting Section -->
                 <div class="troubleshooting-section">
-                    <h4>🔧 Troubleshooting</h4>
-                    <p><strong>If you see token expiration errors:</strong> Click "Sign Out & Restart" above, then sign back in. Microsoft tokens expire after about 1 hour, and this refreshes your authentication.</p>
-                    <p><strong>If sync isn't running hourly:</strong> The automatic sync only works while you're authenticated. Re-authentication restarts the hourly scheduler.</p>
+                    <h4>🔧 Troubleshooting Tips</h4>
+                    <p><strong>Token Expiration:</strong> The system automatically refreshes tokens before they expire. If you see persistent authentication errors, use "Sign Out & Restart" above.</p>
+                    <p><strong>Automatic Sync:</strong> The scheduler runs every hour while authenticated. Check the "Auto Sync" status above to ensure it's active.</p>
+                    <p><strong>Rate Limiting:</strong> To prevent overload, manual syncs are limited to 20 per hour. The limit resets automatically.</p>
                 </div>
 
                 <!-- Results Area -->
@@ -532,10 +578,12 @@
         document.getElementById('page-timestamp').textContent = new Date().toLocaleString();
 
         let statusInterval;
+        let tokenCheckInterval;
 
         function showAlert(message, type) {
             const alertClass = type === 'success' ? 'alert-success' : 
-                             type === 'warning' ? 'alert-warning' : 'alert-error';
+                             type === 'warning' ? 'alert-warning' : 
+                             type === 'info' ? 'alert-info' : 'alert-error';
             
             const resultsArea = document.getElementById('results-area');
             resultsArea.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
@@ -622,11 +670,56 @@
             }
         }
 
+        function updateTokenStatusBadge(status) {
+            const badgeContainer = document.getElementById('token-status-badge');
+            
+            if (status.token_status === 'valid' && status.token_expires_at) {
+                const expiresAt = new Date(status.token_expires_at);
+                const now = new Date();
+                const minutesUntilExpiry = Math.floor((expiresAt - now) / 60000);
+                
+                let badgeClass = 'valid';
+                let badgeText = 'Token Valid';
+                
+                if (minutesUntilExpiry < 10) {
+                    badgeClass = 'expiring';
+                    badgeText = `Token expiring in ${minutesUntilExpiry} min`;
+                }
+                
+                badgeContainer.innerHTML = `<span class="token-status ${badgeClass}">${badgeText}</span>`;
+            } else if (status.token_status === 'expired') {
+                badgeContainer.innerHTML = '<span class="token-status expired">Token Expired</span>';
+            } else {
+                badgeContainer.innerHTML = '';
+            }
+        }
+
+        function updateRateLimitInfo(status) {
+            const rateLimitInfo = document.getElementById('rate-limit-info');
+            const rateLimitRemaining = document.getElementById('rate-limit-remaining');
+            
+            if (status.rate_limit_remaining !== undefined) {
+                rateLimitRemaining.textContent = status.rate_limit_remaining;
+                
+                if (status.rate_limit_remaining < 5) {
+                    rateLimitInfo.style.display = 'block';
+                } else {
+                    rateLimitInfo.style.display = 'none';
+                }
+            }
+        }
+
         function updateStatusDisplay(status) {
             // Update auth status
             const authStatus = document.getElementById('auth-status');
             authStatus.textContent = status.authenticated ? '✓ Connected' : '❌ Disconnected';
             authStatus.className = 'status-value ' + (status.authenticated ? 'success' : 'error');
+            
+            // Update token status badge
+            updateTokenStatusBadge(status);
+            
+            // Update rate limit info
+            updateRateLimitInfo(status);
             
             // Update last sync time
             if (status.last_sync_time) {
@@ -646,14 +739,29 @@
                 }
             }
             
+            // Update scheduler status
+            const schedulerStatus = document.getElementById('scheduler-status');
+            if (status.scheduler_running) {
+                schedulerStatus.textContent = '✓ Active (Hourly)';
+                schedulerStatus.className = 'status-value success';
+            } else {
+                schedulerStatus.textContent = '❌ Stopped';
+                schedulerStatus.className = 'status-value error';
+            }
+            
             // Show sync in progress
             if (status.sync_in_progress) {
-                showAlert('🔄 Sync operation in progress...', 'warning');
+                showAlert('🔄 Sync operation in progress...', 'info');
             }
             
             // Show detailed diagnostics results if available
             if (status.last_sync_result && status.last_sync_result.findings) {
                 showDiagnosticsResults(status.last_sync_result);
+            }
+            
+            // Check for token expiration warning
+            if (status.token_status === 'expired' || (status.token_expires_at && new Date(status.token_expires_at) < new Date())) {
+                showAlert('⚠️ Authentication token has expired. Please sign out and sign back in to continue.', 'warning');
             }
         }
 
@@ -726,11 +834,53 @@
             }, 2000);
         }
 
+        // Check token status periodically
+        function startTokenMonitoring() {
+            tokenCheckInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/status');
+                    const status = await response.json();
+                    updateTokenStatusBadge(status);
+                    
+                    // Alert if token is about to expire
+                    if (status.token_expires_at) {
+                        const expiresAt = new Date(status.token_expires_at);
+                        const now = new Date();
+                        const minutesUntilExpiry = Math.floor((expiresAt - now) / 60000);
+                        
+                        if (minutesUntilExpiry < 5 && minutesUntilExpiry > 0) {
+                            console.log('Token expiring soon, will auto-refresh');
+                        }
+                    }
+                } catch (error) {
+                    console.error('Token check failed:', error);
+                }
+            }, 60000); // Check every minute
+        }
+
+        // Health check
+        async function checkHealth() {
+            try {
+                const response = await fetch('/health');
+                const health = await response.json();
+                console.log('Health check:', health);
+            } catch (error) {
+                console.error('Health check failed:', error);
+            }
+        }
+
         // Refresh status on page load
-        window.addEventListener('load', refreshStatus);
+        window.addEventListener('load', () => {
+            refreshStatus();
+            startTokenMonitoring();
+            checkHealth();
+        });
         
         // Auto-refresh status every 30 seconds
         setInterval(refreshStatus, 30000);
+        
+        // Health check every 5 minutes
+        setInterval(checkHealth, 300000);
     </script>
 </body>
 </html>
