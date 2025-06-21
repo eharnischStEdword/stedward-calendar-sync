@@ -954,6 +954,14 @@ def scheduler_status():
         "scheduler_thread_alive": thread_alive,
         "needs_restart": not thread_alive or not scheduler_running
     })
+
+# Add this endpoint to your app.py file, near the other scheduler endpoints
+
+@app.route('/start-scheduler')  
+def start_scheduler_endpoint():
+    """Manually start the automatic scheduler"""
+    start_scheduler()
+    return jsonify({"message": "Automatic sync scheduler started", "scheduler_running": scheduler_running})
 # Include all your other existing endpoints...
 # (I'm truncating here for space, but include all the other debug endpoints from your original file)
 
