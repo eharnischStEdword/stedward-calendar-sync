@@ -941,7 +941,19 @@ def debug_problem_events():
     except Exception as e:
         import traceback
         return jsonify({"error": f"Debug failed: {str(e)}", "traceback": traceback.format_exc()}), 500
-
+@app.route('/scheduler-status')
+def scheduler_status():
+    """Check if scheduler thread is actually running"""
+    global scheduler_thread, scheduler_running
+    
+    thread_alive = scheduler_thread is not None and scheduler_thread.is_alive()
+    
+    return jsonify({
+        "scheduler_running_flag": scheduler_running,
+        "scheduler_thread_exists": scheduler_thread is not None,
+        "scheduler_thread_alive": thread_alive,
+        "needs_restart": not thread_alive or not scheduler_running
+    })
 # Include all your other existing endpoints...
 # (I'm truncating here for space, but include all the other debug endpoints from your original file)
 
