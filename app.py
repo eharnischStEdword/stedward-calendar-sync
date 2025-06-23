@@ -490,11 +490,24 @@ def sync_calendars():
         
         target_events = target_response.json().get('value', [])
         
-        # Process public events from source - FILTER OUT INSTANCES
+        # Process public events from source - FILTER OUT INSTANCES AND TENTATIVE EVENTS
         public_events = []
+        tentative_count = 0
+        
         for event in source_events:
             categories = event.get('categories', [])
             if 'Public' in categories:
+                # NEW: Check if event is confirmed (busy) and not tentative
+                show_as = event.get('showAs', 'busy')  # Default to 'busy' if not specified
+                
+                # Only sync events that are marked as "busy" (confirmed)
+                # Skip events marked as "tentative", "free", or "oof" (out of office)
+                if show_as != 'busy':
+                    logger.debug(f"Skipping tentative/unconfirmed event: {event.get('subject')} (showAs: {show_as})")
+                    if show_as == 'tentative':
+                        tentative_count += 1
+                    continue
+                
                 logger.debug(f"Processing public event: {event.get('subject')}")
                 
                 # Handle ONLY recurring masters AND true single events, skip instances
@@ -522,7 +535,7 @@ def sync_calendars():
                 else:
                     logger.debug(f"Skipped event type '{event_type}': {event.get('subject')}")
         
-        logger.info(f"Sync summary: {len(public_events)} total public events to sync")
+        logger.info(f"Sync summary: {len(public_events)} confirmed public events to sync, {tentative_count} tentative events skipped")
         
         # Create source and target dictionaries for comparison
         source_events_dict = {}
@@ -659,7 +672,8 @@ def sync_calendars():
                 'successful_operations': successful_operations,
                 'added': len(to_add),
                 'updated': len(to_update),
-                'deleted': len(to_delete)
+                'deleted': len(to_delete),
+                'tentative_skipped': tentative_count
             }
             last_sync_result = result
         
