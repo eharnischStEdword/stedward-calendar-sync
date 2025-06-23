@@ -736,7 +736,8 @@ def run_diagnostics_sync():
 def scheduled_sync():
     """Function to be called by the scheduler"""
     logger.info("Running scheduled sync")
-    run_sync()
+    result = run_sync()
+    logger.info(f"Sync completed: {result}")
 
 def run_scheduler():
     """Run the scheduler in a background thread"""
