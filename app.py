@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Calendar Sync Web Application for Render.com
-STABLE VERSION with improvements for production deployment
+STABLE VERSION with improvements for production deployment and token persistence
 """
 
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
@@ -90,6 +90,44 @@ def make_json_serializable(obj):
     else:
         return str(obj)
 
+def save_tokens_to_env(access_token, refresh_token, expires_at):
+    """Save tokens to environment variables (for next deployment)"""
+    # Note: This won't persist immediately, but you can set these manually in Render dashboard
+    logger.info("SAVE THESE TO YOUR RENDER ENVIRONMENT VARIABLES:")
+    logger.info(f"REFRESH_TOKEN={refresh_token}")
+    logger.info(f"TOKEN_EXPIRES_AT={expires_at.isoformat()}")
+
+def load_tokens_from_env():
+    """Load tokens from environment variables on startup"""
+    global access_token, refresh_token, token_expires_at
+    
+    stored_refresh = os.environ.get('REFRESH_TOKEN')
+    stored_expires = os.environ.get('TOKEN_EXPIRES_AT')
+    
+    if stored_refresh and stored_expires:
+        try:
+            expires_datetime = datetime.fromisoformat(stored_expires)
+            
+            # If token is still valid for more than 1 hour, try to use it
+            if expires_datetime > datetime.utcnow() + timedelta(hours=1):
+                with token_lock:
+                    refresh_token = stored_refresh
+                    token_expires_at = expires_datetime
+                
+                # Try to refresh the access token
+                if refresh_access_token():
+                    logger.info("Successfully restored authentication from environment variables")
+                    start_scheduler()  # Start scheduler after successful restore
+                    return True
+                else:
+                    logger.warning("Failed to refresh token from stored refresh token")
+            else:
+                logger.info("Stored token is expired, need fresh authentication")
+        except Exception as e:
+            logger.error(f"Error loading tokens from environment: {e}")
+    
+    return False
+
 def get_auth_url():
     """Generate Microsoft OAuth URL with offline_access for refresh tokens"""
     params = {
@@ -132,6 +170,9 @@ def exchange_code_for_token(auth_code):
                 # Calculate when token expires (usually 1 hour)
                 expires_in = tokens.get('expires_in', 3600)
                 token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in - 300)  # Refresh 5 minutes early
+            
+            # Save tokens for persistence
+            save_tokens_to_env(access_token, refresh_token, token_expires_at)
             
             logger.info(f"Successfully obtained tokens. Access token expires at: {token_expires_at}")
             
@@ -921,6 +962,9 @@ if __name__ == '__main__':
     if not CLIENT_SECRET:
         logger.error("CLIENT_SECRET environment variable is not set!")
         exit(1)
+    
+    # Try to restore authentication on startup
+    load_tokens_from_env()
     
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
