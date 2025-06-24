@@ -1249,6 +1249,63 @@ def logout():
     logger.info("User logged out - all tokens cleared")
     return redirect(url_for('index'))
 
+@app.route('/force-cleanup-target')
+def force_cleanup_target():
+    """Delete ALL events from target calendar to fix iCalUId mismatch"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Get ALL events from target
+        target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        target_params = {'$top': 500}
+        
+        target_response = requests.get(target_events_url, headers=headers, params=target_params)
+        target_events = target_response.json().get('value', [])
+        
+        # Delete ALL events
+        deleted_count = 0
+        failed_count = 0
+        
+        for event in target_events:
+            try:
+                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event.get('id')}"
+                delete_response = requests.delete(delete_url, headers=headers)
+                
+                if delete_response.status_code in [200, 204]:
+                    deleted_count += 1
+                else:
+                    failed_count += 1
+            except:
+                failed_count += 1
+        
+        return jsonify({
+            "message": f"Cleaned target calendar: deleted {deleted_count} events, {failed_count} failed",
+            "next_step": "Now run a sync to populate with correct events"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     # Validate required environment variables
     if not CLIENT_SECRET:
