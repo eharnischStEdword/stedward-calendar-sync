@@ -1291,6 +1291,17 @@ def logout():
     logger.info("User logged out - all tokens cleared")
     return redirect(url_for('index'))
 
+# Add this endpoint to your app.py file, right before the "if __name__ == '__main__':" line
+
+@app.route('/health')
+def health_check():
+    """Simple health check endpoint for Render"""
+    return {
+        'status': 'healthy',
+        'service': 'stedward-calendar-sync',
+        'timestamp': datetime.now().isoformat()
+    }, 200
+
 if __name__ == '__main__':
     # Validate required environment variables
     if not CLIENT_SECRET:
