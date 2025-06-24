@@ -26,9 +26,6 @@
             backdrop-filter: blur(10px);
             box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
             padding: 1rem 0;
-            position: sticky;
-            top: 0;
-            z-index: 100;
         }
 
         .header-content {
@@ -116,227 +113,192 @@
             padding: 2rem;
         }
 
-        /* Results Area moved to top */
-        #results-area {
-            margin-bottom: 2rem;
-            order: -1;
-        }
-
-        .status-section {
-            background: #f8f9fa;
+        /* Persistent status bar at top */
+        .status-bar {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
             border-radius: 12px;
-            padding: 1.5rem;
+            padding: 1rem;
             margin-bottom: 2rem;
             border-left: 4px solid #DAAA00;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
 
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-top: 1rem;
+        .status-summary {
+            display: flex;
+            align-items: center;
+            gap: 2rem;
         }
 
         .status-item {
-            background: #EEF4F1;
-            padding: 1rem;
-            border-radius: 8px;
-            text-align: center;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-        }
-
-        .status-label {
-            font-size: 0.85rem;
-            color: #666;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 0.5rem;
-        }
-
-        .status-value {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #005921;
-        }
-
-        .status-value.success {
-            color: #005921;
-        }
-
-        .status-value.warning {
-            color: #DAAA00;
-        }
-
-        .status-value.error {
-            color: #dc3545;
-        }
-
-        .actions-section {
-            margin-top: 2rem;
-        }
-
-        .actions-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1rem;
-        }
-
-        .action-card {
-            background: #EEF4F1;
-            border: 2px solid #e9ecef;
-            border-radius: 12px;
-            padding: 1.5rem;
-            text-align: center;
-            transition: all 0.3s ease;
-        }
-
-        .action-card:hover {
-            border-color: #005921;
-            box-shadow: 0 5px 20px rgba(0, 89, 33, 0.1);
-            transform: translateY(-2px);
-        }
-
-        .action-icon {
-            font-size: 2.5rem;
-            margin-bottom: 1rem;
-            color: #005921;
-        }
-
-        .action-title {
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: #005921;
-            margin-bottom: 0.5rem;
-        }
-
-        .action-description {
-            color: #666;
-            font-size: 0.9rem;
-            margin-bottom: 1.5rem;
-            line-height: 1.4;
-        }
-
-        .btn {
-            display: inline-block;
-            padding: 0.75rem 1.5rem;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            transition: all 0.3s ease;
-            border: none;
-            cursor: pointer;
-            font-size: 0.9rem;
-        }
-
-        .btn-primary {
-            background: #005921;
-            color: #EEF4F1;
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0, 89, 33, 0.3);
-        }
-
-        .btn-secondary {
-            background: #6c757d;
-            color: #EEF4F1;
-        }
-
-        .btn-secondary:hover {
-            background: #5a6268;
-            transform: translateY(-2px);
-        }
-
-        .btn-success {
-            background: #DAAA00;
-            color: #EEF4F1;
-        }
-
-        .btn-success:hover {
-            background: #c49900;
-            transform: translateY(-2px);
-        }
-
-        .btn-warning {
-            background: #e74c3c;
-            color: #EEF4F1;
-        }
-
-        .btn-warning:hover {
-            background: #c0392b;
-            transform: translateY(-2px);
-        }
-
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none !important;
-        }
-
-        .alert {
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-            border-left: 4px solid;
-        }
-
-        .alert-success {
-            background: #d4edda;
-            border-color: #005921;
-            color: #155724;
-        }
-
-        .alert-warning {
-            background: #fff3cd;
-            border-color: #DAAA00;
-            color: #856404;
-        }
-
-        .alert-error {
-            background: #f8d7da;
-            border-color: #dc3545;
-            color: #721c24;
-        }
-
-        .alert-info {
-            background: #d1ecf1;
-            border-color: #0c5460;
-            color: #0c5460;
-        }
-
-        .troubleshooting-section {
-            background: #fff8e1;
-            border: 1px solid #ffb74d;
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin-top: 2rem;
-        }
-
-        .troubleshooting-section h4 {
-            color: #e65100;
-            margin-bottom: 1rem;
             display: flex;
             align-items: center;
             gap: 0.5rem;
         }
 
-        .troubleshooting-section p {
-            color: #5d4037;
-            margin-bottom: 1rem;
-            line-height: 1.5;
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
         }
 
-        .rate-limit-warning {
-            background: #ffe0b2;
-            border: 1px solid #ff9800;
-            border-radius: 8px;
-            padding: 0.75rem;
-            margin-top: 1rem;
+        .status-dot.success { background: #005921; }
+        .status-dot.warning { background: #DAAA00; }
+        .status-dot.error { background: #dc3545; }
+
+        .status-text {
+            font-weight: 500;
+            color: #333;
+        }
+
+        .last-sync {
             font-size: 0.9rem;
-            color: #e65100;
+            color: #666;
+            text-align: right;
+        }
+
+        /* Messages area - stable position */
+        .messages-area {
+            margin-bottom: 2rem;
+            min-height: 40px;
+        }
+
+        .message {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+            opacity: 0;
+            transform: translateY(-10px);
+            transition: all 0.3s ease;
+        }
+
+        .message.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .message.success {
+            background: #d4edda;
+            border-color: #005921;
+            color: #155724;
+        }
+
+        .message.warning {
+            background: #fff3cd;
+            border-color: #DAAA00;
+            color: #856404;
+        }
+
+        .message.error {
+            background: #f8d7da;
+            border-color: #dc3545;
+            color: #721c24;
+        }
+
+        .message.info {
+            background: #d1ecf1;
+            border-color: #0c5460;
+            color: #0c5460;
+        }
+
+        /* Action buttons */
+        .actions-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .action-btn {
+            background: #005921;
+            color: #EEF4F1;
+            border: none;
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            position: relative;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .action-btn:hover:not(:disabled) {
+            background: #004a1e;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 89, 33, 0.3);
+        }
+
+        .action-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .action-btn.secondary {
+            background: #6c757d;
+        }
+
+        .action-btn.secondary:hover:not(:disabled) {
+            background: #5a6268;
+        }
+
+        .action-btn.warning {
+            background: #e74c3c;
+        }
+
+        .action-btn.warning:hover:not(:disabled) {
+            background: #c0392b;
+        }
+
+        /* Loading spinner */
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Details section - collapsible */
+        .details-section {
+            border-top: 1px solid #e9ecef;
+            padding-top: 2rem;
+            margin-top: 2rem;
+        }
+
+        .details-toggle {
+            background: none;
+            border: none;
+            color: #005921;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .details-content {
+            display: none;
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .details-content.show {
+            display: block;
         }
 
         .footer {
@@ -346,125 +308,23 @@
             font-size: 0.9rem;
         }
 
-        .loading {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(238, 244, 241, 0.3);
-            border-radius: 50%;
-            border-top-color: #EEF4F1;
-            animation: spin 1s ease-in-out infinite;
-            margin-right: 0.5rem;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .pulse {
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-
-        .token-status {
-            display: inline-block;
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            margin-left: 0.5rem;
-        }
-
-        .token-status.valid {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .token-status.expiring {
-            background: #fff3cd;
-            color: #856404;
-        }
-
-        .token-status.expired {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        /* Confetti styles */
-        .confetti-container {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            overflow: hidden;
-            z-index: 9999;
-        }
-
-        .confetti {
-            position: absolute;
-            width: 10px;
-            height: 10px;
-            background: #f0f;
-            animation: confetti-fall 3s linear;
-        }
-
-        @keyframes confetti-fall {
-            to {
-                transform: translateY(100vh) rotate(360deg);
-                opacity: 0;
-            }
-        }
-
         @media (max-width: 768px) {
+            .status-summary {
+                flex-direction: column;
+                gap: 1rem;
+                align-items: flex-start;
+            }
+
+            .actions-section {
+                grid-template-columns: 1fr;
+            }
+
             .header-content {
                 padding: 0 1rem;
             }
 
-            .logout-btn {
-                position: static;
-                margin-bottom: 1rem;
-                align-self: flex-end;
-            }
-
-            .logo-img {
-                width: 90%;
-                max-width: 280px;
-                margin-bottom: 0.75rem;
-            }
-
-            .church-subtitle {
-                font-size: 0.9rem;
-            }
-
             .container {
                 padding: 0 1rem;
-            }
-
-            .card-content {
-                padding: 1rem;
-            }
-
-            .actions-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .header.scrolled .logo-img {
-                width: 100px;
-            }
-
-            .header.scrolled {
-                padding: 0.3rem 0;
-            }
-
-            .card-header h1 {
-                font-size: 1.5rem;
             }
         }
     </style>
@@ -485,120 +345,72 @@
                 <p>Automated synchronization between internal and public calendars</p>
             </div>
 
-            <div class="card-content" style="display: flex; flex-direction: column;">
-                <!-- Results Area moved to top -->
-                <div id="results-area"></div>
-
-                <!-- Status Section -->
-                <div class="status-section">
-                    <h3 style="margin-bottom: 1rem; color: #005921;">Current Status</h3>
-                    
-                    <div class="status-grid">
+            <div class="card-content">
+                <!-- Stable status bar -->
+                <div class="status-bar">
+                    <div class="status-summary">
                         <div class="status-item">
-                            <div class="status-label">Authentication</div>
-                            <div class="status-value success" id="auth-status">✓ Connected</div>
-                            <div id="token-status-badge"></div>
+                            <div class="status-dot success" id="auth-dot"></div>
+                            <span class="status-text" id="auth-text">Connected</span>
                         </div>
-                        
                         <div class="status-item">
-                            <div class="status-label">Last Sync</div>
-                            <div class="status-value" id="last-sync-time">
-                                {% if last_sync_time %}
-                                    {{ last_sync_time.strftime('%b %d, %Y at %I:%M %p') }}
-                                {% else %}
-                                    Never
-                                {% endif %}
-                            </div>
+                            <div class="status-dot success" id="sync-dot"></div>
+                            <span class="status-text" id="sync-text">Ready</span>
                         </div>
-                        
                         <div class="status-item">
-                            <div class="status-label">Sync Result</div>
-                            <div class="status-value {% if last_sync_result.success %}success{% else %}error{% endif %}" id="sync-result">
-                                {% if last_sync_result.success %}
-                                    ✓ Success
-                                {% else %}
-                                    ⚠ {{ last_sync_result.message }}
-                                {% endif %}
-                            </div>
-                        </div>
-                        
-                        <div class="status-item">
-                            <div class="status-label">Auto Sync</div>
-                            <div class="status-value success" id="scheduler-status">✓ Active (Hourly)</div>
+                            <div class="status-dot success" id="scheduler-dot"></div>
+                            <span class="status-text">Auto-sync Active</span>
                         </div>
                     </div>
-
-                    {% if last_sync_result.success and last_sync_result.changes is defined %}
-                    <div style="margin-top: 1rem; padding: 1rem; background: #EEF4F1; border-radius: 8px;">
-                        <strong>Last Sync Summary:</strong>
-                        Added: {{ last_sync_result.added or 0 }} | 
-                        Updated: {{ last_sync_result.updated or 0 }} | 
-                        Deleted: {{ last_sync_result.deleted or 0 }}
-                    </div>
-                    {% endif %}
-                    
-                    <div id="rate-limit-info" class="rate-limit-warning" style="display: none;">
-                        ⚠️ Rate limit: <span id="rate-limit-remaining">20</span> sync requests remaining this hour
+                    <div class="last-sync">
+                        <div>Last sync: <span id="last-sync-time">
+                            {% if last_sync_time %}
+                                {{ last_sync_time.strftime('%b %d at %I:%M %p') }}
+                            {% else %}
+                                Never
+                            {% endif %}
+                        </span></div>
                     </div>
                 </div>
 
-                <!-- Actions Section -->
+                <!-- Stable messages area -->
+                <div class="messages-area" id="messages-area"></div>
+
+                <!-- Simple action buttons -->
                 <div class="actions-section">
-                    <h3 style="margin-bottom: 1.5rem; color: #005921;">Management Actions</h3>
+                    <button class="action-btn" onclick="syncNow()" id="sync-btn">
+                        <span id="sync-icon">🔄</span>
+                        <span id="sync-label">Sync Now</span>
+                    </button>
                     
-                    <div class="actions-grid">
-                        <div class="action-card">
-                            <div class="action-icon">🔄</div>
-                            <div class="action-title">Manual Sync</div>
-                            <div class="action-description">
-                                Immediately synchronize all public events from the internal calendar to the public calendar
-                            </div>
-                            <button class="btn btn-primary" onclick="runSync()" id="sync-btn">
-                                Sync Now
-                            </button>
-                        </div>
-
-                        <div class="action-card">
-                            <div class="action-icon">🔍</div>
-                            <div class="action-title">Run Diagnostics</div>
-                            <div class="action-description">
-                                Check calendar connections, permissions, and identify any configuration issues
-                            </div>
-                            <button class="btn btn-secondary" onclick="runDiagnostics()" id="diagnostics-btn">
-                                Run Check
-                            </button>
-                        </div>
-
-                        <div class="action-card">
-                            <div class="action-icon">📊</div>
-                            <div class="action-title">View Status</div>
-                            <div class="action-description">
-                                Monitor real-time sync status and view detailed operation logs
-                            </div>
-                            <button class="btn btn-success" onclick="refreshStatus()" id="status-btn">
-                                Refresh Status
-                            </button>
-                        </div>
-
-                        <div class="action-card">
-                            <div class="action-icon">🔧</div>
-                            <div class="action-title">Re-authenticate</div>
-                            <div class="action-description">
-                                If sync is failing with token errors, sign out and back in to refresh credentials
-                            </div>
-                            <a href="/logout" class="btn btn-warning">
-                                Sign Out & Restart
-                            </a>
-                        </div>
-                    </div>
+                    <button class="action-btn secondary" onclick="runDiagnostics()" id="diagnostics-btn">
+                        🔍 Run Diagnostics
+                    </button>
+                    
+                    <button class="action-btn secondary" onclick="refreshStatus()">
+                        📊 Refresh Status
+                    </button>
+                    
+                    <a href="/logout" class="action-btn warning">
+                        🚪 Sign Out & Restart
+                    </a>
                 </div>
 
-                <!-- Troubleshooting Section -->
-                <div class="troubleshooting-section">
-                    <h4>🔧 Troubleshooting Tips</h4>
-                    <p><strong>Token Expiration:</strong> The system automatically refreshes tokens before they expire. If you see persistent authentication errors, use "Sign Out & Restart" above.</p>
-                    <p><strong>Automatic Sync:</strong> The scheduler runs every hour while authenticated. Check the "Auto Sync" status above to ensure it's active.</p>
-                    <p><strong>Rate Limiting:</strong> To prevent overload, manual syncs are limited to 20 per hour. The limit resets automatically.</p>
+                <!-- Collapsible details -->
+                <div class="details-section">
+                    <button class="details-toggle" onclick="toggleDetails()">
+                        ▶ Show Advanced Options & Troubleshooting
+                    </button>
+                    <div class="details-content" id="details-content">
+                        <h4>🔧 Advanced Tools</h4>
+                        <p><strong>Dry Run Mode:</strong> Test sync without making changes</p>
+                        <p><strong>Duplicate Cleanup:</strong> Remove duplicate events from public calendar</p>
+                        <p><strong>Debug Tools:</strong> Investigate calendar issues and permissions</p>
+                        
+                        <div style="margin-top: 1rem; padding: 1rem; background: #fff3cd; border-radius: 4px;">
+                            <strong>⚠️ Troubleshooting:</strong> If sync is failing, try signing out and back in to refresh authentication.
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -606,373 +418,207 @@
 
     <footer class="footer">
         <p>St. Edward Church & School • Calendar Management System</p>
-        <p style="margin-top: 0.5rem; opacity: 0.7;">Automated hourly synchronization • Last updated: <span id="page-timestamp"></span></p>
+        <p style="margin-top: 0.5rem; opacity: 0.7;">Automated hourly synchronization</p>
     </footer>
 
-    <!-- Confetti container -->
-    <div id="confetti-container" class="confetti-container"></div>
-
     <script>
-        // Update page timestamp
-        document.getElementById('page-timestamp').textContent = new Date().toLocaleString();
+        let isOperationInProgress = false;
 
-        let statusInterval;
-        let tokenCheckInterval;
-
-        // Confetti function
-        function createConfetti() {
-            const container = document.getElementById('confetti-container');
-            container.innerHTML = ''; // Clear existing confetti
+        function showMessage(text, type = 'info', duration = 5000) {
+            const messagesArea = document.getElementById('messages-area');
             
-            const colors = ['#005921', '#00843D', '#DAAA00', '#EEF4F1', '#ff6b6b', '#4ecdc4', '#45b7d1'];
-            const shapes = ['square', 'circle'];
+            // Clear existing messages
+            messagesArea.innerHTML = '';
             
-            for (let i = 0; i < 150; i++) {
+            const message = document.createElement('div');
+            message.className = `message ${type}`;
+            message.textContent = text;
+            
+            messagesArea.appendChild(message);
+            
+            // Trigger animation
+            setTimeout(() => message.classList.add('show'), 100);
+            
+            // Auto-hide success messages
+            if (type === 'success' && duration > 0) {
                 setTimeout(() => {
-                    const confetti = document.createElement('div');
-                    confetti.className = 'confetti';
-                    
-                    // Random properties
-                    const shape = shapes[Math.floor(Math.random() * shapes.length)];
-                    const color = colors[Math.floor(Math.random() * colors.length)];
-                    const size = Math.random() * 10 + 5;
-                    const left = Math.random() * 100;
-                    const animationDelay = Math.random() * 0.5;
-                    const animationDuration = Math.random() * 2 + 3;
-                    
-                    confetti.style.backgroundColor = color;
-                    confetti.style.width = size + 'px';
-                    confetti.style.height = size + 'px';
-                    confetti.style.left = left + '%';
-                    confetti.style.borderRadius = shape === 'circle' ? '50%' : '0';
-                    confetti.style.animationDelay = animationDelay + 's';
-                    confetti.style.animationDuration = animationDuration + 's';
-                    
-                    container.appendChild(confetti);
-                    
-                    // Remove confetti after animation
-                    setTimeout(() => {
-                        confetti.remove();
-                    }, (animationDuration + animationDelay) * 1000);
-                }, i * 30);
+                    message.classList.remove('show');
+                    setTimeout(() => message.remove(), 300);
+                }, duration);
             }
         }
 
-        function showAlert(message, type) {
-            const alertClass = type === 'success' ? 'alert-success' : 
-                             type === 'warning' ? 'alert-warning' : 
-                             type === 'info' ? 'alert-info' : 'alert-error';
-            
-            const resultsArea = document.getElementById('results-area');
-            resultsArea.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
-            
-            // Auto-hide after 5 seconds for success messages
-            if (type === 'success') {
-                setTimeout(() => {
-                    if (resultsArea.innerHTML.includes(message)) {
-                        resultsArea.innerHTML = '';
-                    }
-                }, 5000);
-            }
-        }
-
-        function setButtonLoading(buttonId, loading) {
+        function setButtonState(buttonId, loading, label = '') {
             const btn = document.getElementById(buttonId);
-            if (loading) {
-                btn.disabled = true;
-                btn.innerHTML = '<span class="loading"></span>' + btn.textContent;
+            const icon = document.getElementById('sync-icon');
+            const labelEl = document.getElementById('sync-label');
+            
+            if (buttonId === 'sync-btn') {
+                if (loading) {
+                    btn.disabled = true;
+                    icon.innerHTML = '<div class="spinner"></div>';
+                    labelEl.textContent = label || 'Syncing...';
+                } else {
+                    btn.disabled = false;
+                    icon.textContent = '🔄';
+                    labelEl.textContent = 'Sync Now';
+                }
             } else {
-                btn.disabled = false;
-                btn.innerHTML = btn.textContent.replace(/^.*?([A-Z])/, '$1'); // Remove loading spinner
+                btn.disabled = loading;
+                if (loading) {
+                    btn.innerHTML = '<div class="spinner"></div> Processing...';
+                } else {
+                    // Reset to original content
+                    location.reload();
+                }
             }
         }
 
-        async function runSync() {
-            setButtonLoading('sync-btn', true);
-            showAlert('🔄 Starting calendar synchronization...', 'warning');
+        function updateStatusDots(status) {
+            // Update auth status
+            const authDot = document.getElementById('auth-dot');
+            const authText = document.getElementById('auth-text');
+            if (status.authenticated) {
+                authDot.className = 'status-dot success';
+                authText.textContent = 'Connected';
+            } else {
+                authDot.className = 'status-dot error';
+                authText.textContent = 'Disconnected';
+            }
+
+            // Update sync status
+            const syncDot = document.getElementById('sync-dot');
+            const syncText = document.getElementById('sync-text');
+            if (status.sync_in_progress) {
+                syncDot.className = 'status-dot warning';
+                syncText.textContent = 'Syncing...';
+            } else if (status.last_sync_result && status.last_sync_result.success) {
+                syncDot.className = 'status-dot success';
+                syncText.textContent = 'Ready';
+            } else {
+                syncDot.className = 'status-dot error';
+                syncText.textContent = 'Error';
+            }
+
+            // Update last sync time
+            if (status.last_sync_time) {
+                const syncTime = new Date(status.last_sync_time);
+                document.getElementById('last-sync-time').textContent = 
+                    syncTime.toLocaleDateString() + ' at ' + syncTime.toLocaleTimeString();
+            }
+        }
+
+        async function syncNow() {
+            if (isOperationInProgress) return;
+            
+            isOperationInProgress = true;
+            setButtonState('sync-btn', true, 'Starting sync...');
+            showMessage('🔄 Starting calendar synchronization...', 'info', 0);
             
             try {
                 const response = await fetch('/sync', { method: 'POST' });
                 const result = await response.json();
                 
                 if (result.success) {
-                    showAlert('✅ Sync initiated successfully! Check status for results.', 'success');
-                    // Start monitoring status
-                    startStatusMonitoring();
+                    setButtonState('sync-btn', true, 'Syncing...');
+                    showMessage('⏳ Sync in progress... This may take a minute.', 'warning', 0);
+                    
+                    // Monitor progress
+                    let checks = 0;
+                    const monitor = setInterval(async () => {
+                        checks++;
+                        try {
+                            const statusResponse = await fetch('/status');
+                            const status = await statusResponse.json();
+                            
+                            updateStatusDots(status);
+                            
+                            if (!status.sync_in_progress || checks >= 30) {
+                                clearInterval(monitor);
+                                
+                                if (status.last_sync_result && status.last_sync_result.success) {
+                                    const msg = `✅ Sync completed! Added: ${status.last_sync_result.added || 0}, Updated: ${status.last_sync_result.updated || 0}, Deleted: ${status.last_sync_result.deleted || 0}`;
+                                    showMessage(msg, 'success');
+                                } else {
+                                    showMessage('⚠️ Sync completed with issues. Check logs for details.', 'warning');
+                                }
+                                
+                                setButtonState('sync-btn', false);
+                                isOperationInProgress = false;
+                            }
+                        } catch (error) {
+                            console.error('Status check failed:', error);
+                        }
+                    }, 3000); // Check every 3 seconds instead of 2
+                    
                 } else {
-                    showAlert('❌ Failed to start sync: ' + result.message, 'error');
+                    showMessage('❌ Failed to start sync: ' + result.message, 'error');
+                    setButtonState('sync-btn', false);
+                    isOperationInProgress = false;
                 }
+                
             } catch (error) {
-                showAlert('❌ Network error: ' + error.message, 'error');
-            } finally {
-                setButtonLoading('sync-btn', false);
+                showMessage('❌ Network error: ' + error.message, 'error');
+                setButtonState('sync-btn', false);
+                isOperationInProgress = false;
             }
         }
 
         async function runDiagnostics() {
-            setButtonLoading('diagnostics-btn', true);
-            showAlert('🔍 Running system diagnostics...', 'warning');
+            if (isOperationInProgress) return;
+            
+            isOperationInProgress = true;
+            setButtonState('diagnostics-btn', true);
+            showMessage('🔍 Running system diagnostics...', 'info', 0);
             
             try {
                 const response = await fetch('/diagnostics', { method: 'POST' });
                 const result = await response.json();
                 
                 if (result.success) {
-                    showAlert('✅ Diagnostics started! Check status for detailed results.', 'success');
-                    startStatusMonitoring();
+                    showMessage('✅ Diagnostics completed. Check results below.', 'success');
                 } else {
-                    showAlert('❌ Failed to start diagnostics: ' + result.message, 'error');
+                    showMessage('❌ Diagnostics failed: ' + result.message, 'error');
                 }
             } catch (error) {
-                showAlert('❌ Network error: ' + error.message, 'error');
+                showMessage('❌ Network error: ' + error.message, 'error');
             } finally {
-                setButtonLoading('diagnostics-btn', false);
+                setButtonState('diagnostics-btn', false);
+                isOperationInProgress = false;
             }
         }
 
         async function refreshStatus() {
-            setButtonLoading('status-btn', true);
-            
             try {
                 const response = await fetch('/status');
                 const status = await response.json();
-                
-                // Update status display
-                updateStatusDisplay(status);
-                showAlert('📊 Status refreshed successfully', 'success');
-                
+                updateStatusDots(status);
+                showMessage('📊 Status refreshed', 'success', 2000);
             } catch (error) {
-                showAlert('❌ Failed to refresh status: ' + error.message, 'error');
-            } finally {
-                setButtonLoading('status-btn', false);
+                showMessage('❌ Failed to refresh status', 'error');
             }
         }
 
-        function updateTokenStatusBadge(status) {
-            const badgeContainer = document.getElementById('token-status-badge');
+        function toggleDetails() {
+            const content = document.getElementById('details-content');
+            const toggle = document.querySelector('.details-toggle');
             
-            if (status.token_status === 'valid' && status.token_expires_at) {
-                const expiresAt = new Date(status.token_expires_at);
-                const now = new Date();
-                const minutesUntilExpiry = Math.floor((expiresAt - now) / 60000);
-                
-                let badgeClass = 'valid';
-                let badgeText = 'Token Valid';
-                
-                if (minutesUntilExpiry < 10) {
-                    badgeClass = 'expiring';
-                    badgeText = `Token expiring in ${minutesUntilExpiry} min`;
-                }
-                
-                badgeContainer.innerHTML = `<span class="token-status ${badgeClass}">${badgeText}</span>`;
-            } else if (status.token_status === 'expired') {
-                badgeContainer.innerHTML = '<span class="token-status expired">Token Expired</span>';
+            if (content.classList.contains('show')) {
+                content.classList.remove('show');
+                toggle.textContent = '▶ Show Advanced Options & Troubleshooting';
             } else {
-                badgeContainer.innerHTML = '';
+                content.classList.add('show');
+                toggle.textContent = '▼ Hide Advanced Options & Troubleshooting';
             }
         }
 
-        function updateRateLimitInfo(status) {
-            const rateLimitInfo = document.getElementById('rate-limit-info');
-            const rateLimitRemaining = document.getElementById('rate-limit-remaining');
-            
-            if (status.rate_limit_remaining !== undefined) {
-                rateLimitRemaining.textContent = status.rate_limit_remaining;
-                
-                if (status.rate_limit_remaining < 5) {
-                    rateLimitInfo.style.display = 'block';
-                } else {
-                    rateLimitInfo.style.display = 'none';
-                }
-            }
-        }
-
-        let previousSyncStatus = null;
-
-        function updateStatusDisplay(status) {
-            // Update auth status
-            const authStatus = document.getElementById('auth-status');
-            authStatus.textContent = status.authenticated ? '✓ Connected' : '❌ Disconnected';
-            authStatus.className = 'status-value ' + (status.authenticated ? 'success' : 'error');
-            
-            // Update token status badge
-            updateTokenStatusBadge(status);
-            
-            // Update rate limit info
-            updateRateLimitInfo(status);
-            
-            // Update last sync time
-            if (status.last_sync_time) {
-                const syncTime = new Date(status.last_sync_time);
-                document.getElementById('last-sync-time').textContent = syncTime.toLocaleString();
-            }
-            
-            // Update sync result
-            if (status.last_sync_result) {
-                const syncResult = document.getElementById('sync-result');
-                if (status.last_sync_result.success) {
-                    syncResult.textContent = '✓ Success';
-                    syncResult.className = 'status-value success';
-                    
-                    // Check if sync just completed successfully (wasn't successful before)
-                    if (!status.sync_in_progress && 
-                        (!previousSyncStatus || !previousSyncStatus.last_sync_result || !previousSyncStatus.last_sync_result.success || 
-                         previousSyncStatus.sync_in_progress)) {
-                        // Sync just completed successfully - launch confetti!
-                        createConfetti();
-                        showAlert('🎉 Sync completed successfully!', 'success');
-                    }
-                } else {
-                    syncResult.textContent = '⚠ ' + (status.last_sync_result.message || 'Failed');
-                    syncResult.className = 'status-value error';
-                }
-            }
-            
-            // Update scheduler status
-            const schedulerStatus = document.getElementById('scheduler-status');
-            if (status.scheduler_running) {
-                schedulerStatus.textContent = '✓ Active (Hourly)';
-                schedulerStatus.className = 'status-value success';
-            } else {
-                schedulerStatus.textContent = '❌ Stopped';
-                schedulerStatus.className = 'status-value error';
-            }
-            
-            // Show sync in progress
-            if (status.sync_in_progress) {
-                showAlert('🔄 Sync operation in progress...', 'info');
-            }
-            
-            // Show detailed diagnostics results if available
-            if (status.last_sync_result && status.last_sync_result.findings) {
-                showDiagnosticsResults(status.last_sync_result);
-            }
-            
-            // Check for token expiration warning
-            if (status.token_status === 'expired' || (status.token_expires_at && new Date(status.token_expires_at) < new Date())) {
-                showAlert('⚠️ Authentication token has expired. Please sign out and sign back in to continue.', 'warning');
-            }
-            
-            // Store current status for next comparison
-            previousSyncStatus = status;
-        }
-
-        function showDiagnosticsResults(diagnostics) {
-            const findings = diagnostics.findings;
-            let html = '<div class="alert alert-success"><h4>🔍 Diagnostics Results</h4>';
-            
-            if (findings.available_calendars) {
-                html += '<p><strong>📋 Available Calendars:</strong></p><ul>';
-                findings.available_calendars.forEach(cal => {
-                    html += `<li>"${cal.name}" (${cal.can_edit === 'True' ? 'Editable' : 'Read-only'})</li>`;
-                });
-                html += '</ul>';
-            }
-            
-            if (findings.source_calendar_found !== undefined) {
-                html += `<p><strong>📅 Source Calendar:</strong> ${findings.source_calendar_found ? '✅ Found' : '❌ Not Found'}</p>`;
-            }
-            
-            if (findings.target_calendar_found !== undefined) {
-                html += `<p><strong>🎯 Target Calendar:</strong> ${findings.target_calendar_found ? '✅ Found' : '❌ Not Found'}</p>`;
-            }
-            
-            if (findings.source_events_count !== undefined) {
-                html += `<p><strong>📊 Source Events:</strong> ${findings.source_events_count} total</p>`;
-            }
-            
-            if (findings.public_events_count !== undefined) {
-                html += `<p><strong>🔓 Public Events:</strong> ${findings.public_events_count} events</p>`;
-            }
-            
-            if (findings.target_events_count !== undefined) {
-                html += `<p><strong>🎯 Target Events:</strong> ${findings.target_events_count} events</p>`;
-            }
-            
-            if (findings.source_access_error || findings.target_access_error || findings.mailbox_access_error) {
-                html += '<p><strong>⚠️ Errors Found:</strong></p><ul>';
-                if (findings.source_access_error) html += `<li>Source: ${findings.source_access_error}</li>`;
-                if (findings.target_access_error) html += `<li>Target: ${findings.target_access_error}</li>`;
-                if (findings.mailbox_access_error) html += `<li>Mailbox: ${findings.mailbox_access_error}</li>`;
-                html += '</ul>';
-            }
-            
-            html += '</div>';
-            document.getElementById('results-area').innerHTML = html;
-        }
-
-        function startStatusMonitoring() {
-            // Clear any existing interval
-            if (statusInterval) {
-                clearInterval(statusInterval);
-            }
-            
-            // Check status every 2 seconds for 30 seconds
-            let checks = 0;
-            statusInterval = setInterval(async () => {
-                checks++;
-                try {
-                    const response = await fetch('/status');
-                    const status = await response.json();
-                    updateStatusDisplay(status);
-                    
-                    // Stop monitoring after 30 seconds or when sync completes
-                    if (checks >= 15 || !status.sync_in_progress) {
-                        clearInterval(statusInterval);
-                    }
-                } catch (error) {
-                    console.error('Status check failed:', error);
-                }
-            }, 2000);
-        }
-
-        // Check token status periodically
-        function startTokenMonitoring() {
-            tokenCheckInterval = setInterval(async () => {
-                try {
-                    const response = await fetch('/status');
-                    const status = await response.json();
-                    updateTokenStatusBadge(status);
-                    
-                    // Alert if token is about to expire
-                    if (status.token_expires_at) {
-                        const expiresAt = new Date(status.token_expires_at);
-                        const now = new Date();
-                        const minutesUntilExpiry = Math.floor((expiresAt - now) / 60000);
-                        
-                        if (minutesUntilExpiry < 5 && minutesUntilExpiry > 0) {
-                            console.log('Token expiring soon, will auto-refresh');
-                        }
-                    }
-                } catch (error) {
-                    console.error('Token check failed:', error);
-                }
-            }, 60000); // Check every minute
-        }
-
-        // Health check
-        async function checkHealth() {
-            try {
-                const response = await fetch('/health');
-                const health = await response.json();
-                console.log('Health check:', health);
-            } catch (error) {
-                console.error('Health check failed:', error);
-            }
-        }
-
-        // Refresh status on page load
+        // Initialize on page load
         window.addEventListener('load', () => {
             refreshStatus();
-            startTokenMonitoring();
-            checkHealth();
         });
-        
-        // Auto-refresh status every 30 seconds
-        setInterval(refreshStatus, 30000);
-        
-        // Health check every 5 minutes
-        setInterval(checkHealth, 300000);
+
+        // Less frequent auto-refresh (every 60 seconds instead of 30)
+        setInterval(refreshStatus, 60000);
     </script>
 </body>
 </html>
