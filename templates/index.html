@@ -76,6 +76,20 @@
             letter-spacing: 1px;
         }
 
+        .version-badge {
+            position: absolute;
+            top: 10px;
+            left: 20px;
+            background: rgba(238, 244, 241, 0.2);
+            color: rgba(238, 244, 241, 0.8);
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(238, 244, 241, 0.2);
+        }
+
         .container {
             max-width: 1000px;
             margin: 2rem auto;
@@ -326,12 +340,25 @@
             .container {
                 padding: 0 1rem;
             }
+
+            .version-badge {
+                position: static;
+                margin-bottom: 0.5rem;
+                align-self: flex-start;
+            }
+
+            .logout-btn {
+                position: static;
+                margin-bottom: 0.5rem;
+                align-self: flex-end;
+            }
         }
     </style>
 </head>
 <body>
     <header class="header">
         <div class="header-content">
+            <div class="version-badge" id="version-badge">v1.0.0</div>
             <a href="/logout" class="logout-btn">🚪 Sign Out</a>
             <img src="https://static.wixstatic.com/media/14d135_cacfd4daea32497f8e3982453de34768~mv2.png" alt="St. Edward Church & School Logo" class="logo-img">
             <div class="church-subtitle">Calendar Synchronization Management</div>
@@ -505,6 +532,13 @@
                 const syncTime = new Date(status.last_sync_time);
                 document.getElementById('last-sync-time').textContent = 
                     syncTime.toLocaleDateString() + ' at ' + syncTime.toLocaleTimeString();
+            }
+
+            // Update version badge
+            if (status.version) {
+                const versionBadge = document.getElementById('version-badge');
+                versionBadge.textContent = `v${status.version}`;
+                versionBadge.title = status.app_info || `Version ${status.version}`;
             }
         }
 
