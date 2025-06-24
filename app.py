@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Calendar Sync Web Application for Render.com
-STABLE VERSION with iCalUId-based deduplication to prevent duplicates
+STABLE VERSION with composite key matching and simple location in description
 """
 
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
@@ -404,7 +404,7 @@ async def run_diagnostics():
     return diagnostics
 
 def sync_calendars():
-    """Enhanced sync function using subject+start time matching and location in description"""
+    """Enhanced sync function using subject+start time matching and simple location in description"""
     global last_sync_time, last_sync_result, sync_in_progress, sync_request_times
     
     # Check rate limiting
@@ -468,7 +468,7 @@ def sync_calendars():
         source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
         source_params = {
             '$top': 500,
-            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,iCalUId,body'
+            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,body'
         }
         
         source_response = requests.get(source_events_url, headers=headers, params=source_params, timeout=30)
@@ -483,7 +483,7 @@ def sync_calendars():
         target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
         target_params = {
             '$top': 500,
-            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,iCalUId,body'
+            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,body'
         }
         
         target_response = requests.get(target_events_url, headers=headers, params=target_params, timeout=30)
@@ -600,20 +600,14 @@ def sync_calendars():
                 location_text = ""
                 if source_location:
                     if isinstance(source_location, dict):
-                        display_name = source_location.get('displayName', '')
-                        address = source_location.get('address', {})
-                        if isinstance(address, dict):
-                            street = address.get('street', '')
-                            city = address.get('city', '')
-                            state = address.get('state', '')
-                            location_text = f"{display_name} - {street}, {city}, {state}".strip(' -,')
-                        else:
-                            location_text = display_name
+                        # Just get the display name, nothing else
+                        location_text = source_location.get('displayName', '')
                     else:
+                        # If it's just a string, use it as-is
                         location_text = str(source_location)
                 
                 target_body = target_event.get('body', {}).get('content', '')
-                if location_text and location_text not in target_body:
+                if location_text and f"Location: {location_text}" not in target_body:
                     needs_update = True
                 
                 if needs_update:
@@ -642,21 +636,15 @@ def sync_calendars():
         # Add new events
         for event in to_add:
             try:
-                # Extract location information
+                # Extract location information - SIMPLIFIED VERSION
                 source_location = event.get('location', {})
                 location_text = ""
                 if source_location:
                     if isinstance(source_location, dict):
-                        display_name = source_location.get('displayName', '')
-                        address = source_location.get('address', {})
-                        if isinstance(address, dict):
-                            street = address.get('street', '')
-                            city = address.get('city', '')
-                            state = address.get('state', '')
-                            location_text = f"{display_name} - {street}, {city}, {state}".strip(' -,')
-                        else:
-                            location_text = display_name
+                        # Just get the display name, nothing else
+                        location_text = source_location.get('displayName', '')
                     else:
+                        # If it's just a string, use it as-is
                         location_text = str(source_location)
                 
                 # Create body content with location info
@@ -695,21 +683,15 @@ def sync_calendars():
         # Update existing events
         for source_event, target_event in to_update:
             try:
-                # Extract location information
+                # Extract location information - SIMPLIFIED VERSION
                 source_location = source_event.get('location', {})
                 location_text = ""
                 if source_location:
                     if isinstance(source_location, dict):
-                        display_name = source_location.get('displayName', '')
-                        address = source_location.get('address', {})
-                        if isinstance(address, dict):
-                            street = address.get('street', '')
-                            city = address.get('city', '')
-                            state = address.get('state', '')
-                            location_text = f"{display_name} - {street}, {city}, {state}".strip(' -,')
-                        else:
-                            location_text = display_name
+                        # Just get the display name, nothing else
+                        location_text = source_location.get('displayName', '')
                     else:
+                        # If it's just a string, use it as-is
                         location_text = str(source_location)
                 
                 # Create body content with location info
@@ -1067,7 +1049,7 @@ def debug_mass_events():
             '$filter': "contains(subject, 'Mass')",
             '$top': 100,
             '$orderby': 'start/dateTime',
-            '$select': 'id,subject,start,end,type,categories,recurrence,seriesMasterId,showAs,isAllDay,iCalUId,createdDateTime'
+            '$select': 'id,subject,start,end,type,categories,recurrence,seriesMasterId,showAs,isAllDay,location,createdDateTime'
         }
         
         source_response = requests.get(source_events_url, headers=headers, params=source_params)
@@ -1079,7 +1061,7 @@ def debug_mass_events():
             '$filter': "contains(subject, 'Mass')",
             '$top': 100,
             '$orderby': 'start/dateTime',
-            '$select': 'id,subject,start,end,type,categories,recurrence,seriesMasterId,showAs,isAllDay,iCalUId,createdDateTime'
+            '$select': 'id,subject,start,end,type,categories,recurrence,seriesMasterId,showAs,isAllDay,body,createdDateTime'
         }
         
         target_response = requests.get(target_events_url, headers=headers, params=target_params)
@@ -1087,12 +1069,16 @@ def debug_mass_events():
         
         # Analyze Mass events
         source_analysis = []
-        source_ical_uids = set()
         
         for event in source_mass_events:
-            ical_uid = event.get('iCalUId')
-            if ical_uid:
-                source_ical_uids.add(ical_uid)
+            # Extract location
+            location_info = "None"
+            location_obj = event.get('location', {})
+            if location_obj:
+                if isinstance(location_obj, dict):
+                    location_info = location_obj.get('displayName', 'Unknown')
+                else:
+                    location_info = str(location_obj)
             
             source_analysis.append({
                 'id': event.get('id'),
@@ -1106,16 +1092,17 @@ def debug_mass_events():
                 'seriesMasterId': event.get('seriesMasterId'),
                 'showAs': event.get('showAs', 'unknown'),
                 'isAllDay': event.get('isAllDay', False),
-                'iCalUId': ical_uid,
+                'location': location_info,
                 'created': event.get('createdDateTime', 'unknown')
             })
         
         target_analysis = []
-        target_ical_uids = {}
-        duplicates_by_ical = {}
         
         for event in target_mass_events:
-            ical_uid = event.get('iCalUId')
+            # Check if location is in body
+            body_content = event.get('body', {}).get('content', '')
+            has_location_in_body = 'Location:' in body_content
+            
             event_data = {
                 'id': event.get('id'),
                 'subject': event.get('subject'),
@@ -1124,33 +1111,32 @@ def debug_mass_events():
                 'end': event.get('end', {}).get('dateTime', 'no-end'),
                 'recurrence': 'Yes' if event.get('recurrence') else 'No',
                 'seriesMasterId': event.get('seriesMasterId'),
-                'iCalUId': ical_uid,
-                'created': event.get('createdDateTime', 'unknown')
+                'created': event.get('createdDateTime', 'unknown'),
+                'has_location_in_body': has_location_in_body,
+                'body_preview': body_content[:100] if body_content else 'Empty'
             }
             target_analysis.append(event_data)
-            
-            # Track iCalUIds
-            if ical_uid:
-                if ical_uid not in target_ical_uids:
-                    target_ical_uids[ical_uid] = []
-                target_ical_uids[ical_uid].append(event_data)
         
-        # Find duplicates by iCalUId
-        for ical_uid, events in target_ical_uids.items():
-            if len(events) > 1:
-                duplicates_by_ical[ical_uid] = events
-        
-        # Check which source events are missing in target
-        missing_in_target = []
+        # Create composite keys for matching
+        source_keys = set()
         for event in source_analysis:
-            if event['is_public'] and event['iCalUId'] and event['iCalUId'] not in target_ical_uids:
-                missing_in_target.append(event)
+            if event['is_public']:
+                if event['type'] == 'seriesMaster':
+                    key = f"recurring:{event['subject']}"
+                else:
+                    key = f"single:{event['subject']}:{event['start']}"
+                source_keys.add(key)
         
-        # Check which target events shouldn't be there
-        orphaned_in_target = []
-        for ical_uid in target_ical_uids:
-            if ical_uid not in source_ical_uids:
-                orphaned_in_target.extend(target_ical_uids[ical_uid])
+        target_keys = set()
+        for event in target_analysis:
+            if event['type'] == 'seriesMaster':
+                key = f"recurring:{event['subject']}"
+            else:
+                key = f"single:{event['subject']}:{event['start']}"
+            target_keys.add(key)
+        
+        missing_in_target = source_keys - target_keys
+        extra_in_target = target_keys - source_keys
         
         return jsonify({
             'analysis_timestamp': datetime.now().isoformat(),
@@ -1160,7 +1146,6 @@ def debug_mass_events():
                 'public_mass_events': len([e for e in source_analysis if e['is_public']]),
                 'recurring_mass_events': len([e for e in source_analysis if e['type'] == 'seriesMaster']),
                 'single_mass_events': len([e for e in source_analysis if e['type'] == 'singleInstance']),
-                'unique_ical_uids': len(source_ical_uids),
                 'events': source_analysis
             },
             'target_calendar': {
@@ -1168,23 +1153,20 @@ def debug_mass_events():
                 'total_mass_events': len(target_mass_events),
                 'recurring_mass_events': len([e for e in target_analysis if e['type'] == 'seriesMaster']),
                 'single_mass_events': len([e for e in target_analysis if e['type'] == 'singleInstance']),
-                'unique_ical_uids': len(target_ical_uids),
-                'duplicates_by_ical_uid': len(duplicates_by_ical),
-                'duplicate_details': duplicates_by_ical,
+                'events_with_location_in_body': len([e for e in target_analysis if e['has_location_in_body']]),
                 'events': target_analysis
             },
             'sync_analysis': {
+                'using_composite_keys': True,
                 'missing_in_target': len(missing_in_target),
-                'missing_events': missing_in_target,
-                'orphaned_in_target': len(orphaned_in_target),
-                'orphaned_events': orphaned_in_target,
-                'duplicates_in_target': len(duplicates_by_ical)
+                'extra_in_target': len(extra_in_target),
+                'missing_keys': list(missing_in_target),
+                'extra_keys': list(extra_in_target)
             },
             'recommendations': [
-                f"Found {len(duplicates_by_ical)} iCalUIds with duplicate events" if duplicates_by_ical else "No duplicates by iCalUId",
-                f"{len(missing_in_target)} public Mass events missing in target" if missing_in_target else "All public Mass events are synced",
-                f"{len(orphaned_in_target)} events in target not found in source" if orphaned_in_target else "No orphaned events",
-                "Run a sync to fix any discrepancies"
+                f"{len(missing_in_target)} events need to be added" if missing_in_target else "All events synced",
+                f"{len(extra_in_target)} extra events in target" if extra_in_target else "No extra events",
+                "Location info should appear in event descriptions"
             ]
         })
         
@@ -1192,125 +1174,9 @@ def debug_mass_events():
         import traceback
         return jsonify({"error": f"Debug failed: {str(e)}", "traceback": traceback.format_exc()}), 500
 
-@app.route('/cleanup-duplicates', methods=['POST'])
-@requires_auth
-def cleanup_duplicates():
-    """Clean up all duplicate events based on iCalUId"""
-    try:
-        headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json'
-        }
-        
-        # Get target calendar
-        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
-        calendars_response = requests.get(calendars_url, headers=headers)
-        calendars_data = calendars_response.json()
-        
-        target_calendar_id = None
-        for calendar in calendars_data.get('value', []):
-            if calendar.get('name') == 'St. Edward Public Calendar':
-                target_calendar_id = calendar.get('id')
-                break
-        
-        if not target_calendar_id:
-            return jsonify({"error": "Target calendar not found"})
-        
-        # Get ALL events from target
-        target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
-        target_params = {
-            '$top': 500,
-            '$select': 'id,subject,start,iCalUId,createdDateTime'
-        }
-        
-        target_response = requests.get(target_events_url, headers=headers, params=target_params)
-        target_events = target_response.json().get('value', [])
-        
-        # Find duplicates by iCalUId
-        ical_uid_map = {}
-        for event in target_events:
-            ical_uid = event.get('iCalUId')
-            if ical_uid:
-                if ical_uid not in ical_uid_map:
-                    ical_uid_map[ical_uid] = []
-                ical_uid_map[ical_uid].append(event)
-        
-        # Delete duplicates (keep the oldest)
-        deleted_count = 0
-        failed_count = 0
-        
-        for ical_uid, events in ical_uid_map.items():
-            if len(events) > 1:
-                # Sort by creation date, keep the oldest
-                events.sort(key=lambda x: x.get('createdDateTime', ''))
-                
-                # Delete all but the first
-                for event in events[1:]:
-                    try:
-                        delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event.get('id')}"
-                        delete_response = requests.delete(delete_url, headers=headers)
-                        
-                        if delete_response.status_code in [200, 204]:
-                            deleted_count += 1
-                            logger.info(f"Deleted duplicate: {event.get('subject')}")
-                        else:
-                            failed_count += 1
-                            logger.error(f"Failed to delete: {event.get('subject')}")
-                    except Exception as e:
-                        failed_count += 1
-                        logger.error(f"Error deleting: {str(e)}")
-        
-        return jsonify({
-            "success": True,
-            "deleted": deleted_count,
-            "failed": failed_count,
-            "message": f"Cleaned up {deleted_count} duplicate events"
-        })
-        
-    except Exception as e:
-        return jsonify({"error": f"Cleanup failed: {str(e)}"}), 500
-
-@app.route('/scheduler-status')
-def scheduler_status():
-    """Check if scheduler thread is actually running"""
-    global scheduler_thread
-    
-    with scheduler_lock:
-        thread_alive = scheduler_thread is not None and scheduler_thread.is_alive()
-        running = scheduler_running
-    
-    return jsonify({
-        "scheduler_running_flag": running,
-        "scheduler_thread_exists": scheduler_thread is not None,
-        "scheduler_thread_alive": thread_alive,
-        "needs_restart": not thread_alive or not running
-    })
-
-@app.route('/start-scheduler')  
-@requires_auth
-def start_scheduler_endpoint():
-    """Manually start the automatic scheduler"""
-    start_scheduler()
-    return jsonify({"message": "Automatic sync scheduler started", "scheduler_running": scheduler_running})
-
-@app.route('/logout')
-def logout():
-    """Clear authentication and all tokens"""
-    global access_token, refresh_token, token_expires_at
-    
-    with token_lock:
-        access_token = None
-        refresh_token = None
-        token_expires_at = None
-    
-    stop_scheduler()
-    session.clear()  # Clear all session data
-    logger.info("User logged out - all tokens cleared")
-    return redirect(url_for('index'))
-
 @app.route('/force-cleanup-target')
 def force_cleanup_target():
-    """Delete ALL events from target calendar to fix iCalUId mismatch"""
+    """Delete ALL events from target calendar to fix mismatches"""
     try:
         if not access_token:
             return jsonify({"error": "Not authenticated"}), 401
@@ -1364,6 +1230,44 @@ def force_cleanup_target():
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/scheduler-status')
+def scheduler_status():
+    """Check if scheduler thread is actually running"""
+    global scheduler_thread
+    
+    with scheduler_lock:
+        thread_alive = scheduler_thread is not None and scheduler_thread.is_alive()
+        running = scheduler_running
+    
+    return jsonify({
+        "scheduler_running_flag": running,
+        "scheduler_thread_exists": scheduler_thread is not None,
+        "scheduler_thread_alive": thread_alive,
+        "needs_restart": not thread_alive or not running
+    })
+
+@app.route('/start-scheduler')  
+@requires_auth
+def start_scheduler_endpoint():
+    """Manually start the automatic scheduler"""
+    start_scheduler()
+    return jsonify({"message": "Automatic sync scheduler started", "scheduler_running": scheduler_running})
+
+@app.route('/logout')
+def logout():
+    """Clear authentication and all tokens"""
+    global access_token, refresh_token, token_expires_at
+    
+    with token_lock:
+        access_token = None
+        refresh_token = None
+        token_expires_at = None
+    
+    stop_scheduler()
+    session.clear()  # Clear all session data
+    logger.info("User logged out - all tokens cleared")
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     # Validate required environment variables
