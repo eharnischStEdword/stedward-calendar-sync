@@ -403,6 +403,13 @@ async def run_diagnostics():
     logger.info("Diagnostics completed")
     return diagnostics
 
+def normalize_subject(subject):
+    """Normalize event subject for consistent matching"""
+    if not subject:
+        return ""
+    # Strip whitespace, replace multiple spaces with single space
+    return ' '.join(subject.strip().split())
+
 def sync_calendars():
     """Enhanced sync function using subject+start time matching and simple location in description"""
     global last_sync_time, last_sync_result, sync_in_progress, sync_request_times
@@ -494,20 +501,20 @@ def sync_calendars():
         target_events = target_response.json().get('value', [])
         logger.info(f"Retrieved {len(target_events)} total events from target calendar")
         
-        # Build a map of target events by composite key (subject + start time)
+        # Build a map of target events by composite key (normalized subject + start time)
         target_map = {}
         
         for event in target_events:
-            subject = event.get('subject', '').strip()
+            subject = normalize_subject(event.get('subject', ''))
             start_time = event.get('start', {}).get('dateTime', '')
             event_type = event.get('type', 'unknown')
             
-            # Create composite key
+            # Create composite key with normalized subject
             if event_type == 'seriesMaster':
-                # For recurring events, just use subject as they should be unique
+                # For recurring events, just use normalized subject as they should be unique
                 key = f"recurring:{subject}"
             else:
-                # For single events, use subject + exact start time
+                # For single events, use normalized subject + exact start time
                 key = f"single:{subject}:{start_time}"
             
             if key in target_map:
@@ -532,7 +539,7 @@ def sync_calendars():
         
         for event in source_events:
             categories = event.get('categories', [])
-            subject = event.get('subject', '').strip()
+            subject = event.get('subject', '')
             
             # Skip if not public
             if 'Public' not in categories:
@@ -566,15 +573,17 @@ def sync_calendars():
         
         # Check each public event
         for event in public_events:
-            subject = event.get('subject', '').strip()
+            subject = normalize_subject(event.get('subject', ''))
             start_time = event.get('start', {}).get('dateTime', '')
             event_type = event.get('type', 'unknown')
             
-            # Create composite key
+            # Create composite key with normalized subject
             if event_type == 'seriesMaster':
                 key = f"recurring:{subject}"
             else:
                 key = f"single:{subject}:{start_time}"
+            
+            logger.debug(f"Checking event with key: {key}")
             
             if key in target_map:
                 # Event exists in target - check if it needs updating
@@ -583,8 +592,10 @@ def sync_calendars():
                 # Compare key fields to see if update is needed
                 needs_update = False
                 
-                # Check basic fields
-                if event.get('subject') != target_event.get('subject'):
+                # Check basic fields (normalize subjects for comparison)
+                source_subject = event.get('subject', '')
+                target_subject = target_event.get('subject', '')
+                if normalize_subject(source_subject) != normalize_subject(target_subject):
                     needs_update = True
                 elif event.get('start') != target_event.get('start'):
                     needs_update = True
