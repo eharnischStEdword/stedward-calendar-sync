@@ -404,7 +404,7 @@ async def run_diagnostics():
     return diagnostics
 
 def sync_calendars():
-    """Enhanced sync function using iCalUId for proper deduplication"""
+    """Enhanced sync function using subject+start time matching and location in description"""
     global last_sync_time, last_sync_result, sync_in_progress, sync_request_times
     
     # Check rate limiting
@@ -420,7 +420,7 @@ def sync_calendars():
     # Record this sync request
     sync_request_times.append(datetime.now())
     
-    logger.info("Starting calendar sync with iCalUId deduplication")
+    logger.info("Starting calendar sync with composite key matching")
     
     try:
         # Ensure token is valid before sync
@@ -464,10 +464,10 @@ def sync_calendars():
             logger.error("Required calendars not found")
             return {"error": "Required calendars not found"}
         
-        # Get ALL source events (don't filter here, we need to see all events for proper sync)
+        # Get ALL source events
         source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
         source_params = {
-            '$top': 500,  # Get more events
+            '$top': 500,
             '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,iCalUId,body'
         }
         
@@ -483,7 +483,7 @@ def sync_calendars():
         target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
         target_params = {
             '$top': 500,
-            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,iCalUId'
+            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,iCalUId,body'
         }
         
         target_response = requests.get(target_events_url, headers=headers, params=target_params, timeout=30)
@@ -494,37 +494,45 @@ def sync_calendars():
         target_events = target_response.json().get('value', [])
         logger.info(f"Retrieved {len(target_events)} total events from target calendar")
         
-        # Build a map of target events by iCalUId for efficient lookup
+        # Build a map of target events by composite key (subject + start time)
         target_map = {}
-        duplicate_ical_uids = []
         
         for event in target_events:
-            ical_uid = event.get('iCalUId')
-            if ical_uid:
-                if ical_uid in target_map:
-                    # Found a duplicate!
-                    duplicate_ical_uids.append(ical_uid)
-                    logger.warning(f"Duplicate iCalUId found in target: {ical_uid} - {event.get('subject')}")
-                else:
-                    target_map[ical_uid] = event
+            subject = event.get('subject', '').strip()
+            start_time = event.get('start', {}).get('dateTime', '')
+            event_type = event.get('type', 'unknown')
+            
+            # Create composite key
+            if event_type == 'seriesMaster':
+                # For recurring events, just use subject as they should be unique
+                key = f"recurring:{subject}"
+            else:
+                # For single events, use subject + exact start time
+                key = f"single:{subject}:{start_time}"
+            
+            if key in target_map:
+                logger.warning(f"Duplicate key found in target: {key}")
+                # Keep the newer one (or could keep older, depending on preference)
+                existing_created = target_map[key].get('createdDateTime', '')
+                new_created = event.get('createdDateTime', '')
+                if new_created > existing_created:
+                    target_map[key] = event
+            else:
+                target_map[key] = event
         
         logger.info(f"Built target map with {len(target_map)} unique events")
-        if duplicate_ical_uids:
-            logger.warning(f"Found {len(duplicate_ical_uids)} duplicate iCalUIds in target calendar")
         
         # Process public events from source
         public_events = []
         skipped_events = {
             'non_public': 0,
             'tentative': 0,
-            'recurring_instances': 0,
-            'no_ical_uid': 0
+            'recurring_instances': 0
         }
         
         for event in source_events:
             categories = event.get('categories', [])
-            subject = event.get('subject', '')
-            ical_uid = event.get('iCalUId')
+            subject = event.get('subject', '').strip()
             
             # Skip if not public
             if 'Public' not in categories:
@@ -545,12 +553,6 @@ def sync_calendars():
                 logger.debug(f"Skipping recurring instance: {subject}")
                 continue
             
-            # Skip if no iCalUId (shouldn't happen but just in case)
-            if not ical_uid:
-                skipped_events['no_ical_uid'] += 1
-                logger.warning(f"Event without iCalUId: {subject}")
-                continue
-            
             # This is a valid public event to sync
             public_events.append(event)
         
@@ -564,53 +566,71 @@ def sync_calendars():
         
         # Check each public event
         for event in public_events:
-            ical_uid = event.get('iCalUId')
-            subject = event.get('subject', '')
+            subject = event.get('subject', '').strip()
+            start_time = event.get('start', {}).get('dateTime', '')
+            event_type = event.get('type', 'unknown')
             
-            if ical_uid in target_map:
+            # Create composite key
+            if event_type == 'seriesMaster':
+                key = f"recurring:{subject}"
+            else:
+                key = f"single:{subject}:{start_time}"
+            
+            if key in target_map:
                 # Event exists in target - check if it needs updating
-                target_event = target_map[ical_uid]
+                target_event = target_map[key]
                 
                 # Compare key fields to see if update is needed
                 needs_update = False
+                
+                # Check basic fields
                 if event.get('subject') != target_event.get('subject'):
                     needs_update = True
                 elif event.get('start') != target_event.get('start'):
                     needs_update = True
                 elif event.get('end') != target_event.get('end'):
                     needs_update = True
-                elif event.get('location') != target_event.get('location'):
-                    needs_update = True
                 elif event.get('isAllDay') != target_event.get('isAllDay'):
                     needs_update = True
                 elif event.get('recurrence') != target_event.get('recurrence'):
                     needs_update = True
                 
+                # Check if location info needs to be updated in body
+                source_location = event.get('location', {})
+                location_text = ""
+                if source_location:
+                    if isinstance(source_location, dict):
+                        display_name = source_location.get('displayName', '')
+                        address = source_location.get('address', {})
+                        if isinstance(address, dict):
+                            street = address.get('street', '')
+                            city = address.get('city', '')
+                            state = address.get('state', '')
+                            location_text = f"{display_name} - {street}, {city}, {state}".strip(' -,')
+                        else:
+                            location_text = display_name
+                    else:
+                        location_text = str(source_location)
+                
+                target_body = target_event.get('body', {}).get('content', '')
+                if location_text and location_text not in target_body:
+                    needs_update = True
+                
                 if needs_update:
                     to_update.append((event, target_event))
                     logger.debug(f"Event needs update: {subject}")
+                
+                # Mark this key as processed
+                del target_map[key]
             else:
                 # Event doesn't exist in target - add it
                 to_add.append(event)
                 logger.debug(f"Event needs to be added: {subject}")
         
-        # Find events to delete (exist in target but not in public source events)
-        public_ical_uids = {event.get('iCalUId') for event in public_events}
-        
-        for ical_uid, target_event in target_map.items():
-            if ical_uid not in public_ical_uids:
-                to_delete.append(target_event)
-                logger.debug(f"Event needs to be deleted: {target_event.get('subject')}")
-        
-        # Handle duplicate events in target (delete the extras)
-        if duplicate_ical_uids:
-            for event in target_events:
-                ical_uid = event.get('iCalUId')
-                if ical_uid in duplicate_ical_uids and event not in [e[1] for e in to_update]:
-                    # This is a duplicate and not the one we're keeping
-                    if event not in to_delete:
-                        to_delete.append(event)
-                        logger.info(f"Will delete duplicate: {event.get('subject')} (iCalUId: {ical_uid})")
+        # Any remaining events in target_map should be deleted
+        for key, target_event in target_map.items():
+            to_delete.append(target_event)
+            logger.debug(f"Event needs to be deleted: {target_event.get('subject')}")
         
         logger.info(f"Sync plan: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
         
@@ -622,14 +642,36 @@ def sync_calendars():
         # Add new events
         for event in to_add:
             try:
+                # Extract location information
+                source_location = event.get('location', {})
+                location_text = ""
+                if source_location:
+                    if isinstance(source_location, dict):
+                        display_name = source_location.get('displayName', '')
+                        address = source_location.get('address', {})
+                        if isinstance(address, dict):
+                            street = address.get('street', '')
+                            city = address.get('city', '')
+                            state = address.get('state', '')
+                            location_text = f"{display_name} - {street}, {city}, {state}".strip(' -,')
+                        else:
+                            location_text = display_name
+                    else:
+                        location_text = str(source_location)
+                
+                # Create body content with location info
+                body_content = ""
+                if location_text:
+                    body_content = f"<p><strong>Location:</strong> {location_text}</p>"
+                
                 create_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
                 create_data = {
                     'subject': event.get('subject'),
                     'start': event.get('start'),
                     'end': event.get('end'),
                     'categories': event.get('categories'),
-                    'body': {'contentType': 'html', 'content': ''},  # Clear body for privacy
-                    'location': event.get('location', {}),
+                    'body': {'contentType': 'html', 'content': body_content},
+                    'location': {},  # Clear location for privacy
                     'isAllDay': event.get('isAllDay', False),
                     'showAs': 'busy',  # Always set to busy for public calendar
                     'isReminderOn': False  # No reminders on public calendar
@@ -638,10 +680,6 @@ def sync_calendars():
                 # Add recurrence for recurring events
                 if event.get('type') == 'seriesMaster' and event.get('recurrence'):
                     create_data['recurrence'] = event.get('recurrence')
-                
-                # Include iCalUId to maintain consistency
-                if event.get('iCalUId'):
-                    create_data['iCalUId'] = event.get('iCalUId')
                 
                 create_response = requests.post(create_url, headers=headers, json=create_data, timeout=30)
                 if create_response.status_code in [200, 201]:
@@ -657,14 +695,36 @@ def sync_calendars():
         # Update existing events
         for source_event, target_event in to_update:
             try:
+                # Extract location information
+                source_location = source_event.get('location', {})
+                location_text = ""
+                if source_location:
+                    if isinstance(source_location, dict):
+                        display_name = source_location.get('displayName', '')
+                        address = source_location.get('address', {})
+                        if isinstance(address, dict):
+                            street = address.get('street', '')
+                            city = address.get('city', '')
+                            state = address.get('state', '')
+                            location_text = f"{display_name} - {street}, {city}, {state}".strip(' -,')
+                        else:
+                            location_text = display_name
+                    else:
+                        location_text = str(source_location)
+                
+                # Create body content with location info
+                body_content = ""
+                if location_text:
+                    body_content = f"<p><strong>Location:</strong> {location_text}</p>"
+                
                 update_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{target_event.get('id')}"
                 update_data = {
                     'subject': source_event.get('subject'),
                     'start': source_event.get('start'),
                     'end': source_event.get('end'),
                     'categories': source_event.get('categories'),
-                    'body': {'contentType': 'html', 'content': ''},  # Clear body for privacy
-                    'location': source_event.get('location', {}),
+                    'body': {'contentType': 'html', 'content': body_content},
+                    'location': {},  # Clear location for privacy
                     'isAllDay': source_event.get('isAllDay', False),
                     'showAs': 'busy',
                     'isReminderOn': False
@@ -711,7 +771,6 @@ def sync_calendars():
                 'added': len(to_add),
                 'updated': len(to_update),
                 'deleted': len(to_delete),
-                'duplicate_ical_uids_found': len(duplicate_ical_uids),
                 'skipped': skipped_events
             }
             last_sync_result = result
