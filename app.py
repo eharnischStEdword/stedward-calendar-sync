@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Calendar Sync Web Application for Render.com
-STABLE VERSION with improvements for production deployment and token persistence
+STABLE VERSION with iCalUId-based deduplication to prevent duplicates
 """
 
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
@@ -404,7 +404,7 @@ async def run_diagnostics():
     return diagnostics
 
 def sync_calendars():
-    """Sync function with automatic token refresh and improved error handling"""
+    """Enhanced sync function using iCalUId for proper deduplication"""
     global last_sync_time, last_sync_result, sync_in_progress, sync_request_times
     
     # Check rate limiting
@@ -420,7 +420,7 @@ def sync_calendars():
     # Record this sync request
     sync_request_times.append(datetime.now())
     
-    logger.info("Starting calendar sync")
+    logger.info("Starting calendar sync with iCalUId deduplication")
     
     try:
         # Ensure token is valid before sync
@@ -464,10 +464,11 @@ def sync_calendars():
             logger.error("Required calendars not found")
             return {"error": "Required calendars not found"}
         
-        # Get source events (all types)
+        # Get ALL source events (don't filter here, we need to see all events for proper sync)
         source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
         source_params = {
-            '$top': 200,
+            '$top': 500,  # Get more events
+            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,iCalUId,body'
         }
         
         source_response = requests.get(source_events_url, headers=headers, params=source_params, timeout=30)
@@ -476,11 +477,13 @@ def sync_calendars():
             return {"error": f"Failed to get source events: {source_response.status_code}"}
         
         source_events = source_response.json().get('value', [])
+        logger.info(f"Retrieved {len(source_events)} total events from source calendar")
         
-        # Get target events
+        # Get ALL target events
         target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
         target_params = {
-            '$top': 200,
+            '$top': 500,
+            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,iCalUId'
         }
         
         target_response = requests.get(target_events_url, headers=headers, params=target_params, timeout=30)
@@ -489,140 +492,170 @@ def sync_calendars():
             return {"error": f"Failed to get target events: {target_response.status_code}"}
         
         target_events = target_response.json().get('value', [])
+        logger.info(f"Retrieved {len(target_events)} total events from target calendar")
         
-        # Process public events from source - FILTER OUT INSTANCES AND TENTATIVE EVENTS
+        # Build a map of target events by iCalUId for efficient lookup
+        target_map = {}
+        duplicate_ical_uids = []
+        
+        for event in target_events:
+            ical_uid = event.get('iCalUId')
+            if ical_uid:
+                if ical_uid in target_map:
+                    # Found a duplicate!
+                    duplicate_ical_uids.append(ical_uid)
+                    logger.warning(f"Duplicate iCalUId found in target: {ical_uid} - {event.get('subject')}")
+                else:
+                    target_map[ical_uid] = event
+        
+        logger.info(f"Built target map with {len(target_map)} unique events")
+        if duplicate_ical_uids:
+            logger.warning(f"Found {len(duplicate_ical_uids)} duplicate iCalUIds in target calendar")
+        
+        # Process public events from source
         public_events = []
-        tentative_count = 0
+        skipped_events = {
+            'non_public': 0,
+            'tentative': 0,
+            'recurring_instances': 0,
+            'no_ical_uid': 0
+        }
         
         for event in source_events:
             categories = event.get('categories', [])
-            if 'Public' in categories:
-                # NEW: Check if event is confirmed (busy) and not tentative
-                show_as = event.get('showAs', 'busy')  # Default to 'busy' if not specified
-                
-                # Only sync events that are marked as "busy" (confirmed)
-                # Skip events marked as "tentative", "free", or "oof" (out of office)
-                if show_as != 'busy':
-                    logger.debug(f"Skipping tentative/unconfirmed event: {event.get('subject')} (showAs: {show_as})")
-                    if show_as == 'tentative':
-                        tentative_count += 1
-                    continue
-                
-                logger.debug(f"Processing public event: {event.get('subject')}")
-                
-                # Handle ONLY recurring masters AND true single events, skip instances
-                event_type = event.get('type', 'unknown')
-                if event_type == 'seriesMaster':
-                    logger.debug(f"Found recurring master event: {event.get('subject')}")
-                    # Clear body content for privacy
-                    event_copy = event.copy()
-                    if 'body' in event_copy:
-                        event_copy['body'] = {'contentType': 'html', 'content': ''}
-                    public_events.append(event_copy)
-                    
-                elif event_type == 'singleInstance' and not event.get('seriesMasterId'):
-                    # Only include single events that are NOT part of a recurring series
-                    logger.debug(f"Found single event: {event.get('subject')}")
-                    # Clear body content for privacy
-                    event_copy = event.copy()
-                    if 'body' in event_copy:
-                        event_copy['body'] = {'contentType': 'html', 'content': ''}
-                    public_events.append(event_copy)
-                    
-                elif event_type == 'occurrence':
-                    logger.debug(f"Skipping recurring instance: {event.get('subject')} (will sync via master)")
-                    
-                else:
-                    logger.debug(f"Skipped event type '{event_type}': {event.get('subject')}")
-        
-        logger.info(f"Sync summary: {len(public_events)} confirmed public events to sync, {tentative_count} tentative events skipped")
-        
-        # Create source and target dictionaries for comparison
-        source_events_dict = {}
-        for event in public_events:
             subject = event.get('subject', '')
-            event_type = event.get('type', 'unknown')
+            ical_uid = event.get('iCalUId')
             
-            # Create different key formats for recurring vs single events
-            if event_type == 'seriesMaster':
-                key = f"recurring:{subject}"
-            else:
-                # For single events, include start date to make them unique
-                start_date = event.get('start', {}).get('dateTime', 'no-date')
-                if 'T' in start_date:
-                    start_date = start_date.split('T')[0]  # Just the date part
-                key = f"single:{subject}:{start_date}"
-                
-            source_events_dict[key] = event
+            # Skip if not public
+            if 'Public' not in categories:
+                skipped_events['non_public'] += 1
+                continue
+            
+            # Skip tentative events
+            show_as = event.get('showAs', 'busy')
+            if show_as != 'busy':
+                skipped_events['tentative'] += 1
+                logger.debug(f"Skipping tentative event: {subject} (showAs: {show_as})")
+                continue
+            
+            # Skip recurring instances (only sync masters)
+            event_type = event.get('type', 'unknown')
+            if event_type == 'occurrence':
+                skipped_events['recurring_instances'] += 1
+                logger.debug(f"Skipping recurring instance: {subject}")
+                continue
+            
+            # Skip if no iCalUId (shouldn't happen but just in case)
+            if not ical_uid:
+                skipped_events['no_ical_uid'] += 1
+                logger.warning(f"Event without iCalUId: {subject}")
+                continue
+            
+            # This is a valid public event to sync
+            public_events.append(event)
         
-        target_events_dict = {}
-        for event in target_events:
-            subject = event.get('subject', '')
-            event_type = event.get('type', 'unknown')
-            
-            # Create matching key format
-            if event_type == 'seriesMaster':
-                key = f"recurring:{subject}"
-            else:
-                start_date = event.get('start', {}).get('dateTime', 'no-date')
-                if 'T' in start_date:
-                    start_date = start_date.split('T')[0]
-                key = f"single:{subject}:{start_date}"
-                
-            target_events_dict[key] = event
+        logger.info(f"Found {len(public_events)} public events to sync")
+        logger.info(f"Skipped: {skipped_events}")
         
         # Determine what needs to be added, updated, or deleted
         to_add = []
         to_update = []
         to_delete = []
         
-        for key, source_event in source_events_dict.items():
-            if key in target_events_dict:
-                to_update.append((key, source_event, target_events_dict[key]))
+        # Check each public event
+        for event in public_events:
+            ical_uid = event.get('iCalUId')
+            subject = event.get('subject', '')
+            
+            if ical_uid in target_map:
+                # Event exists in target - check if it needs updating
+                target_event = target_map[ical_uid]
+                
+                # Compare key fields to see if update is needed
+                needs_update = False
+                if event.get('subject') != target_event.get('subject'):
+                    needs_update = True
+                elif event.get('start') != target_event.get('start'):
+                    needs_update = True
+                elif event.get('end') != target_event.get('end'):
+                    needs_update = True
+                elif event.get('location') != target_event.get('location'):
+                    needs_update = True
+                elif event.get('isAllDay') != target_event.get('isAllDay'):
+                    needs_update = True
+                elif event.get('recurrence') != target_event.get('recurrence'):
+                    needs_update = True
+                
+                if needs_update:
+                    to_update.append((event, target_event))
+                    logger.debug(f"Event needs update: {subject}")
             else:
-                to_add.append((key, source_event))
+                # Event doesn't exist in target - add it
+                to_add.append(event)
+                logger.debug(f"Event needs to be added: {subject}")
         
-        for key in target_events_dict:
-            if key not in source_events_dict:
-                to_delete.append((key, target_events_dict[key]))
+        # Find events to delete (exist in target but not in public source events)
+        public_ical_uids = {event.get('iCalUId') for event in public_events}
+        
+        for ical_uid, target_event in target_map.items():
+            if ical_uid not in public_ical_uids:
+                to_delete.append(target_event)
+                logger.debug(f"Event needs to be deleted: {target_event.get('subject')}")
+        
+        # Handle duplicate events in target (delete the extras)
+        if duplicate_ical_uids:
+            for event in target_events:
+                ical_uid = event.get('iCalUId')
+                if ical_uid in duplicate_ical_uids and event not in [e[1] for e in to_update]:
+                    # This is a duplicate and not the one we're keeping
+                    if event not in to_delete:
+                        to_delete.append(event)
+                        logger.info(f"Will delete duplicate: {event.get('subject')} (iCalUId: {ical_uid})")
         
         logger.info(f"Sync plan: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
         
         # Execute sync operations
         successful_operations = 0
+        failed_operations = 0
         total_operations = len(to_add) + len(to_update) + len(to_delete)
         
         # Add new events
-        for key, source_event in to_add:
+        for event in to_add:
             try:
                 create_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
                 create_data = {
-                    'subject': source_event.get('subject'),
-                    'start': source_event.get('start'),
-                    'end': source_event.get('end'),
-                    'categories': source_event.get('categories'),
-                    'body': {'contentType': 'html', 'content': ''},  # Always clear body
-                    'location': source_event.get('location', {}),
-                    'isAllDay': source_event.get('isAllDay', False),
-                    'showAs': source_event.get('showAs', 'free'),  # Preserve free/busy status
-                    'isReminderOn': False  # NO ALERTS/REMINDERS
+                    'subject': event.get('subject'),
+                    'start': event.get('start'),
+                    'end': event.get('end'),
+                    'categories': event.get('categories'),
+                    'body': {'contentType': 'html', 'content': ''},  # Clear body for privacy
+                    'location': event.get('location', {}),
+                    'isAllDay': event.get('isAllDay', False),
+                    'showAs': 'busy',  # Always set to busy for public calendar
+                    'isReminderOn': False  # No reminders on public calendar
                 }
                 
-                # Only add recurrence for recurring events
-                if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
-                    create_data['recurrence'] = source_event.get('recurrence')
+                # Add recurrence for recurring events
+                if event.get('type') == 'seriesMaster' and event.get('recurrence'):
+                    create_data['recurrence'] = event.get('recurrence')
+                
+                # Include iCalUId to maintain consistency
+                if event.get('iCalUId'):
+                    create_data['iCalUId'] = event.get('iCalUId')
                 
                 create_response = requests.post(create_url, headers=headers, json=create_data, timeout=30)
                 if create_response.status_code in [200, 201]:
                     successful_operations += 1
-                    logger.debug(f"Successfully added: {key}")
+                    logger.info(f"✅ Added: {event.get('subject')}")
                 else:
-                    logger.error(f"Failed to add {key}: {create_response.status_code}")
+                    failed_operations += 1
+                    logger.error(f"❌ Failed to add {event.get('subject')}: {create_response.status_code} - {create_response.text}")
             except Exception as e:
-                logger.error(f"Error adding {key}: {str(e)}")
+                failed_operations += 1
+                logger.error(f"❌ Error adding {event.get('subject')}: {str(e)}")
         
         # Update existing events
-        for key, source_event, target_event in to_update:
+        for source_event, target_event in to_update:
             try:
                 update_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{target_event.get('id')}"
                 update_data = {
@@ -630,38 +663,42 @@ def sync_calendars():
                     'start': source_event.get('start'),
                     'end': source_event.get('end'),
                     'categories': source_event.get('categories'),
-                    'body': {'contentType': 'html', 'content': ''},  # Always clear body
+                    'body': {'contentType': 'html', 'content': ''},  # Clear body for privacy
                     'location': source_event.get('location', {}),
                     'isAllDay': source_event.get('isAllDay', False),
-                    'showAs': source_event.get('showAs', 'free'),  # Preserve free/busy status
-                    'isReminderOn': False  # NO ALERTS/REMINDERS
+                    'showAs': 'busy',
+                    'isReminderOn': False
                 }
                 
-                # Only add recurrence for recurring events
+                # Update recurrence for recurring events
                 if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
                     update_data['recurrence'] = source_event.get('recurrence')
                 
                 update_response = requests.patch(update_url, headers=headers, json=update_data, timeout=30)
                 if update_response.status_code == 200:
                     successful_operations += 1
-                    logger.debug(f"Successfully updated: {key}")
+                    logger.info(f"✅ Updated: {source_event.get('subject')}")
                 else:
-                    logger.error(f"Failed to update {key}: {update_response.status_code}")
+                    failed_operations += 1
+                    logger.error(f"❌ Failed to update {source_event.get('subject')}: {update_response.status_code}")
             except Exception as e:
-                logger.error(f"Error updating {key}: {str(e)}")
+                failed_operations += 1
+                logger.error(f"❌ Error updating {source_event.get('subject')}: {str(e)}")
         
-        # Delete removed events
-        for key, target_event in to_delete:
+        # Delete removed/duplicate events
+        for event in to_delete:
             try:
-                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{target_event.get('id')}"
+                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event.get('id')}"
                 delete_response = requests.delete(delete_url, headers=headers, timeout=30)
                 if delete_response.status_code in [200, 204]:
                     successful_operations += 1
-                    logger.debug(f"Successfully deleted: {key}")
+                    logger.info(f"✅ Deleted: {event.get('subject')}")
                 else:
-                    logger.error(f"Failed to delete {key}: {delete_response.status_code}")
+                    failed_operations += 1
+                    logger.error(f"❌ Failed to delete {event.get('subject')}: {delete_response.status_code}")
             except Exception as e:
-                logger.error(f"Error deleting {key}: {str(e)}")
+                failed_operations += 1
+                logger.error(f"❌ Error deleting {event.get('subject')}: {str(e)}")
         
         with sync_lock:
             last_sync_time = datetime.now(pytz.UTC)
@@ -670,10 +707,12 @@ def sync_calendars():
                 'message': f'Sync complete: {successful_operations}/{total_operations} operations successful',
                 'changes': successful_operations,
                 'successful_operations': successful_operations,
+                'failed_operations': failed_operations,
                 'added': len(to_add),
                 'updated': len(to_update),
                 'deleted': len(to_delete),
-                'tentative_skipped': tentative_count
+                'duplicate_ical_uids_found': len(duplicate_ical_uids),
+                'skipped': skipped_events
             }
             last_sync_result = result
         
@@ -737,7 +776,7 @@ def scheduled_sync():
     """Function to be called by the scheduler"""
     logger.info("Running scheduled sync")
     result = run_sync()
-    logger.info(f"Sync completed: {result}")
+    logger.info(f"Scheduled sync completed: {result}")
 
 def run_scheduler():
     """Run the scheduler in a background thread"""
@@ -933,6 +972,244 @@ def health():
                 health_status["warning"] = "Token expiring soon"
     
     return jsonify(health_status)
+
+@app.route('/debug-mass-events')
+def debug_mass_events():
+    """Debug endpoint specifically for Mass events"""
+    try:
+        if not access_token:
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get calendars
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        source_calendar_id = None
+        target_calendar_id = None
+        
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'Calendar':
+                source_calendar_id = calendar.get('id')
+            elif calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+        
+        if not source_calendar_id or not target_calendar_id:
+            return jsonify({"error": "Required calendars not found"})
+        
+        # Get source Mass events
+        source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
+        source_params = {
+            '$filter': "contains(subject, 'Mass')",
+            '$top': 100,
+            '$orderby': 'start/dateTime',
+            '$select': 'id,subject,start,end,type,categories,recurrence,seriesMasterId,showAs,isAllDay,iCalUId,createdDateTime'
+        }
+        
+        source_response = requests.get(source_events_url, headers=headers, params=source_params)
+        source_mass_events = source_response.json().get('value', [])
+        
+        # Get target Mass events
+        target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        target_params = {
+            '$filter': "contains(subject, 'Mass')",
+            '$top': 100,
+            '$orderby': 'start/dateTime',
+            '$select': 'id,subject,start,end,type,categories,recurrence,seriesMasterId,showAs,isAllDay,iCalUId,createdDateTime'
+        }
+        
+        target_response = requests.get(target_events_url, headers=headers, params=target_params)
+        target_mass_events = target_response.json().get('value', [])
+        
+        # Analyze Mass events
+        source_analysis = []
+        source_ical_uids = set()
+        
+        for event in source_mass_events:
+            ical_uid = event.get('iCalUId')
+            if ical_uid:
+                source_ical_uids.add(ical_uid)
+            
+            source_analysis.append({
+                'id': event.get('id'),
+                'subject': event.get('subject'),
+                'type': event.get('type'),
+                'start': event.get('start', {}).get('dateTime', 'no-date'),
+                'end': event.get('end', {}).get('dateTime', 'no-end'),
+                'categories': event.get('categories', []),
+                'is_public': 'Public' in event.get('categories', []),
+                'recurrence': 'Yes' if event.get('recurrence') else 'No',
+                'seriesMasterId': event.get('seriesMasterId'),
+                'showAs': event.get('showAs', 'unknown'),
+                'isAllDay': event.get('isAllDay', False),
+                'iCalUId': ical_uid,
+                'created': event.get('createdDateTime', 'unknown')
+            })
+        
+        target_analysis = []
+        target_ical_uids = {}
+        duplicates_by_ical = {}
+        
+        for event in target_mass_events:
+            ical_uid = event.get('iCalUId')
+            event_data = {
+                'id': event.get('id'),
+                'subject': event.get('subject'),
+                'type': event.get('type'),
+                'start': event.get('start', {}).get('dateTime', 'no-date'),
+                'end': event.get('end', {}).get('dateTime', 'no-end'),
+                'recurrence': 'Yes' if event.get('recurrence') else 'No',
+                'seriesMasterId': event.get('seriesMasterId'),
+                'iCalUId': ical_uid,
+                'created': event.get('createdDateTime', 'unknown')
+            }
+            target_analysis.append(event_data)
+            
+            # Track iCalUIds
+            if ical_uid:
+                if ical_uid not in target_ical_uids:
+                    target_ical_uids[ical_uid] = []
+                target_ical_uids[ical_uid].append(event_data)
+        
+        # Find duplicates by iCalUId
+        for ical_uid, events in target_ical_uids.items():
+            if len(events) > 1:
+                duplicates_by_ical[ical_uid] = events
+        
+        # Check which source events are missing in target
+        missing_in_target = []
+        for event in source_analysis:
+            if event['is_public'] and event['iCalUId'] and event['iCalUId'] not in target_ical_uids:
+                missing_in_target.append(event)
+        
+        # Check which target events shouldn't be there
+        orphaned_in_target = []
+        for ical_uid in target_ical_uids:
+            if ical_uid not in source_ical_uids:
+                orphaned_in_target.extend(target_ical_uids[ical_uid])
+        
+        return jsonify({
+            'analysis_timestamp': datetime.now().isoformat(),
+            'source_calendar': {
+                'name': 'Calendar (Master)',
+                'total_mass_events': len(source_mass_events),
+                'public_mass_events': len([e for e in source_analysis if e['is_public']]),
+                'recurring_mass_events': len([e for e in source_analysis if e['type'] == 'seriesMaster']),
+                'single_mass_events': len([e for e in source_analysis if e['type'] == 'singleInstance']),
+                'unique_ical_uids': len(source_ical_uids),
+                'events': source_analysis
+            },
+            'target_calendar': {
+                'name': 'St. Edward Public Calendar',
+                'total_mass_events': len(target_mass_events),
+                'recurring_mass_events': len([e for e in target_analysis if e['type'] == 'seriesMaster']),
+                'single_mass_events': len([e for e in target_analysis if e['type'] == 'singleInstance']),
+                'unique_ical_uids': len(target_ical_uids),
+                'duplicates_by_ical_uid': len(duplicates_by_ical),
+                'duplicate_details': duplicates_by_ical,
+                'events': target_analysis
+            },
+            'sync_analysis': {
+                'missing_in_target': len(missing_in_target),
+                'missing_events': missing_in_target,
+                'orphaned_in_target': len(orphaned_in_target),
+                'orphaned_events': orphaned_in_target,
+                'duplicates_in_target': len(duplicates_by_ical)
+            },
+            'recommendations': [
+                f"Found {len(duplicates_by_ical)} iCalUIds with duplicate events" if duplicates_by_ical else "No duplicates by iCalUId",
+                f"{len(missing_in_target)} public Mass events missing in target" if missing_in_target else "All public Mass events are synced",
+                f"{len(orphaned_in_target)} events in target not found in source" if orphaned_in_target else "No orphaned events",
+                "Run a sync to fix any discrepancies"
+            ]
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Debug failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
+@app.route('/cleanup-duplicates', methods=['POST'])
+@requires_auth
+def cleanup_duplicates():
+    """Clean up all duplicate events based on iCalUId"""
+    try:
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == 'St. Edward Public Calendar':
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Get ALL events from target
+        target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        target_params = {
+            '$top': 500,
+            '$select': 'id,subject,start,iCalUId,createdDateTime'
+        }
+        
+        target_response = requests.get(target_events_url, headers=headers, params=target_params)
+        target_events = target_response.json().get('value', [])
+        
+        # Find duplicates by iCalUId
+        ical_uid_map = {}
+        for event in target_events:
+            ical_uid = event.get('iCalUId')
+            if ical_uid:
+                if ical_uid not in ical_uid_map:
+                    ical_uid_map[ical_uid] = []
+                ical_uid_map[ical_uid].append(event)
+        
+        # Delete duplicates (keep the oldest)
+        deleted_count = 0
+        failed_count = 0
+        
+        for ical_uid, events in ical_uid_map.items():
+            if len(events) > 1:
+                # Sort by creation date, keep the oldest
+                events.sort(key=lambda x: x.get('createdDateTime', ''))
+                
+                # Delete all but the first
+                for event in events[1:]:
+                    try:
+                        delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event.get('id')}"
+                        delete_response = requests.delete(delete_url, headers=headers)
+                        
+                        if delete_response.status_code in [200, 204]:
+                            deleted_count += 1
+                            logger.info(f"Deleted duplicate: {event.get('subject')}")
+                        else:
+                            failed_count += 1
+                            logger.error(f"Failed to delete: {event.get('subject')}")
+                    except Exception as e:
+                        failed_count += 1
+                        logger.error(f"Error deleting: {str(e)}")
+        
+        return jsonify({
+            "success": True,
+            "deleted": deleted_count,
+            "failed": failed_count,
+            "message": f"Cleaned up {deleted_count} duplicate events"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Cleanup failed: {str(e)}"}), 500
 
 @app.route('/scheduler-status')
 def scheduler_status():
