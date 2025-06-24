@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Calendar Sync Web Application for Render.com
-STABLE VERSION with composite key matching and simple location in description
+BULLETPROOF VERSION with master calendar protection and enhanced debugging
 """
 
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
@@ -67,6 +67,10 @@ scheduler_lock = threading.Lock()
 scheduler_running = False
 scheduler_thread = None
 
+# BULLETPROOF SAFEGUARDS
+MASTER_CALENDAR_PROTECTION = True  # Never allow operations on source calendar
+DRY_RUN_MODE = False  # Set to True to test without making changes
+
 def rate_limit_check():
     """Check if we're within rate limits"""
     global sync_request_times
@@ -92,7 +96,6 @@ def make_json_serializable(obj):
 
 def save_tokens_to_env(access_token, refresh_token, expires_at):
     """Save tokens to environment variables (for next deployment)"""
-    # Note: This won't persist immediately, but you can set these manually in Render dashboard
     logger.info("SAVE THESE TO YOUR RENDER ENVIRONMENT VARIABLES:")
     logger.info(f"REFRESH_TOKEN={refresh_token}")
     logger.info(f"TOKEN_EXPIRES_AT={expires_at.isoformat()}")
@@ -281,6 +284,460 @@ def requires_auth(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def normalize_subject(subject):
+    """Normalize event subject for consistent matching"""
+    if not subject:
+        return ""
+    # Strip whitespace, replace multiple spaces with single space, convert to lowercase
+    return ' '.join(subject.strip().lower().split())
+
+def normalize_datetime(dt_str):
+    """Normalize datetime string for consistent matching"""
+    if not dt_str:
+        return ""
+    try:
+        # Parse and reformat to ensure consistency
+        if 'T' in dt_str:
+            date_part, time_part = dt_str.split('T', 1)
+            # Remove timezone info for comparison
+            time_part = time_part.split('+')[0].split('Z')[0].split('-')[0]
+            return f"{date_part}T{time_part}"
+        return dt_str
+    except:
+        return dt_str
+
+def create_event_signature(event):
+    """Create a unique signature for an event that's resistant to minor changes"""
+    subject = normalize_subject(event.get('subject', ''))
+    start = normalize_datetime(event.get('start', {}).get('dateTime', ''))
+    event_type = event.get('type', 'unknown')
+    
+    # For recurring events, use just the subject
+    if event_type == 'seriesMaster':
+        return f"recurring:{subject}"
+    
+    # For single events, use subject + date + time (hour and minute only)
+    try:
+        if 'T' in start:
+            date_part = start.split('T')[0]
+            time_part = start.split('T')[1][:5]  # Just HH:MM
+            return f"single:{subject}:{date_part}:{time_part}"
+    except:
+        pass
+    
+    return f"single:{subject}:{start}"
+
+def sync_calendars():
+    """BULLETPROOF sync function with master calendar protection"""
+    global last_sync_time, last_sync_result, sync_in_progress, sync_request_times
+    
+    # Check rate limiting
+    if not rate_limit_check():
+        logger.warning("Rate limit exceeded for sync requests")
+        return {"error": "Rate limit exceeded. Please wait before syncing again."}
+    
+    with sync_lock:
+        if sync_in_progress:
+            return {"error": "Sync already in progress"}
+        sync_in_progress = True
+    
+    # Record this sync request
+    sync_request_times.append(datetime.now())
+    
+    logger.info("🚀 Starting BULLETPROOF calendar sync with master calendar protection")
+    
+    try:
+        # Ensure token is valid before sync
+        if not ensure_valid_token():
+            return {"error": "Authentication failed - token expired and refresh failed"}
+        
+        with token_lock:
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json'
+            }
+        
+        # Get calendars with EXTRA VERIFICATION
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
+        
+        if calendars_response.status_code == 401:
+            # Try refreshing token once more
+            if refresh_access_token():
+                with token_lock:
+                    headers['Authorization'] = f'Bearer {access_token}'
+                calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
+            else:
+                return {"error": "Authentication failed - please sign in again"}
+        
+        if calendars_response.status_code != 200:
+            logger.error(f"Failed to get calendars: {calendars_response.status_code}")
+            return {"error": f"Failed to get calendars: {calendars_response.status_code}"}
+        
+        calendars_data = calendars_response.json()
+        source_calendar_id = None
+        target_calendar_id = None
+        
+        for calendar in calendars_data.get('value', []):
+            calendar_name = calendar.get('name', '')
+            if calendar_name == SOURCE_CALENDAR:
+                source_calendar_id = calendar.get('id')
+                logger.info(f"✅ Found SOURCE calendar: {calendar_name} (ID: {source_calendar_id})")
+            elif calendar_name == TARGET_CALENDAR:
+                target_calendar_id = calendar.get('id')
+                logger.info(f"✅ Found TARGET calendar: {calendar_name} (ID: {target_calendar_id})")
+        
+        if not source_calendar_id or not target_calendar_id:
+            logger.error("Required calendars not found")
+            return {"error": "Required calendars not found"}
+        
+        # SAFEGUARD: Verify we have the right calendar IDs
+        if source_calendar_id == target_calendar_id:
+            logger.error("🚨 CRITICAL ERROR: Source and target calendar IDs are the same!")
+            return {"error": "SAFETY ABORT: Source and target calendars are identical"}
+        
+        logger.info(f"🔍 Source calendar ID: {source_calendar_id}")
+        logger.info(f"🎯 Target calendar ID: {target_calendar_id}")
+        
+        # Get ALL source events (READ ONLY - never modify source!)
+        source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
+        source_params = {
+            '$top': 500,
+            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,body,createdDateTime'
+        }
+        
+        logger.info(f"📖 Reading from SOURCE calendar (READ ONLY): {SOURCE_CALENDAR}")
+        source_response = requests.get(source_events_url, headers=headers, params=source_params, timeout=30)
+        if source_response.status_code != 200:
+            logger.error(f"Failed to get source events: {source_response.status_code}")
+            return {"error": f"Failed to get source events: {source_response.status_code}"}
+        
+        source_events = source_response.json().get('value', [])
+        logger.info(f"📚 Retrieved {len(source_events)} total events from SOURCE calendar")
+        
+        # Get ALL target events
+        target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        target_params = {
+            '$top': 500,
+            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,body,createdDateTime'
+        }
+        
+        logger.info(f"📖 Reading from TARGET calendar: {TARGET_CALENDAR}")
+        target_response = requests.get(target_events_url, headers=headers, params=target_params, timeout=30)
+        if target_response.status_code != 200:
+            logger.error(f"Failed to get target events: {target_response.status_code}")
+            return {"error": f"Failed to get target events: {target_response.status_code}"}
+        
+        target_events = target_response.json().get('value', [])
+        logger.info(f"📚 Retrieved {len(target_events)} total events from TARGET calendar")
+        
+        # Build a map of target events by signature
+        target_map = {}
+        for event in target_events:
+            signature = create_event_signature(event)
+            if signature in target_map:
+                logger.warning(f"⚠️ Duplicate signature in target: {signature}")
+                # Keep the newer one
+                existing_created = target_map[signature].get('createdDateTime', '')
+                new_created = event.get('createdDateTime', '')
+                if new_created > existing_created:
+                    target_map[signature] = event
+            else:
+                target_map[signature] = event
+        
+        logger.info(f"🗂️ Built target map with {len(target_map)} unique events")
+        
+        # Process public events from source (NEVER MODIFY SOURCE!)
+        public_events = []
+        skipped_events = {
+            'non_public': 0,
+            'tentative': 0,
+            'recurring_instances': 0,
+            'past_events': 0
+        }
+        
+        cutoff_date = datetime.now() - timedelta(days=90)  # Only sync recent/future events
+        
+        for event in source_events:
+            categories = event.get('categories', [])
+            subject = event.get('subject', '')
+            
+            # Skip if not public
+            if 'Public' not in categories:
+                skipped_events['non_public'] += 1
+                continue
+            
+            # Skip tentative events
+            show_as = event.get('showAs', 'busy')
+            if show_as != 'busy':
+                skipped_events['tentative'] += 1
+                logger.debug(f"⏭️ Skipping tentative event: {subject}")
+                continue
+            
+            # Skip recurring instances (only sync masters)
+            event_type = event.get('type', 'unknown')
+            if event_type == 'occurrence':
+                skipped_events['recurring_instances'] += 1
+                logger.debug(f"⏭️ Skipping recurring instance: {subject}")
+                continue
+            
+            # Skip very old events
+            try:
+                event_start = event.get('start', {}).get('dateTime', '')
+                if event_start:
+                    event_date = datetime.fromisoformat(event_start.replace('Z', ''))
+                    if event_date < cutoff_date:
+                        skipped_events['past_events'] += 1
+                        logger.debug(f"⏭️ Skipping old event: {subject}")
+                        continue
+            except:
+                pass  # If we can't parse date, include the event
+            
+            # This is a valid public event to sync
+            public_events.append(event)
+        
+        logger.info(f"✅ Found {len(public_events)} public events to sync")
+        logger.info(f"⏭️ Skipped: {skipped_events}")
+        
+        # Determine what needs to be added, updated, or deleted IN TARGET ONLY
+        to_add = []
+        to_update = []
+        to_delete = []
+        
+        # Check each public event from source
+        for event in public_events:
+            signature = create_event_signature(event)
+            logger.debug(f"🔍 Checking event with signature: {signature}")
+            
+            if signature in target_map:
+                # Event exists in target - check if it needs updating
+                target_event = target_map[signature]
+                
+                # Compare key fields to see if update is needed
+                needs_update = False
+                
+                # Check basic fields
+                source_subject = event.get('subject', '')
+                target_subject = target_event.get('subject', '')
+                if source_subject != target_subject:
+                    needs_update = True
+                    logger.debug(f"📝 Subject changed: '{target_subject}' -> '{source_subject}'")
+                
+                if event.get('start') != target_event.get('start'):
+                    needs_update = True
+                    logger.debug(f"🕐 Start time changed")
+                
+                if event.get('end') != target_event.get('end'):
+                    needs_update = True
+                    logger.debug(f"🕐 End time changed")
+                
+                if event.get('isAllDay') != target_event.get('isAllDay'):
+                    needs_update = True
+                    logger.debug(f"📅 All-day status changed")
+                
+                if event.get('recurrence') != target_event.get('recurrence'):
+                    needs_update = True
+                    logger.debug(f"🔄 Recurrence changed")
+                
+                if needs_update:
+                    to_update.append((event, target_event))
+                    logger.debug(f"✏️ Event needs update: {source_subject}")
+                
+                # Mark this signature as processed
+                del target_map[signature]
+            else:
+                # Event doesn't exist in target - add it
+                to_add.append(event)
+                logger.debug(f"➕ Event needs to be added: {event.get('subject')}")
+        
+        # Any remaining events in target_map should be deleted (they're no longer in source as public)
+        for signature, target_event in target_map.items():
+            to_delete.append(target_event)
+            logger.debug(f"🗑️ Event needs to be deleted: {target_event.get('subject')}")
+        
+        logger.info(f"📋 SYNC PLAN: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
+        
+        if DRY_RUN_MODE:
+            logger.info("🧪 DRY RUN MODE - No changes will be made")
+            return {
+                'success': True,
+                'message': f'DRY RUN: Would add {len(to_add)}, update {len(to_update)}, delete {len(to_delete)}',
+                'dry_run': True,
+                'changes': 0,
+                'added': len(to_add),
+                'updated': len(to_update),
+                'deleted': len(to_delete)
+            }
+        
+        # Execute sync operations ON TARGET CALENDAR ONLY
+        successful_operations = 0
+        failed_operations = 0
+        total_operations = len(to_add) + len(to_update) + len(to_delete)
+        
+        # SAFEGUARD: Double-check we're only operating on target calendar
+        target_base_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        
+        # Add new events to TARGET ONLY
+        for event in to_add:
+            try:
+                # Extract location information
+                source_location = event.get('location', {})
+                location_text = ""
+                if source_location:
+                    if isinstance(source_location, dict):
+                        location_text = source_location.get('displayName', '')
+                    else:
+                        location_text = str(source_location)
+                
+                # Create body content with location info
+                body_content = ""
+                if location_text:
+                    body_content = f"<p><strong>Location:</strong> {location_text}</p>"
+                
+                create_url = target_base_url
+                create_data = {
+                    'subject': event.get('subject'),
+                    'start': event.get('start'),
+                    'end': event.get('end'),
+                    'categories': event.get('categories'),
+                    'body': {'contentType': 'html', 'content': body_content},
+                    'location': {},  # Clear location for privacy
+                    'isAllDay': event.get('isAllDay', False),
+                    'showAs': 'busy',  # Always set to busy for public calendar
+                    'isReminderOn': False  # No reminders on public calendar
+                }
+                
+                # Add recurrence for recurring events
+                if event.get('type') == 'seriesMaster' and event.get('recurrence'):
+                    create_data['recurrence'] = event.get('recurrence')
+                
+                create_response = requests.post(create_url, headers=headers, json=create_data, timeout=30)
+                if create_response.status_code in [200, 201]:
+                    successful_operations += 1
+                    logger.info(f"✅ Added to TARGET: {event.get('subject')}")
+                else:
+                    failed_operations += 1
+                    logger.error(f"❌ Failed to add to TARGET {event.get('subject')}: {create_response.status_code}")
+            except Exception as e:
+                failed_operations += 1
+                logger.error(f"❌ Error adding to TARGET {event.get('subject')}: {str(e)}")
+        
+        # Update existing events in TARGET ONLY
+        for source_event, target_event in to_update:
+            try:
+                # Extract location information
+                source_location = source_event.get('location', {})
+                location_text = ""
+                if source_location:
+                    if isinstance(source_location, dict):
+                        location_text = source_location.get('displayName', '')
+                    else:
+                        location_text = str(source_location)
+                
+                # Create body content with location info
+                body_content = ""
+                if location_text:
+                    body_content = f"<p><strong>Location:</strong> {location_text}</p>"
+                
+                update_url = f"{target_base_url}/{target_event.get('id')}"
+                update_data = {
+                    'subject': source_event.get('subject'),
+                    'start': source_event.get('start'),
+                    'end': source_event.get('end'),
+                    'categories': source_event.get('categories'),
+                    'body': {'contentType': 'html', 'content': body_content},
+                    'location': {},  # Clear location for privacy
+                    'isAllDay': source_event.get('isAllDay', False),
+                    'showAs': 'busy',
+                    'isReminderOn': False
+                }
+                
+                # Update recurrence for recurring events
+                if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
+                    update_data['recurrence'] = source_event.get('recurrence')
+                
+                update_response = requests.patch(update_url, headers=headers, json=update_data, timeout=30)
+                if update_response.status_code == 200:
+                    successful_operations += 1
+                    logger.info(f"✅ Updated in TARGET: {source_event.get('subject')}")
+                else:
+                    failed_operations += 1
+                    logger.error(f"❌ Failed to update in TARGET {source_event.get('subject')}: {update_response.status_code}")
+            except Exception as e:
+                failed_operations += 1
+                logger.error(f"❌ Error updating in TARGET {source_event.get('subject')}: {str(e)}")
+        
+        # Delete removed events from TARGET ONLY
+        for event in to_delete:
+            try:
+                delete_url = f"{target_base_url}/{event.get('id')}"
+                # Add header to suppress notifications
+                delete_headers = {
+                    **headers,
+                    'Prefer': 'outlook.timezone="UTC", outlook.send-notifications="false"'
+                }
+                delete_response = requests.delete(delete_url, headers=delete_headers, timeout=30)
+                if delete_response.status_code in [200, 204]:
+                    successful_operations += 1
+                    logger.info(f"✅ Deleted from TARGET: {event.get('subject')}")
+                else:
+                    failed_operations += 1
+                    logger.error(f"❌ Failed to delete from TARGET {event.get('subject')}: {delete_response.status_code}")
+            except Exception as e:
+                failed_operations += 1
+                logger.error(f"❌ Error deleting from TARGET {event.get('subject')}: {str(e)}")
+        
+        with sync_lock:
+            last_sync_time = datetime.now(pytz.UTC)
+            result = {
+                'success': True,
+                'message': f'BULLETPROOF sync complete: {successful_operations}/{total_operations} operations successful',
+                'changes': successful_operations,
+                'successful_operations': successful_operations,
+                'failed_operations': failed_operations,
+                'added': len(to_add),
+                'updated': len(to_update),
+                'deleted': len(to_delete),
+                'skipped': skipped_events,
+                'safeguards_active': MASTER_CALENDAR_PROTECTION,
+                'target_calendar_id': target_calendar_id,
+                'source_calendar_id': source_calendar_id
+            }
+            last_sync_result = result
+        
+        logger.info(f"🎉 BULLETPROOF sync completed: {result}")
+        return result
+        
+    except Exception as e:
+        import traceback
+        error_result = {
+            'success': False,
+            'message': f'BULLETPROOF sync failed: {str(e)}',
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+        with sync_lock:
+            last_sync_result = error_result
+        logger.error(f"💥 BULLETPROOF sync error: {error_result}")
+        return error_result
+    
+    finally:
+        with sync_lock:
+            sync_in_progress = False
+
+def run_sync():
+    """Run sync with automatic token refresh"""
+    if not ensure_valid_token():
+        logger.warning("Cannot run sync - authentication failed")
+        return {"success": False, "message": "Authentication failed - please sign in again"}
+    
+    try:
+        result = sync_calendars()
+        return result
+    except Exception as e:
+        logger.error(f"Sync error: {e}")
+        return {"success": False, "message": str(e)}
+
 async def run_diagnostics():
     """Run comprehensive diagnostics to check what's available"""
     if not ensure_valid_token():
@@ -350,40 +807,6 @@ async def run_diagnostics():
                 else:
                     logger.warning(f"Target calendar '{TARGET_CALENDAR}' NOT found")
                 
-                # Test 3: Can we read events from the source calendar?
-                if source_found:
-                    try:
-                        source_events = await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(source_found["id"]).events.get()
-                        event_count = len(source_events.value) if source_events and source_events.value else 0
-                        diagnostics["findings"]["source_events_count"] = event_count
-                        logger.info(f"Source calendar has {event_count} total events")
-                        
-                        # Count public events
-                        public_count = 0
-                        if source_events and source_events.value:
-                            for event in source_events.value:
-                                if hasattr(event, 'categories') and event.categories and "Public" in event.categories:
-                                    public_count += 1
-                        
-                        diagnostics["findings"]["public_events_count"] = public_count
-                        logger.info(f"Found {public_count} public events in source calendar")
-                        
-                    except Exception as e:
-                        diagnostics["findings"]["source_access_error"] = str(e)
-                        logger.error(f"Error accessing source calendar events: {e}")
-                
-                # Test 4: Can we read events from the target calendar?
-                if target_found:
-                    try:
-                        target_events = await client.users.by_user_id(SHARED_MAILBOX).calendars.by_calendar_id(target_found["id"]).events.get()
-                        target_event_count = len(target_events.value) if target_events and target_events.value else 0
-                        diagnostics["findings"]["target_events_count"] = target_event_count
-                        logger.info(f"Target calendar has {target_event_count} events")
-                        
-                    except Exception as e:
-                        diagnostics["findings"]["target_access_error"] = str(e)
-                        logger.error(f"Error accessing target calendar events: {e}")
-                
                 diagnostics["success"] = True
                 diagnostics["message"] = "Diagnostics completed successfully"
                 
@@ -402,409 +825,6 @@ async def run_diagnostics():
     
     logger.info("Diagnostics completed")
     return diagnostics
-
-def normalize_subject(subject):
-    """Normalize event subject for consistent matching"""
-    if not subject:
-        return ""
-    # Strip whitespace, replace multiple spaces with single space
-    return ' '.join(subject.strip().split())
-
-def sync_calendars():
-    """Enhanced sync function using subject+start time matching and simple location in description"""
-    global last_sync_time, last_sync_result, sync_in_progress, sync_request_times
-    
-    # Check rate limiting
-    if not rate_limit_check():
-        logger.warning("Rate limit exceeded for sync requests")
-        return {"error": "Rate limit exceeded. Please wait before syncing again."}
-    
-    with sync_lock:
-        if sync_in_progress:
-            return {"error": "Sync already in progress"}
-        sync_in_progress = True
-    
-    # Record this sync request
-    sync_request_times.append(datetime.now())
-    
-    logger.info("Starting calendar sync with composite key matching")
-    
-    try:
-        # Ensure token is valid before sync
-        if not ensure_valid_token():
-            return {"error": "Authentication failed - token expired and refresh failed"}
-        
-        with token_lock:
-            headers = {
-                'Authorization': f'Bearer {access_token}',
-                'Content-Type': 'application/json'
-            }
-        
-        # Get calendars
-        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
-        calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
-        
-        if calendars_response.status_code == 401:
-            # Try refreshing token once more
-            if refresh_access_token():
-                with token_lock:
-                    headers['Authorization'] = f'Bearer {access_token}'
-                calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
-            else:
-                return {"error": "Authentication failed - please sign in again"}
-        
-        if calendars_response.status_code != 200:
-            logger.error(f"Failed to get calendars: {calendars_response.status_code}")
-            return {"error": f"Failed to get calendars: {calendars_response.status_code}"}
-        
-        calendars_data = calendars_response.json()
-        source_calendar_id = None
-        target_calendar_id = None
-        
-        for calendar in calendars_data.get('value', []):
-            if calendar.get('name') == SOURCE_CALENDAR:
-                source_calendar_id = calendar.get('id')
-            elif calendar.get('name') == TARGET_CALENDAR:
-                target_calendar_id = calendar.get('id')
-        
-        if not source_calendar_id or not target_calendar_id:
-            logger.error("Required calendars not found")
-            return {"error": "Required calendars not found"}
-        
-        # Get ALL source events
-        source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
-        source_params = {
-            '$top': 500,
-            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,body'
-        }
-        
-        source_response = requests.get(source_events_url, headers=headers, params=source_params, timeout=30)
-        if source_response.status_code != 200:
-            logger.error(f"Failed to get source events: {source_response.status_code}")
-            return {"error": f"Failed to get source events: {source_response.status_code}"}
-        
-        source_events = source_response.json().get('value', [])
-        logger.info(f"Retrieved {len(source_events)} total events from source calendar")
-        
-        # Get ALL target events
-        target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
-        target_params = {
-            '$top': 500,
-            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,recurrence,seriesMasterId,body'
-        }
-        
-        target_response = requests.get(target_events_url, headers=headers, params=target_params, timeout=30)
-        if target_response.status_code != 200:
-            logger.error(f"Failed to get target events: {target_response.status_code}")
-            return {"error": f"Failed to get target events: {target_response.status_code}"}
-        
-        target_events = target_response.json().get('value', [])
-        logger.info(f"Retrieved {len(target_events)} total events from target calendar")
-        
-        # Build a map of target events by composite key (normalized subject + start time)
-        target_map = {}
-        
-        for event in target_events:
-            subject = normalize_subject(event.get('subject', ''))
-            start_time = event.get('start', {}).get('dateTime', '')
-            event_type = event.get('type', 'unknown')
-            
-            # Create composite key with normalized subject
-            if event_type == 'seriesMaster':
-                # For recurring events, just use normalized subject as they should be unique
-                key = f"recurring:{subject}"
-            else:
-                # For single events, use normalized subject + exact start time
-                key = f"single:{subject}:{start_time}"
-            
-            if key in target_map:
-                logger.warning(f"Duplicate key found in target: {key}")
-                # Keep the newer one (or could keep older, depending on preference)
-                existing_created = target_map[key].get('createdDateTime', '')
-                new_created = event.get('createdDateTime', '')
-                if new_created > existing_created:
-                    target_map[key] = event
-            else:
-                target_map[key] = event
-        
-        logger.info(f"Built target map with {len(target_map)} unique events")
-        
-        # Process public events from source
-        public_events = []
-        skipped_events = {
-            'non_public': 0,
-            'tentative': 0,
-            'recurring_instances': 0
-        }
-        
-        for event in source_events:
-            categories = event.get('categories', [])
-            subject = event.get('subject', '')
-            
-            # Skip if not public
-            if 'Public' not in categories:
-                skipped_events['non_public'] += 1
-                continue
-            
-            # Skip tentative events
-            show_as = event.get('showAs', 'busy')
-            if show_as != 'busy':
-                skipped_events['tentative'] += 1
-                logger.debug(f"Skipping tentative event: {subject} (showAs: {show_as})")
-                continue
-            
-            # Skip recurring instances (only sync masters)
-            event_type = event.get('type', 'unknown')
-            if event_type == 'occurrence':
-                skipped_events['recurring_instances'] += 1
-                logger.debug(f"Skipping recurring instance: {subject}")
-                continue
-            
-            # This is a valid public event to sync
-            public_events.append(event)
-        
-        logger.info(f"Found {len(public_events)} public events to sync")
-        logger.info(f"Skipped: {skipped_events}")
-        
-        # Determine what needs to be added, updated, or deleted
-        to_add = []
-        to_update = []
-        to_delete = []
-        
-        # Check each public event
-        for event in public_events:
-            subject = normalize_subject(event.get('subject', ''))
-            start_time = event.get('start', {}).get('dateTime', '')
-            event_type = event.get('type', 'unknown')
-            
-            # Create composite key with normalized subject
-            if event_type == 'seriesMaster':
-                key = f"recurring:{subject}"
-            else:
-                key = f"single:{subject}:{start_time}"
-            
-            logger.debug(f"Checking event with key: {key}")
-            
-            if key in target_map:
-                # Event exists in target - check if it needs updating
-                target_event = target_map[key]
-                
-                # Compare key fields to see if update is needed
-                needs_update = False
-                
-                # Check basic fields (normalize subjects for comparison)
-                source_subject = event.get('subject', '')
-                target_subject = target_event.get('subject', '')
-                if normalize_subject(source_subject) != normalize_subject(target_subject):
-                    needs_update = True
-                elif event.get('start') != target_event.get('start'):
-                    needs_update = True
-                elif event.get('end') != target_event.get('end'):
-                    needs_update = True
-                elif event.get('isAllDay') != target_event.get('isAllDay'):
-                    needs_update = True
-                elif event.get('recurrence') != target_event.get('recurrence'):
-                    needs_update = True
-                
-                # Check if location info needs to be updated in body
-                source_location = event.get('location', {})
-                location_text = ""
-                if source_location:
-                    if isinstance(source_location, dict):
-                        # Just get the display name, nothing else
-                        location_text = source_location.get('displayName', '')
-                    else:
-                        # If it's just a string, use it as-is
-                        location_text = str(source_location)
-                
-                target_body = target_event.get('body', {}).get('content', '')
-                if location_text and f"Location: {location_text}" not in target_body:
-                    needs_update = True
-                
-                if needs_update:
-                    to_update.append((event, target_event))
-                    logger.debug(f"Event needs update: {subject}")
-                
-                # Mark this key as processed
-                del target_map[key]
-            else:
-                # Event doesn't exist in target - add it
-                to_add.append(event)
-                logger.debug(f"Event needs to be added: {subject}")
-        
-        # Any remaining events in target_map should be deleted
-        for key, target_event in target_map.items():
-            to_delete.append(target_event)
-            logger.debug(f"Event needs to be deleted: {target_event.get('subject')}")
-        
-        logger.info(f"Sync plan: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
-        
-        # Execute sync operations
-        successful_operations = 0
-        failed_operations = 0
-        total_operations = len(to_add) + len(to_update) + len(to_delete)
-        
-        # Add new events
-        for event in to_add:
-            try:
-                # Extract location information - SIMPLIFIED VERSION
-                source_location = event.get('location', {})
-                location_text = ""
-                if source_location:
-                    if isinstance(source_location, dict):
-                        # Just get the display name, nothing else
-                        location_text = source_location.get('displayName', '')
-                    else:
-                        # If it's just a string, use it as-is
-                        location_text = str(source_location)
-                
-                # Create body content with location info
-                body_content = ""
-                if location_text:
-                    body_content = f"<p><strong>Location:</strong> {location_text}</p>"
-                
-                create_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
-                create_data = {
-                    'subject': event.get('subject'),
-                    'start': event.get('start'),
-                    'end': event.get('end'),
-                    'categories': event.get('categories'),
-                    'body': {'contentType': 'html', 'content': body_content},
-                    'location': {},  # Clear location for privacy
-                    'isAllDay': event.get('isAllDay', False),
-                    'showAs': 'busy',  # Always set to busy for public calendar
-                    'isReminderOn': False  # No reminders on public calendar
-                }
-                
-                # Add recurrence for recurring events
-                if event.get('type') == 'seriesMaster' and event.get('recurrence'):
-                    create_data['recurrence'] = event.get('recurrence')
-                
-                create_response = requests.post(create_url, headers=headers, json=create_data, timeout=30)
-                if create_response.status_code in [200, 201]:
-                    successful_operations += 1
-                    logger.info(f"✅ Added: {event.get('subject')}")
-                else:
-                    failed_operations += 1
-                    logger.error(f"❌ Failed to add {event.get('subject')}: {create_response.status_code} - {create_response.text}")
-            except Exception as e:
-                failed_operations += 1
-                logger.error(f"❌ Error adding {event.get('subject')}: {str(e)}")
-        
-        # Update existing events
-        for source_event, target_event in to_update:
-            try:
-                # Extract location information - SIMPLIFIED VERSION
-                source_location = source_event.get('location', {})
-                location_text = ""
-                if source_location:
-                    if isinstance(source_location, dict):
-                        # Just get the display name, nothing else
-                        location_text = source_location.get('displayName', '')
-                    else:
-                        # If it's just a string, use it as-is
-                        location_text = str(source_location)
-                
-                # Create body content with location info
-                body_content = ""
-                if location_text:
-                    body_content = f"<p><strong>Location:</strong> {location_text}</p>"
-                
-                update_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{target_event.get('id')}"
-                update_data = {
-                    'subject': source_event.get('subject'),
-                    'start': source_event.get('start'),
-                    'end': source_event.get('end'),
-                    'categories': source_event.get('categories'),
-                    'body': {'contentType': 'html', 'content': body_content},
-                    'location': {},  # Clear location for privacy
-                    'isAllDay': source_event.get('isAllDay', False),
-                    'showAs': 'busy',
-                    'isReminderOn': False
-                }
-                
-                # Update recurrence for recurring events
-                if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
-                    update_data['recurrence'] = source_event.get('recurrence')
-                
-                update_response = requests.patch(update_url, headers=headers, json=update_data, timeout=30)
-                if update_response.status_code == 200:
-                    successful_operations += 1
-                    logger.info(f"✅ Updated: {source_event.get('subject')}")
-                else:
-                    failed_operations += 1
-                    logger.error(f"❌ Failed to update {source_event.get('subject')}: {update_response.status_code}")
-            except Exception as e:
-                failed_operations += 1
-                logger.error(f"❌ Error updating {source_event.get('subject')}: {str(e)}")
-        
-        # Delete removed/duplicate events
-        for event in to_delete:
-            try:
-                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event.get('id')}"
-                # Add header to suppress notifications
-                delete_headers = {
-                    **headers,
-                    'Prefer': 'outlook.timezone="UTC", outlook.send-notifications="false"'
-                }
-                delete_response = requests.delete(delete_url, headers=delete_headers, timeout=30)
-                if delete_response.status_code in [200, 204]:
-                    successful_operations += 1
-                    logger.info(f"✅ Deleted: {event.get('subject')}")
-                else:
-                    failed_operations += 1
-                    logger.error(f"❌ Failed to delete {event.get('subject')}: {delete_response.status_code}")
-            except Exception as e:
-                failed_operations += 1
-                logger.error(f"❌ Error deleting {event.get('subject')}: {str(e)}")
-        
-        with sync_lock:
-            last_sync_time = datetime.now(pytz.UTC)
-            result = {
-                'success': True,
-                'message': f'Sync complete: {successful_operations}/{total_operations} operations successful',
-                'changes': successful_operations,
-                'successful_operations': successful_operations,
-                'failed_operations': failed_operations,
-                'added': len(to_add),
-                'updated': len(to_update),
-                'deleted': len(to_delete),
-                'skipped': skipped_events
-            }
-            last_sync_result = result
-        
-        logger.info(f"Sync completed: {result}")
-        return result
-        
-    except Exception as e:
-        import traceback
-        error_result = {
-            'success': False,
-            'message': f'Sync failed: {str(e)}',
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }
-        with sync_lock:
-            last_sync_result = error_result
-        logger.error(f"Sync error: {error_result}")
-        return error_result
-    
-    finally:
-        with sync_lock:
-            sync_in_progress = False
-
-def run_sync():
-    """Run sync with automatic token refresh"""
-    if not ensure_valid_token():
-        logger.warning("Cannot run sync - authentication failed")
-        return {"success": False, "message": "Authentication failed - please sign in again"}
-    
-    try:
-        result = sync_calendars()
-        return result
-    except Exception as e:
-        logger.error(f"Sync error: {e}")
-        return {"success": False, "message": str(e)}
 
 def run_diagnostics_sync():
     """Run diagnostics in asyncio event loop"""
@@ -1008,17 +1028,142 @@ def status():
         "token_status": token_status,
         "token_expires_at": expires_at,
         "has_refresh_token": has_refresh,
-        "rate_limit_remaining": MAX_SYNC_REQUESTS_PER_HOUR - len(sync_request_times)
+        "rate_limit_remaining": MAX_SYNC_REQUESTS_PER_HOUR - len(sync_request_times),
+        "master_calendar_protection": MASTER_CALENDAR_PROTECTION,
+        "dry_run_mode": DRY_RUN_MODE
     })
 
+@app.route('/debug-master-calendar')
+@requires_auth
+def debug_master_calendar():
+    """EMERGENCY: Debug what's happening to the master calendar"""
+    try:
+        if not ensure_valid_token():
+            return jsonify({"error": "Authentication failed"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get calendars
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
+        calendars_data = calendars_response.json()
+        
+        source_calendar_id = None
+        
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == SOURCE_CALENDAR:
+                source_calendar_id = calendar.get('id')
+                break
+        
+        if not source_calendar_id:
+            return jsonify({"error": "Source calendar not found"})
+        
+        # Get recent events from master calendar with detailed info
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
+        params = {
+            '$top': 100,
+            '$orderby': 'lastModifiedDateTime desc',
+            '$select': 'id,subject,start,end,categories,lastModifiedDateTime,createdDateTime,organizer,isOrganizer,responseStatus,type,seriesMasterId'
+        }
+        
+        events_response = requests.get(events_url, headers=headers, params=params, timeout=30)
+        events = events_response.json().get('value', [])
+        
+        # Analyze events
+        analysis = {
+            'total_events': len(events),
+            'public_events': 0,
+            'recent_changes': [],
+            'suspicious_activity': [],
+            'organizer_breakdown': {},
+            'calendar_id': source_calendar_id,
+            'calendar_name': SOURCE_CALENDAR
+        }
+        
+        for event in events:
+            # Count public events
+            if 'Public' in event.get('categories', []):
+                analysis['public_events'] += 1
+            
+            # Check for recent modifications
+            last_modified = event.get('lastModifiedDateTime', '')
+            if last_modified:
+                try:
+                    mod_date = datetime.fromisoformat(last_modified.replace('Z', ''))
+                    if mod_date > datetime.utcnow() - timedelta(hours=24):
+                        analysis['recent_changes'].append({
+                            'subject': event.get('subject'),
+                            'modified': last_modified,
+                            'id': event.get('id'),
+                            'categories': event.get('categories', [])
+                        })
+                except:
+                    pass
+            
+            # Check organizer
+            organizer = event.get('organizer', {}).get('emailAddress', {}).get('address', 'Unknown')
+            is_organizer = event.get('isOrganizer', False)
+            
+            if organizer not in analysis['organizer_breakdown']:
+                analysis['organizer_breakdown'][organizer] = {'count': 0, 'is_organizer': 0}
+            
+            analysis['organizer_breakdown'][organizer]['count'] += 1
+            if is_organizer:
+                analysis['organizer_breakdown'][organizer]['is_organizer'] += 1
+            
+            # Flag suspicious activity
+            if not is_organizer and organizer != 'calendar@stedward.org':
+                analysis['suspicious_activity'].append({
+                    'subject': event.get('subject'),
+                    'organizer': organizer,
+                    'reason': 'External organizer'
+                })
+        
+        return jsonify({
+            'timestamp': datetime.now().isoformat(),
+            'warning': '🚨 This is your MASTER calendar - it should NEVER be modified by sync!',
+            'analysis': analysis,
+            'recommendations': [
+                'Check if anyone else has access to modify this calendar',
+                'Verify no other sync processes are running',
+                'Check calendar permissions and sharing settings',
+                'Review recent activity logs in Microsoft 365 admin center'
+            ]
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Debug failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
+@app.route('/enable-dry-run')
+@requires_auth
+def enable_dry_run():
+    """Enable dry run mode for safe testing"""
+    global DRY_RUN_MODE
+    DRY_RUN_MODE = True
+    return jsonify({"message": "DRY RUN mode enabled - no changes will be made during sync", "dry_run_mode": True})
+
+@app.route('/disable-dry-run')
+@requires_auth
+def disable_dry_run():
+    """Disable dry run mode"""
+    global DRY_RUN_MODE
+    DRY_RUN_MODE = False
+    return jsonify({"message": "DRY RUN mode disabled - sync will make real changes", "dry_run_mode": False})
+
 @app.route('/health')
-def health():
-    """Health check endpoint for monitoring"""
+def health_check():
+    """Health check endpoint"""
     health_status = {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "authenticated": access_token is not None,
-        "scheduler_running": scheduler_running
+        "scheduler_running": scheduler_running,
+        "master_calendar_protection": MASTER_CALENDAR_PROTECTION,
+        "dry_run_mode": DRY_RUN_MODE
     }
     
     # Check if token needs refresh soon
@@ -1029,252 +1174,6 @@ def health():
                 health_status["warning"] = "Token expiring soon"
     
     return jsonify(health_status)
-
-@app.route('/debug-mass-events')
-def debug_mass_events():
-    """Debug endpoint specifically for Mass events"""
-    try:
-        if not access_token:
-            return jsonify({"error": "Not authenticated"}), 401
-        
-        headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json'
-        }
-        
-        # Get calendars
-        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
-        calendars_response = requests.get(calendars_url, headers=headers)
-        calendars_data = calendars_response.json()
-        
-        source_calendar_id = None
-        target_calendar_id = None
-        
-        for calendar in calendars_data.get('value', []):
-            if calendar.get('name') == 'Calendar':
-                source_calendar_id = calendar.get('id')
-            elif calendar.get('name') == 'St. Edward Public Calendar':
-                target_calendar_id = calendar.get('id')
-        
-        if not source_calendar_id or not target_calendar_id:
-            return jsonify({"error": "Required calendars not found"})
-        
-        # Get source Mass events
-        source_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{source_calendar_id}/events"
-        source_params = {
-            '$filter': "contains(subject, 'Mass')",
-            '$top': 100,
-            '$orderby': 'start/dateTime',
-            '$select': 'id,subject,start,end,type,categories,recurrence,seriesMasterId,showAs,isAllDay,location,createdDateTime'
-        }
-        
-        source_response = requests.get(source_events_url, headers=headers, params=source_params)
-        source_mass_events = source_response.json().get('value', [])
-        
-        # Get target Mass events
-        target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
-        target_params = {
-            '$filter': "contains(subject, 'Mass')",
-            '$top': 100,
-            '$orderby': 'start/dateTime',
-            '$select': 'id,subject,start,end,type,categories,recurrence,seriesMasterId,showAs,isAllDay,body,createdDateTime'
-        }
-        
-        target_response = requests.get(target_events_url, headers=headers, params=target_params)
-        target_mass_events = target_response.json().get('value', [])
-        
-        # Analyze Mass events
-        source_analysis = []
-        
-        for event in source_mass_events:
-            # Extract location
-            location_info = "None"
-            location_obj = event.get('location', {})
-            if location_obj:
-                if isinstance(location_obj, dict):
-                    location_info = location_obj.get('displayName', 'Unknown')
-                else:
-                    location_info = str(location_obj)
-            
-            source_analysis.append({
-                'id': event.get('id'),
-                'subject': event.get('subject'),
-                'type': event.get('type'),
-                'start': event.get('start', {}).get('dateTime', 'no-date'),
-                'end': event.get('end', {}).get('dateTime', 'no-end'),
-                'categories': event.get('categories', []),
-                'is_public': 'Public' in event.get('categories', []),
-                'recurrence': 'Yes' if event.get('recurrence') else 'No',
-                'seriesMasterId': event.get('seriesMasterId'),
-                'showAs': event.get('showAs', 'unknown'),
-                'isAllDay': event.get('isAllDay', False),
-                'location': location_info,
-                'created': event.get('createdDateTime', 'unknown')
-            })
-        
-        target_analysis = []
-        
-        for event in target_mass_events:
-            # Check if location is in body
-            body_content = event.get('body', {}).get('content', '')
-            has_location_in_body = 'Location:' in body_content
-            
-            event_data = {
-                'id': event.get('id'),
-                'subject': event.get('subject'),
-                'type': event.get('type'),
-                'start': event.get('start', {}).get('dateTime', 'no-date'),
-                'end': event.get('end', {}).get('dateTime', 'no-end'),
-                'recurrence': 'Yes' if event.get('recurrence') else 'No',
-                'seriesMasterId': event.get('seriesMasterId'),
-                'created': event.get('createdDateTime', 'unknown'),
-                'has_location_in_body': has_location_in_body,
-                'body_preview': body_content[:100] if body_content else 'Empty'
-            }
-            target_analysis.append(event_data)
-        
-        # Create composite keys for matching
-        source_keys = set()
-        for event in source_analysis:
-            if event['is_public']:
-                if event['type'] == 'seriesMaster':
-                    key = f"recurring:{event['subject']}"
-                else:
-                    key = f"single:{event['subject']}:{event['start']}"
-                source_keys.add(key)
-        
-        target_keys = set()
-        for event in target_analysis:
-            if event['type'] == 'seriesMaster':
-                key = f"recurring:{event['subject']}"
-            else:
-                key = f"single:{event['subject']}:{event['start']}"
-            target_keys.add(key)
-        
-        missing_in_target = source_keys - target_keys
-        extra_in_target = target_keys - source_keys
-        
-        return jsonify({
-            'analysis_timestamp': datetime.now().isoformat(),
-            'source_calendar': {
-                'name': 'Calendar (Master)',
-                'total_mass_events': len(source_mass_events),
-                'public_mass_events': len([e for e in source_analysis if e['is_public']]),
-                'recurring_mass_events': len([e for e in source_analysis if e['type'] == 'seriesMaster']),
-                'single_mass_events': len([e for e in source_analysis if e['type'] == 'singleInstance']),
-                'events': source_analysis
-            },
-            'target_calendar': {
-                'name': 'St. Edward Public Calendar',
-                'total_mass_events': len(target_mass_events),
-                'recurring_mass_events': len([e for e in target_analysis if e['type'] == 'seriesMaster']),
-                'single_mass_events': len([e for e in target_analysis if e['type'] == 'singleInstance']),
-                'events_with_location_in_body': len([e for e in target_analysis if e['has_location_in_body']]),
-                'events': target_analysis
-            },
-            'sync_analysis': {
-                'using_composite_keys': True,
-                'missing_in_target': len(missing_in_target),
-                'extra_in_target': len(extra_in_target),
-                'missing_keys': list(missing_in_target),
-                'extra_keys': list(extra_in_target)
-            },
-            'recommendations': [
-                f"{len(missing_in_target)} events need to be added" if missing_in_target else "All events synced",
-                f"{len(extra_in_target)} extra events in target" if extra_in_target else "No extra events",
-                "Location info should appear in event descriptions"
-            ]
-        })
-        
-    except Exception as e:
-        import traceback
-        return jsonify({"error": f"Debug failed: {str(e)}", "traceback": traceback.format_exc()}), 500
-
-@app.route('/force-cleanup-target')
-def force_cleanup_target():
-    """Delete ALL events from target calendar without sending notifications"""
-    try:
-        if not access_token:
-            return jsonify({"error": "Not authenticated"}), 401
-        
-        headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json'
-        }
-        
-        # Get target calendar
-        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
-        calendars_response = requests.get(calendars_url, headers=headers)
-        calendars_data = calendars_response.json()
-        
-        target_calendar_id = None
-        for calendar in calendars_data.get('value', []):
-            if calendar.get('name') == 'St. Edward Public Calendar':
-                target_calendar_id = calendar.get('id')
-                break
-        
-        if not target_calendar_id:
-            return jsonify({"error": "Target calendar not found"})
-        
-        # Get ALL events from target
-        target_events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
-        target_params = {'$top': 500}
-        
-        target_response = requests.get(target_events_url, headers=headers, params=target_params)
-        target_events = target_response.json().get('value', [])
-        
-        # Delete ALL events without sending notifications
-        deleted_count = 0
-        failed_count = 0
-        
-        # Add header to suppress notifications
-        delete_headers = {
-            **headers,
-            'Prefer': 'outlook.timezone="UTC", outlook.send-notifications="false"'
-        }
-        
-        for event in target_events:
-            try:
-                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event.get('id')}"
-                delete_response = requests.delete(delete_url, headers=delete_headers)
-                
-                if delete_response.status_code in [200, 204]:
-                    deleted_count += 1
-                else:
-                    failed_count += 1
-            except:
-                failed_count += 1
-        
-        return jsonify({
-            "message": f"Cleaned target calendar: deleted {deleted_count} events, {failed_count} failed (notifications suppressed)",
-            "next_step": "Now run a sync to populate with correct events"
-        })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/scheduler-status')
-def scheduler_status():
-    """Check if scheduler thread is actually running"""
-    global scheduler_thread
-    
-    with scheduler_lock:
-        thread_alive = scheduler_thread is not None and scheduler_thread.is_alive()
-        running = scheduler_running
-    
-    return jsonify({
-        "scheduler_running_flag": running,
-        "scheduler_thread_exists": scheduler_thread is not None,
-        "scheduler_thread_alive": thread_alive,
-        "needs_restart": not thread_alive or not running
-    })
-
-@app.route('/start-scheduler')  
-@requires_auth
-def start_scheduler_endpoint():
-    """Manually start the automatic scheduler"""
-    start_scheduler()
-    return jsonify({"message": "Automatic sync scheduler started", "scheduler_running": scheduler_running})
 
 @app.route('/logout')
 def logout():
@@ -1290,280 +1189,6 @@ def logout():
     session.clear()  # Clear all session data
     logger.info("User logged out - all tokens cleared")
     return redirect(url_for('index'))
-
-# Add this endpoint to your app.py file, right before the "if __name__ == '__main__':" line
-
-@app.route('/health')
-def health_check():
-    """Simple health check endpoint for Render"""
-    return {
-        'status': 'healthy',
-        'service': 'stedward-calendar-sync',
-        'timestamp': datetime.now().isoformat()
-    }, 200
-
-# Add these endpoints to your app.py file, before the "if __name__ == '__main__':" line
-
-@app.route('/clean-duplicates')
-@requires_auth
-def clean_duplicates():
-    """Find and analyze duplicate events in public calendar"""
-    try:
-        if not ensure_valid_token():
-            return jsonify({"error": "Authentication failed"}), 401
-        
-        headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json'
-        }
-        
-        # Get target calendar ID
-        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
-        calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
-        calendars_data = calendars_response.json()
-        
-        target_calendar_id = None
-        for calendar in calendars_data.get('value', []):
-            if calendar.get('name') == 'St. Edward Public Calendar':
-                target_calendar_id = calendar.get('id')
-                break
-        
-        if not target_calendar_id:
-            return jsonify({"error": "Target calendar not found"})
-        
-        # Get ALL events from public calendar
-        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
-        params = {'$top': 500}
-        
-        events_response = requests.get(events_url, headers=headers, params=params, timeout=30)
-        if events_response.status_code != 200:
-            return jsonify({"error": f"Failed to get events: {events_response.status_code}"})
-        
-        all_events = events_response.json().get('value', [])
-        
-        # Group events by subject and start date to find duplicates
-        event_groups = {}
-        for event in all_events:
-            subject = normalize_subject(event.get('subject', 'No Subject'))
-            start_time = event.get('start', {}).get('dateTime', 'No Start')
-            event_type = event.get('type', 'unknown')
-            
-            # Create a key for grouping
-            if event_type == 'seriesMaster':
-                key = f"recurring:{subject}"
-            else:
-                # Extract just the date part for single events
-                start_date = start_time.split('T')[0] if 'T' in start_time else start_time
-                key = f"single:{subject}:{start_date}"
-            
-            if key not in event_groups:
-                event_groups[key] = []
-            
-            event_groups[key].append({
-                'id': event.get('id'),
-                'subject': subject,
-                'start': start_time,
-                'type': event_type,
-                'created': event.get('createdDateTime'),
-                'modified': event.get('lastModifiedDateTime')
-            })
-        
-        # Find groups with duplicates
-        duplicates_found = []
-        events_to_delete = []
-        
-        for key, events in event_groups.items():
-            if len(events) > 1:
-                # Sort by creation date - keep the oldest, delete the rest
-                events.sort(key=lambda x: x.get('created', ''))
-                
-                keep_event = events[0]  # Keep the first (oldest) one
-                delete_events = events[1:]  # Delete the rest
-                
-                duplicates_found.append({
-                    'group_key': key,
-                    'total_count': len(events),
-                    'keeping': f"{keep_event['subject']} (ID: {keep_event['id'][:8]}...)",
-                    'deleting_count': len(delete_events),
-                    'deleting': [f"{e['subject']} (ID: {e['id'][:8]}...)" for e in delete_events]
-                })
-                
-                # Add to deletion list
-                events_to_delete.extend([e['id'] for e in delete_events])
-        
-        return jsonify({
-            "total_events_in_calendar": len(all_events),
-            "duplicate_groups_found": len(duplicates_found),
-            "events_to_delete": len(events_to_delete),
-            "duplicates_analysis": duplicates_found,
-            "deletion_preview": events_to_delete,
-            "next_step": "Visit /execute-duplicate-cleanup to actually delete the duplicates",
-            "warning": "This will permanently delete the duplicate events. Make sure you review the list above first!"
-        })
-        
-    except Exception as e:
-        import traceback
-        return jsonify({"error": f"Duplicate analysis failed: {str(e)}", "traceback": traceback.format_exc()}), 500
-
-@app.route('/execute-duplicate-cleanup')
-@requires_auth
-def execute_duplicate_cleanup():
-    """Actually delete the duplicate events found by clean-duplicates"""
-    try:
-        if not ensure_valid_token():
-            return jsonify({"error": "Authentication failed"}), 401
-        
-        # First run the analysis again to get current duplicates
-        analysis_result = clean_duplicates()
-        analysis_data = analysis_result.get_json()
-        
-        if 'error' in analysis_data:
-            return jsonify(analysis_data), 500
-        
-        events_to_delete = analysis_data.get('deletion_preview', [])
-        
-        if not events_to_delete:
-            return jsonify({"message": "No duplicates found to delete", "deleted_count": 0})
-        
-        headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json'
-        }
-        
-        # Get target calendar ID again
-        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
-        calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
-        calendars_data = calendars_response.json()
-        
-        target_calendar_id = None
-        for calendar in calendars_data.get('value', []):
-            if calendar.get('name') == 'St. Edward Public Calendar':
-                target_calendar_id = calendar.get('id')
-                break
-        
-        if not target_calendar_id:
-            return jsonify({"error": "Target calendar not found"})
-        
-        # Delete the duplicate events
-        deletion_results = []
-        successful_deletions = 0
-        
-        # Add header to suppress notifications
-        delete_headers = {
-            **headers,
-            'Prefer': 'outlook.timezone="UTC", outlook.send-notifications="false"'
-        }
-        
-        for event_id in events_to_delete:
-            try:
-                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event_id}"
-                delete_response = requests.delete(delete_url, headers=delete_headers, timeout=30)
-                
-                success = delete_response.status_code in [200, 204]
-                if success:
-                    successful_deletions += 1
-                
-                deletion_results.append({
-                    "event_id": event_id[:8] + "...",
-                    "status_code": delete_response.status_code,
-                    "success": success,
-                    "error": None if success else delete_response.text[:100]
-                })
-                
-            except Exception as e:
-                deletion_results.append({
-                    "event_id": event_id[:8] + "...",
-                    "success": False,
-                    "error": str(e)
-                })
-        
-        return jsonify({
-            "cleanup_completed": True,
-            "total_attempted": len(events_to_delete),
-            "successful_deletions": successful_deletions,
-            "failed_deletions": len(events_to_delete) - successful_deletions,
-            "deletion_details": deletion_results,
-            "recommendation": "Run another sync to ensure calendar is clean, then re-enable automatic sync"
-        })
-        
-    except Exception as e:
-        import traceback
-        return jsonify({"error": f"Cleanup execution failed: {str(e)}", "traceback": traceback.format_exc()}), 500
-
-@app.route('/list-all-events')
-@requires_auth
-def list_all_events():
-    """List all events in public calendar with full details for manual inspection"""
-    try:
-        if not ensure_valid_token():
-            return jsonify({"error": "Authentication failed"}), 401
-        
-        headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json'
-        }
-        
-        # Get target calendar ID
-        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
-        calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
-        calendars_data = calendars_response.json()
-        
-        target_calendar_id = None
-        for calendar in calendars_data.get('value', []):
-            if calendar.get('name') == 'St. Edward Public Calendar':
-                target_calendar_id = calendar.get('id')
-                break
-        
-        if not target_calendar_id:
-            return jsonify({"error": "Target calendar not found"})
-        
-        # Get ALL events with full details
-        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
-        params = {'$top': 500}
-        
-        events_response = requests.get(events_url, headers=headers, params=params, timeout=30)
-        if events_response.status_code != 200:
-            return jsonify({"error": f"Failed to get events: {events_response.status_code}"})
-        
-        all_events = events_response.json().get('value', [])
-        
-        # Format events for easy reading
-        formatted_events = []
-        for i, event in enumerate(all_events, 1):
-            formatted_event = {
-                "number": i,
-                "id": event.get('id'),
-                "subject": event.get('subject'),
-                "start": event.get('start', {}).get('dateTime', 'No start time'),
-                "type": event.get('type'),
-                "categories": event.get('categories', []),
-                "organizer_email": event.get('organizer', {}).get('emailAddress', {}).get('address', 'Unknown'),
-                "isOrganizer": event.get('isOrganizer', False),
-                "created": event.get('createdDateTime', 'Unknown'),
-                "modified": event.get('lastModifiedDateTime', 'Unknown'),
-                "recurrence": "Yes" if event.get('recurrence') else "No",
-                "seriesMasterId": event.get('seriesMasterId', 'None'),
-                "webLink": event.get('webLink', 'No link')
-            }
-            formatted_events.append(formatted_event)
-        
-        # Sort by start date
-        formatted_events.sort(key=lambda x: x['start'] if x['start'] != 'No start time' else '9999')
-        
-        return jsonify({
-            "total_events": len(formatted_events),
-            "calendar_name": "St. Edward Public Calendar",
-            "events": formatted_events,
-            "instructions": [
-                "Look through this list to identify events you're having trouble deleting",
-                "Pay attention to 'type' field - 'occurrence' events need master deleted instead",
-                "Check for duplicate subjects that might be causing issues"
-            ]
-        })
-        
-    except Exception as e:
-        import traceback
-        return jsonify({"error": f"Failed to list events: {str(e)}", "traceback": traceback.format_exc()}), 500
 
 if __name__ == '__main__':
     # Validate required environment variables
