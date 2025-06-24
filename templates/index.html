@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>St. Edward Parish - Calendar Sync Management</title>
+    <!-- Calendar emoji as favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
+    
     <style>
         * {
             margin: 0;
@@ -111,6 +114,12 @@
 
         .card-content {
             padding: 2rem;
+        }
+
+        /* Results Area moved to top */
+        #results-area {
+            margin-bottom: 2rem;
+            order: -1;
         }
 
         .status-section {
@@ -386,6 +395,33 @@
             color: #721c24;
         }
 
+        /* Confetti styles */
+        .confetti-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 9999;
+        }
+
+        .confetti {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: #f0f;
+            animation: confetti-fall 3s linear;
+        }
+
+        @keyframes confetti-fall {
+            to {
+                transform: translateY(100vh) rotate(360deg);
+                opacity: 0;
+            }
+        }
+
         @media (max-width: 768px) {
             .header-content {
                 padding: 0 1rem;
@@ -449,7 +485,10 @@
                 <p>Automated synchronization between internal and public calendars</p>
             </div>
 
-            <div class="card-content">
+            <div class="card-content" style="display: flex; flex-direction: column;">
+                <!-- Results Area moved to top -->
+                <div id="results-area"></div>
+
                 <!-- Status Section -->
                 <div class="status-section">
                     <h3 style="margin-bottom: 1rem; color: #005921;">Current Status</h3>
@@ -561,9 +600,6 @@
                     <p><strong>Automatic Sync:</strong> The scheduler runs every hour while authenticated. Check the "Auto Sync" status above to ensure it's active.</p>
                     <p><strong>Rate Limiting:</strong> To prevent overload, manual syncs are limited to 20 per hour. The limit resets automatically.</p>
                 </div>
-
-                <!-- Results Area -->
-                <div id="results-area" style="margin-top: 2rem;"></div>
             </div>
         </div>
     </div>
@@ -573,12 +609,54 @@
         <p style="margin-top: 0.5rem; opacity: 0.7;">Automated hourly synchronization • Last updated: <span id="page-timestamp"></span></p>
     </footer>
 
+    <!-- Confetti container -->
+    <div id="confetti-container" class="confetti-container"></div>
+
     <script>
         // Update page timestamp
         document.getElementById('page-timestamp').textContent = new Date().toLocaleString();
 
         let statusInterval;
         let tokenCheckInterval;
+
+        // Confetti function
+        function createConfetti() {
+            const container = document.getElementById('confetti-container');
+            container.innerHTML = ''; // Clear existing confetti
+            
+            const colors = ['#005921', '#00843D', '#DAAA00', '#EEF4F1', '#ff6b6b', '#4ecdc4', '#45b7d1'];
+            const shapes = ['square', 'circle'];
+            
+            for (let i = 0; i < 150; i++) {
+                setTimeout(() => {
+                    const confetti = document.createElement('div');
+                    confetti.className = 'confetti';
+                    
+                    // Random properties
+                    const shape = shapes[Math.floor(Math.random() * shapes.length)];
+                    const color = colors[Math.floor(Math.random() * colors.length)];
+                    const size = Math.random() * 10 + 5;
+                    const left = Math.random() * 100;
+                    const animationDelay = Math.random() * 0.5;
+                    const animationDuration = Math.random() * 2 + 3;
+                    
+                    confetti.style.backgroundColor = color;
+                    confetti.style.width = size + 'px';
+                    confetti.style.height = size + 'px';
+                    confetti.style.left = left + '%';
+                    confetti.style.borderRadius = shape === 'circle' ? '50%' : '0';
+                    confetti.style.animationDelay = animationDelay + 's';
+                    confetti.style.animationDuration = animationDuration + 's';
+                    
+                    container.appendChild(confetti);
+                    
+                    // Remove confetti after animation
+                    setTimeout(() => {
+                        confetti.remove();
+                    }, (animationDuration + animationDelay) * 1000);
+                }, i * 30);
+            }
+        }
 
         function showAlert(message, type) {
             const alertClass = type === 'success' ? 'alert-success' : 
@@ -709,6 +787,8 @@
             }
         }
 
+        let previousSyncStatus = null;
+
         function updateStatusDisplay(status) {
             // Update auth status
             const authStatus = document.getElementById('auth-status');
@@ -733,6 +813,15 @@
                 if (status.last_sync_result.success) {
                     syncResult.textContent = '✓ Success';
                     syncResult.className = 'status-value success';
+                    
+                    // Check if sync just completed successfully (wasn't successful before)
+                    if (!status.sync_in_progress && 
+                        (!previousSyncStatus || !previousSyncStatus.last_sync_result || !previousSyncStatus.last_sync_result.success || 
+                         previousSyncStatus.sync_in_progress)) {
+                        // Sync just completed successfully - launch confetti!
+                        createConfetti();
+                        showAlert('🎉 Sync completed successfully!', 'success');
+                    }
                 } else {
                     syncResult.textContent = '⚠ ' + (status.last_sync_result.message || 'Failed');
                     syncResult.className = 'status-value error';
@@ -763,6 +852,9 @@
             if (status.token_status === 'expired' || (status.token_expires_at && new Date(status.token_expires_at) < new Date())) {
                 showAlert('⚠️ Authentication token has expired. Please sign out and sign back in to continue.', 'warning');
             }
+            
+            // Store current status for next comparison
+            previousSyncStatus = status;
         }
 
         function showDiagnosticsResults(diagnostics) {
