@@ -1190,6 +1190,265 @@ def logout():
     logger.info("User logged out - all tokens cleared")
     return redirect(url_for('index'))
 
+# Add these routes to your app.py file, before the "if __name__ == '__main__':" line
+
+@app.route('/clean-duplicates')
+@requires_auth
+def clean_duplicates():
+    """Find and analyze duplicate events in public calendar"""
+    try:
+        if not ensure_valid_token():
+            return jsonify({"error": "Authentication failed"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar ID
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == TARGET_CALENDAR:
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Get ALL events from public calendar
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        params = {'$top': 500}
+        
+        events_response = requests.get(events_url, headers=headers, params=params, timeout=30)
+        if events_response.status_code != 200:
+            return jsonify({"error": f"Failed to get events: {events_response.status_code}"})
+        
+        all_events = events_response.json().get('value', [])
+        
+        # Group events by signature to find duplicates
+        event_groups = {}
+        for event in all_events:
+            signature = create_event_signature(event)
+            
+            if signature not in event_groups:
+                event_groups[signature] = []
+            
+            event_groups[signature].append({
+                'id': event.get('id'),
+                'subject': event.get('subject'),
+                'start': event.get('start', {}).get('dateTime', 'No Start'),
+                'type': event.get('type', 'unknown'),
+                'created': event.get('createdDateTime'),
+                'modified': event.get('lastModifiedDateTime')
+            })
+        
+        # Find groups with duplicates
+        duplicates_found = []
+        events_to_delete = []
+        
+        for signature, events in event_groups.items():
+            if len(events) > 1:
+                # Sort by creation date - keep the oldest, delete the rest
+                events.sort(key=lambda x: x.get('created', ''))
+                
+                keep_event = events[0]  # Keep the first (oldest) one
+                delete_events = events[1:]  # Delete the rest
+                
+                duplicates_found.append({
+                    'signature': signature,
+                    'total_count': len(events),
+                    'keeping': f"{keep_event['subject']} (ID: {keep_event['id'][:8]}...)",
+                    'deleting_count': len(delete_events),
+                    'deleting': [f"{e['subject']} (ID: {e['id'][:8]}...)" for e in delete_events]
+                })
+                
+                # Add to deletion list
+                events_to_delete.extend([e['id'] for e in delete_events])
+        
+        return jsonify({
+            "total_events_in_calendar": len(all_events),
+            "duplicate_groups_found": len(duplicates_found),
+            "events_to_delete": len(events_to_delete),
+            "duplicates_analysis": duplicates_found,
+            "deletion_preview": events_to_delete,
+            "next_step": "Visit /execute-duplicate-cleanup to actually delete the duplicates",
+            "warning": "⚠️ This will permanently delete duplicate events. Review the list above first!",
+            "dry_run_note": f"DRY RUN MODE: {'ENABLED' if DRY_RUN_MODE else 'DISABLED'}"
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Duplicate analysis failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
+@app.route('/execute-duplicate-cleanup')
+@requires_auth
+def execute_duplicate_cleanup():
+    """Actually delete the duplicate events found by clean-duplicates"""
+    try:
+        if not ensure_valid_token():
+            return jsonify({"error": "Authentication failed"}), 401
+        
+        # First run the analysis again to get current duplicates
+        analysis_result = clean_duplicates()
+        analysis_data = analysis_result.get_json()
+        
+        if 'error' in analysis_data:
+            return jsonify(analysis_data), 500
+        
+        events_to_delete = analysis_data.get('deletion_preview', [])
+        
+        if not events_to_delete:
+            return jsonify({"message": "No duplicates found to delete", "deleted_count": 0})
+        
+        # Check dry run mode
+        if DRY_RUN_MODE:
+            return jsonify({
+                "dry_run": True,
+                "message": f"DRY RUN: Would delete {len(events_to_delete)} duplicate events",
+                "events_to_delete": len(events_to_delete),
+                "note": "Visit /disable-dry-run to make real changes"
+            })
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar ID again
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == TARGET_CALENDAR:
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Delete the duplicate events
+        deletion_results = []
+        successful_deletions = 0
+        
+        # Add header to suppress notifications
+        delete_headers = {
+            **headers,
+            'Prefer': 'outlook.timezone="UTC", outlook.send-notifications="false"'
+        }
+        
+        for event_id in events_to_delete:
+            try:
+                delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event_id}"
+                delete_response = requests.delete(delete_url, headers=delete_headers, timeout=30)
+                
+                success = delete_response.status_code in [200, 204]
+                if success:
+                    successful_deletions += 1
+                
+                deletion_results.append({
+                    "event_id": event_id[:8] + "...",
+                    "status_code": delete_response.status_code,
+                    "success": success,
+                    "error": None if success else delete_response.text[:100]
+                })
+                
+            except Exception as e:
+                deletion_results.append({
+                    "event_id": event_id[:8] + "...",
+                    "success": False,
+                    "error": str(e)
+                })
+        
+        return jsonify({
+            "cleanup_completed": True,
+            "total_attempted": len(events_to_delete),
+            "successful_deletions": successful_deletions,
+            "failed_deletions": len(events_to_delete) - successful_deletions,
+            "deletion_details": deletion_results,
+            "recommendation": "Now you can run a sync to ensure calendar is properly populated"
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Cleanup execution failed: {str(e)}", "traceback": traceback.format_exc()}), 500
+
+@app.route('/list-all-events')
+@requires_auth
+def list_all_events():
+    """List all events in public calendar with full details"""
+    try:
+        if not ensure_valid_token():
+            return jsonify({"error": "Authentication failed"}), 401
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get target calendar ID
+        calendars_url = "https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars"
+        calendars_response = requests.get(calendars_url, headers=headers, timeout=30)
+        calendars_data = calendars_response.json()
+        
+        target_calendar_id = None
+        for calendar in calendars_data.get('value', []):
+            if calendar.get('name') == TARGET_CALENDAR:
+                target_calendar_id = calendar.get('id')
+                break
+        
+        if not target_calendar_id:
+            return jsonify({"error": "Target calendar not found"})
+        
+        # Get ALL events with full details
+        events_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events"
+        params = {'$top': 500}
+        
+        events_response = requests.get(events_url, headers=headers, params=params, timeout=30)
+        if events_response.status_code != 200:
+            return jsonify({"error": f"Failed to get events: {events_response.status_code}"})
+        
+        all_events = events_response.json().get('value', [])
+        
+        # Format events for easy reading
+        formatted_events = []
+        for i, event in enumerate(all_events, 1):
+            signature = create_event_signature(event)
+            formatted_event = {
+                "number": i,
+                "id": event.get('id'),
+                "subject": event.get('subject'),
+                "start": event.get('start', {}).get('dateTime', 'No start time'),
+                "type": event.get('type'),
+                "signature": signature,
+                "created": event.get('createdDateTime', 'Unknown'),
+                "modified": event.get('lastModifiedDateTime', 'Unknown')
+            }
+            formatted_events.append(formatted_event)
+        
+        # Sort by signature to group similar events together
+        formatted_events.sort(key=lambda x: x['signature'])
+        
+        return jsonify({
+            "total_events": len(formatted_events),
+            "calendar_name": TARGET_CALENDAR,
+            "events": formatted_events,
+            "instructions": [
+                "Events are sorted by signature to group duplicates together",
+                "Look for events with identical signatures",
+                "Use /clean-duplicates to analyze and /execute-duplicate-cleanup to remove duplicates"
+            ]
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({"error": f"Failed to list events: {str(e)}", "traceback": traceback.format_exc()}), 500
+
 if __name__ == '__main__':
     # Validate required environment variables
     if not CLIENT_SECRET:
