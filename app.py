@@ -2,6 +2,7 @@
 """
 Calendar Sync Web Application for Render.com
 BULLETPROOF VERSION with master calendar protection and enhanced debugging
+Now with automatic version management!
 """
 
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
@@ -22,6 +23,7 @@ import atexit
 import logging
 from functools import wraps
 import secrets
+import subprocess
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +31,82 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ==================== VERSION MANAGEMENT ====================
+
+def get_version_info():
+    """Get version info 100% automatically - no manual tracking needed"""
+    now = datetime.utcnow()
+    version_info = {
+        "version": now.strftime("%Y.%m.%d"),  # Date-based version like 2025.06.24
+        "build_number": 1,
+        "commit_hash": "unknown",
+        "build_date": now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "environment": "unknown"
+    }
+    
+    try:
+        # Try to get git commit hash (first 7 characters)
+        result = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            version_info["commit_hash"] = result.stdout.strip()
+        
+        # Try to get commit count (for build number)
+        result = subprocess.run(['git', 'rev-list', '--count', 'HEAD'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            count = int(result.stdout.strip())
+            version_info["build_number"] = count
+            
+            # 100% AUTOMATIC: Use date + build for version
+            # Examples: 2025.06.24.47, 2025.06.25.48, etc.
+            version_info["version"] = f"{now.strftime('%Y.%m.%d')}.{count}"
+        
+        # Try to get branch name
+        result = subprocess.run(['git', 'branch', '--show-current'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            version_info["branch"] = branch
+            version_info["environment"] = "production" if branch == "main" else "development"
+    
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+        # Git not available - use date-based fallback with timestamp
+        timestamp = int(now.timestamp())
+        version_info["version"] = f"{now.strftime('%Y.%m.%d')}.{timestamp}"
+        version_info["build_number"] = timestamp
+        logger.info("Git not available, using date-based version")
+    
+    # Add deployment environment info
+    if "RENDER" in os.environ:
+        version_info["deployment_platform"] = "Render.com"
+        version_info["service_name"] = os.environ.get("RENDER_SERVICE_NAME", "calendar-sync")
+        version_info["environment"] = "production"
+    else:
+        version_info["deployment_platform"] = "Local Development"
+        version_info["environment"] = "local"
+    
+    # Add startup time
+    version_info["startup_time"] = datetime.utcnow().isoformat() + "Z"
+    
+    # Create display strings
+    version_info["version_string"] = f"v{version_info['version']}"
+    version_info["build_string"] = f"Build #{version_info['build_number']}"
+    version_info["full_version"] = f"Calendar Sync v{version_info['version']} (Build #{version_info['build_number']})"
+    
+    if version_info["commit_hash"] != "unknown":
+        version_info["full_version"] += f" [{version_info['commit_hash']}]"
+    
+    return version_info
+
+# Initialize version info on startup
+APP_VERSION_INFO = get_version_info()
+logger.info(f"🚀 Starting {APP_VERSION_INFO['full_version']}")
+logger.info(f"📦 Platform: {APP_VERSION_INFO['deployment_platform']}")
+logger.info(f"🌍 Environment: {APP_VERSION_INFO['environment']}")
+
+# ==================== FLASK APP SETUP ====================
 
 app = Flask(__name__)
 # Generate a secure secret key if not provided
@@ -900,7 +978,8 @@ def stop_scheduler():
 # Register cleanup function
 atexit.register(stop_scheduler)
 
-# Web Routes
+# ==================== WEB ROUTES ====================
+
 @app.route('/')
 def index():
     """Main page"""
@@ -908,10 +987,14 @@ def index():
         auth_url = get_auth_url()
         return f'''
         <html>
-        <head><title>St. Edward Calendar Sync - Sign In</title></head>
+        <head>
+            <title>St. Edward Calendar Sync - Sign In</title>
+            <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
+        </head>
         <body style="font-family: Arial; text-align: center; margin-top: 100px;">
             <h1>🗓️ St. Edward Calendar Sync</h1>
             <p>You need to sign in with your Microsoft account to access the calendar sync.</p>
+            <p style="margin: 1rem 0; opacity: 0.7; font-size: 0.9rem;">{APP_VERSION_INFO['full_version']}</p>
             <a href="{auth_url}" style="background: #0078d4; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 18px;">
                 Sign in with Microsoft
             </a>
@@ -990,7 +1073,7 @@ def run_diagnostics_endpoint():
 
 @app.route('/status')
 def status():
-    """Get current sync status"""
+    """Get current sync status with version info"""
     # Convert last sync time to Central Time for display
     central_tz = pytz.timezone('US/Central')
     display_sync_time = None
@@ -1030,8 +1113,23 @@ def status():
         "has_refresh_token": has_refresh,
         "rate_limit_remaining": MAX_SYNC_REQUESTS_PER_HOUR - len(sync_request_times),
         "master_calendar_protection": MASTER_CALENDAR_PROTECTION,
-        "dry_run_mode": DRY_RUN_MODE
+        "dry_run_mode": DRY_RUN_MODE,
+        # VERSION INFORMATION
+        "version": APP_VERSION_INFO["version"],
+        "build_number": APP_VERSION_INFO["build_number"],
+        "commit_hash": APP_VERSION_INFO["commit_hash"],
+        "build_date": APP_VERSION_INFO["build_date"],
+        "environment": APP_VERSION_INFO["environment"],
+        "deployment_platform": APP_VERSION_INFO["deployment_platform"],
+        "app_info": APP_VERSION_INFO["full_version"],
+        "version_string": APP_VERSION_INFO["version_string"],
+        "build_string": APP_VERSION_INFO["build_string"]
     })
+
+@app.route('/version')
+def version():
+    """Get detailed version information"""
+    return jsonify(APP_VERSION_INFO)
 
 @app.route('/debug-master-calendar')
 @requires_auth
@@ -1156,14 +1254,17 @@ def disable_dry_run():
 
 @app.route('/health')
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with version info"""
     health_status = {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "authenticated": access_token is not None,
         "scheduler_running": scheduler_running,
         "master_calendar_protection": MASTER_CALENDAR_PROTECTION,
-        "dry_run_mode": DRY_RUN_MODE
+        "dry_run_mode": DRY_RUN_MODE,
+        "version": APP_VERSION_INFO["version_string"],
+        "build": APP_VERSION_INFO["build_string"],
+        "environment": APP_VERSION_INFO["environment"]
     }
     
     # Check if token needs refresh soon
@@ -1189,8 +1290,6 @@ def logout():
     session.clear()  # Clear all session data
     logger.info("User logged out - all tokens cleared")
     return redirect(url_for('index'))
-
-# Add these routes to your app.py file, before the "if __name__ == '__main__':" line
 
 @app.route('/clean-duplicates')
 @requires_auth
@@ -1454,6 +1553,16 @@ if __name__ == '__main__':
     if not CLIENT_SECRET:
         logger.error("CLIENT_SECRET environment variable is not set!")
         exit(1)
+    
+    # Log startup information
+    logger.info("=" * 60)
+    logger.info(f"🚀 {APP_VERSION_INFO['full_version']}")
+    logger.info(f"📦 Platform: {APP_VERSION_INFO['deployment_platform']}")
+    logger.info(f"🌍 Environment: {APP_VERSION_INFO['environment']}")
+    logger.info(f"🔨 Build Date: {APP_VERSION_INFO['build_date']}")
+    if APP_VERSION_INFO['commit_hash'] != 'unknown':
+        logger.info(f"🔗 Commit: {APP_VERSION_INFO['commit_hash']}")
+    logger.info("=" * 60)
     
     # Try to restore authentication on startup
     load_tokens_from_env()
