@@ -742,7 +742,12 @@ def sync_calendars():
         for event in to_delete:
             try:
                 delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event.get('id')}"
-                delete_response = requests.delete(delete_url, headers=headers, timeout=30)
+                # Add header to suppress notifications
+                delete_headers = {
+                    **headers,
+                    'Prefer': 'outlook.timezone="UTC", outlook.send-notifications="false"'
+                }
+                delete_response = requests.delete(delete_url, headers=delete_headers, timeout=30)
                 if delete_response.status_code in [200, 204]:
                     successful_operations += 1
                     logger.info(f"✅ Deleted: {event.get('subject')}")
@@ -1187,7 +1192,7 @@ def debug_mass_events():
 
 @app.route('/force-cleanup-target')
 def force_cleanup_target():
-    """Delete ALL events from target calendar to fix mismatches"""
+    """Delete ALL events from target calendar without sending notifications"""
     try:
         if not access_token:
             return jsonify({"error": "Not authenticated"}), 401
@@ -1218,14 +1223,20 @@ def force_cleanup_target():
         target_response = requests.get(target_events_url, headers=headers, params=target_params)
         target_events = target_response.json().get('value', [])
         
-        # Delete ALL events
+        # Delete ALL events without sending notifications
         deleted_count = 0
         failed_count = 0
+        
+        # Add header to suppress notifications
+        delete_headers = {
+            **headers,
+            'Prefer': 'outlook.timezone="UTC", outlook.send-notifications="false"'
+        }
         
         for event in target_events:
             try:
                 delete_url = f"https://graph.microsoft.com/v1.0/users/calendar@stedward.org/calendars/{target_calendar_id}/events/{event.get('id')}"
-                delete_response = requests.delete(delete_url, headers=headers)
+                delete_response = requests.delete(delete_url, headers=delete_headers)
                 
                 if delete_response.status_code in [200, 204]:
                     deleted_count += 1
@@ -1235,7 +1246,7 @@ def force_cleanup_target():
                 failed_count += 1
         
         return jsonify({
-            "message": f"Cleaned target calendar: deleted {deleted_count} events, {failed_count} failed",
+            "message": f"Cleaned target calendar: deleted {deleted_count} events, {failed_count} failed (notifications suppressed)",
             "next_step": "Now run a sync to populate with correct events"
         })
         
