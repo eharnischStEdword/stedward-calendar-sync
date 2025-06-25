@@ -156,7 +156,6 @@ def index():
         <body style="font-family: Arial; text-align: center; margin-top: 100px;">
             <h1>🗓️ St. Edward Calendar Sync</h1>
             <p>You need to sign in with your Microsoft account to access the calendar sync.</p>
-            <p style="margin: 1rem 0; opacity: 0.7; font-size: 0.9rem;">{APP_VERSION_INFO['full_version']}</p>
             <a href="{auth_url}" style="background: #0078d4; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 18px;">
                 Sign in with Microsoft
             </a>
