@@ -31,8 +31,8 @@ IGNORE_VALIDATION_WARNINGS = ['no_duplicates', 'event_integrity']
 
 # OAuth Scopes
 GRAPH_SCOPES = [
-    'https://graph.microsoft.com/Calendars.ReadWrite',
-    'https://graph.Microsoft.com/User.Read',
-    'https://graph.microsoft.com/Calendars.ReadWrite.Shared',
+    'Calendars.ReadWrite',
+    'Calendars.ReadWrite.Shared', 
+    'User.Read',
     'offline_access'
 ]
