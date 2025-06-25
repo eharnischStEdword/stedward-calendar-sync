@@ -215,7 +215,7 @@ def run_diagnostics():
     """Run diagnostics"""
     # Run in thread for non-blocking
     def diag_thread():
-        from calendar.reader import CalendarReader
+        from cal_ops.reader import CalendarReader
         reader = CalendarReader(auth_manager)
         
         calendars = reader.get_calendars()
