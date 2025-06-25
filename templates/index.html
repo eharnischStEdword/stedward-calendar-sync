@@ -450,6 +450,7 @@
 
     <script>
         let isOperationInProgress = false;
+        let authCheckInterval = null;
 
         function showMessage(text, type = 'info', duration = 5000) {
             const messagesArea = document.getElementById('messages-area');
@@ -477,10 +478,12 @@
 
         function setButtonState(buttonId, loading, label = '') {
             const btn = document.getElementById(buttonId);
-            const icon = document.getElementById('sync-icon');
-            const labelEl = document.getElementById('sync-label');
+            if (!btn) return;
             
             if (buttonId === 'sync-btn') {
+                const icon = document.getElementById('sync-icon');
+                const labelEl = document.getElementById('sync-label');
+                
                 if (loading) {
                     btn.disabled = true;
                     icon.innerHTML = '<div class="spinner"></div>';
@@ -493,10 +496,11 @@
             } else {
                 btn.disabled = loading;
                 if (loading) {
+                    const originalContent = btn.innerHTML;
+                    btn.dataset.originalContent = originalContent;
                     btn.innerHTML = '<div class="spinner"></div> Processing...';
-                } else {
-                    // Reset to original content
-                    location.reload();
+                } else if (btn.dataset.originalContent) {
+                    btn.innerHTML = btn.dataset.originalContent;
                 }
             }
         }
@@ -522,9 +526,20 @@
             } else if (status.last_sync_result && status.last_sync_result.success) {
                 syncDot.className = 'status-dot success';
                 syncText.textContent = 'Ready';
-            } else {
+            } else if (status.last_sync_result && !status.last_sync_result.success) {
                 syncDot.className = 'status-dot error';
                 syncText.textContent = 'Error';
+            } else {
+                syncDot.className = 'status-dot warning';
+                syncText.textContent = 'Not synced';
+            }
+
+            // Update scheduler status
+            const schedulerDot = document.getElementById('scheduler-dot');
+            if (status.scheduler_running) {
+                schedulerDot.className = 'status-dot success';
+            } else {
+                schedulerDot.className = 'status-dot warning';
             }
 
             // Update last sync time
@@ -540,6 +555,14 @@
                 versionBadge.textContent = `v${status.version}`;
                 versionBadge.title = status.app_info || `Version ${status.version}`;
             }
+
+            // Handle authentication errors
+            if (!status.authenticated) {
+                showMessage('⚠️ Authentication lost. Please sign in again.', 'warning', 0);
+                setTimeout(() => {
+                    window.location.href = '/logout';
+                }, 3000);
+            }
         }
 
         async function syncNow() {
@@ -550,10 +573,20 @@
             showMessage('🔄 Starting calendar synchronization...', 'info', 0);
             
             try {
-                const response = await fetch('/sync', { method: 'POST' });
+                const response = await fetch('/sync', { 
+                    method: 'POST',
+                    credentials: 'same-origin'
+                });
+                
+                if (response.status === 401) {
+                    showMessage('❌ Authentication expired. Redirecting to login...', 'error');
+                    setTimeout(() => window.location.href = '/logout', 2000);
+                    return;
+                }
+                
                 const result = await response.json();
                 
-                if (result.success) {
+                if (result.success || (result.message && result.message !== "Not authenticated")) {
                     setButtonState('sync-btn', true, 'Syncing...');
                     showMessage('⏳ Sync in progress... This may take a minute.', 'warning', 0);
                     
@@ -562,7 +595,9 @@
                     const monitor = setInterval(async () => {
                         checks++;
                         try {
-                            const statusResponse = await fetch('/status');
+                            const statusResponse = await fetch('/status', {
+                                credentials: 'same-origin'
+                            });
                             const status = await statusResponse.json();
                             
                             updateStatusDots(status);
@@ -573,7 +608,7 @@
                                 if (status.last_sync_result && status.last_sync_result.success) {
                                     const msg = `✅ Sync completed! Added: ${status.last_sync_result.added || 0}, Updated: ${status.last_sync_result.updated || 0}, Deleted: ${status.last_sync_result.deleted || 0}`;
                                     showMessage(msg, 'success');
-                                } else {
+                                } else if (status.last_sync_result) {
                                     showMessage('⚠️ Sync completed with issues. Check logs for details.', 'warning');
                                 }
                                 
@@ -583,10 +618,10 @@
                         } catch (error) {
                             console.error('Status check failed:', error);
                         }
-                    }, 3000); // Check every 3 seconds instead of 2
+                    }, 3000);
                     
                 } else {
-                    showMessage('❌ Failed to start sync: ' + result.message, 'error');
+                    showMessage('❌ Failed to start sync: ' + (result.message || result.error), 'error');
                     setButtonState('sync-btn', false);
                     isOperationInProgress = false;
                 }
@@ -606,7 +641,17 @@
             showMessage('🔍 Running system diagnostics...', 'info', 0);
             
             try {
-                const response = await fetch('/diagnostics', { method: 'POST' });
+                const response = await fetch('/diagnostics', { 
+                    method: 'POST',
+                    credentials: 'same-origin'
+                });
+                
+                if (response.status === 401) {
+                    showMessage('❌ Authentication expired. Redirecting to login...', 'error');
+                    setTimeout(() => window.location.href = '/logout', 2000);
+                    return;
+                }
+                
                 const result = await response.json();
                 
                 if (result.success) {
@@ -624,7 +669,16 @@
 
         async function refreshStatus() {
             try {
-                const response = await fetch('/status');
+                const response = await fetch('/status', {
+                    credentials: 'same-origin'
+                });
+                
+                if (response.status === 401) {
+                    showMessage('❌ Authentication expired. Redirecting to login...', 'error');
+                    setTimeout(() => window.location.href = '/logout', 2000);
+                    return;
+                }
+                
                 const status = await response.json();
                 updateStatusDots(status);
                 showMessage('📊 Status refreshed', 'success', 2000);
@@ -649,10 +703,22 @@
         // Initialize on page load
         window.addEventListener('load', () => {
             refreshStatus();
+            
+            // Start periodic auth check
+            authCheckInterval = setInterval(() => {
+                // Only refresh if no operation in progress
+                if (!isOperationInProgress) {
+                    refreshStatus();
+                }
+            }, 60000); // Every 60 seconds
         });
 
-        // Less frequent auto-refresh (every 60 seconds instead of 30)
-        setInterval(refreshStatus, 60000);
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            if (authCheckInterval) {
+                clearInterval(authCheckInterval);
+            }
+        });
     </script>
 </body>
 </html>
