@@ -1,5 +1,5 @@
 """
-Sync Engine - Core calendar synchronization logic
+Sync Engine - Core calendar synchronization logic with enhancements
 """
 import logging
 from datetime import datetime
@@ -9,6 +9,11 @@ from threading import Lock
 import config
 from cal_ops.reader import CalendarReader
 from cal_ops.writer import CalendarWriter
+from utils.logger import StructuredLogger
+from utils.metrics import MetricsCollector
+from utils.circuit_breaker import CircuitBreaker
+from sync.history import SyncHistory
+from sync.validator import SyncValidator
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +34,30 @@ class SyncEngine:
         
         # Rate limiting
         self.sync_request_times = []
+        
+        # Enhanced features
+        self.structured_logger = StructuredLogger(__name__)
+        self.metrics = MetricsCollector()
+        self.circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=300)
+        self.history = SyncHistory()
+        self.validator = SyncValidator()
     
     def sync_calendars(self) -> Dict:
-        """Main sync function"""
+        """Main sync function with circuit breaker protection"""
+        try:
+            # Use circuit breaker to protect against cascading failures
+            return self.circuit_breaker.call(self._do_sync)
+        except Exception as e:
+            if "Circuit breaker is open" in str(e):
+                error_msg = "Service temporarily unavailable due to recent failures. Please try again later."
+                logger.error(error_msg)
+                return {"error": error_msg, "circuit_breaker_open": True}
+            raise
+    
+    def _do_sync(self) -> Dict:
+        """Actual sync implementation"""
+        start_time = datetime.now()
+        
         # Check if already syncing
         with self.sync_lock:
             if self.sync_in_progress:
@@ -40,14 +66,23 @@ class SyncEngine:
         
         # Check rate limit
         if not self._check_rate_limit():
+            with self.sync_lock:
+                self.sync_in_progress = False
             return {"error": "Rate limit exceeded. Please wait before syncing again."}
         
         # Record sync request
         self.sync_request_times.append(datetime.now())
         
         logger.info("🚀 Starting calendar sync")
+        self.structured_logger.log_sync_event('sync_started', {
+            'timestamp': datetime.utcnow().isoformat()
+        })
         
         try:
+            # Pre-flight checks
+            if not self._pre_flight_check():
+                return {"error": "Pre-flight checks failed. Check logs for details."}
+            
             # Get calendar IDs
             source_id = self.reader.find_calendar_id(config.SOURCE_CALENDAR)
             target_id = self.reader.find_calendar_id(config.TARGET_CALENDAR)
@@ -83,7 +118,7 @@ class SyncEngine:
             # Check dry run mode
             if config.DRY_RUN_MODE:
                 logger.info("🧪 DRY RUN MODE - No changes will be made")
-                return {
+                result = {
                     'success': True,
                     'message': f'DRY RUN: Would add {len(to_add)}, update {len(to_update)}, delete {len(to_delete)}',
                     'dry_run': True,
@@ -91,36 +126,135 @@ class SyncEngine:
                     'updated': len(to_update),
                     'deleted': len(to_delete)
                 }
+            else:
+                # Execute sync operations
+                result = self._execute_sync_operations(target_id, to_add, to_update, to_delete)
+                
+                # Validate sync result if successful
+                if result.get('success'):
+                    logger.info("Validating sync results...")
+                    fresh_source = self.reader.get_public_events(source_id)
+                    fresh_target = self.reader.get_calendar_events(target_id)
+                    
+                    if fresh_source and fresh_target:
+                        is_valid, validations = self.validator.validate_sync_result(
+                            fresh_source, fresh_target
+                        )
+                        
+                        result['validation'] = {
+                            'is_valid': is_valid,
+                            'checks': validations
+                        }
+                        
+                        if not is_valid:
+                            logger.warning(f"Sync validation failed: {validations}")
+                            self.structured_logger.log_sync_event('sync_validation_failed', {
+                                'validations': validations
+                            })
             
-            # Execute sync operations
-            results = self._execute_sync_operations(target_id, to_add, to_update, to_delete)
+            # Calculate duration
+            duration = (datetime.now() - start_time).total_seconds()
+            result['duration'] = duration
             
             # Update sync state
             with self.sync_lock:
                 self.last_sync_time = datetime.now()
-                self.last_sync_result = results
+                self.last_sync_result = result
             
-            logger.info(f"🎉 Sync completed: {results}")
-            return results
+            # Record metrics and history
+            if not config.DRY_RUN_MODE:
+                self.metrics.record_sync_duration(duration)
+                self.metrics.record_sync_result(
+                    result.get('added', 0),
+                    result.get('updated', 0),
+                    result.get('deleted', 0),
+                    result.get('failed_operations', 0)
+                )
+                self.history.add_entry(result)
+            
+            # Log structured event
+            self.structured_logger.log_sync_event('sync_completed', {
+                'duration_seconds': duration,
+                'added': result.get('added', 0),
+                'updated': result.get('updated', 0),
+                'deleted': result.get('deleted', 0),
+                'success': result.get('success', False),
+                'dry_run': config.DRY_RUN_MODE
+            })
+            
+            logger.info(f"🎉 Sync completed in {duration:.2f} seconds: {result}")
+            return result
             
         except Exception as e:
             import traceback
+            duration = (datetime.now() - start_time).total_seconds()
+            
             error_result = {
                 'success': False,
                 'message': f'Sync failed: {str(e)}',
                 'error': str(e),
-                'traceback': traceback.format_exc()
+                'traceback': traceback.format_exc(),
+                'duration': duration
             }
             
             with self.sync_lock:
                 self.last_sync_result = error_result
             
-            logger.error(f"💥 Sync error: {error_result}")
+            # Log structured error
+            self.structured_logger.log_sync_event('sync_failed', {
+                'error': str(e),
+                'duration_seconds': duration
+            })
+            
+            # Record failure metrics
+            self.metrics.record_sync_duration(duration)
+            self.metrics.record_sync_result(0, 0, 0, 1)
+            
+            logger.error(f"💥 Sync error after {duration:.2f} seconds: {error_result}")
             return error_result
             
         finally:
             with self.sync_lock:
                 self.sync_in_progress = False
+    
+    def _pre_flight_check(self) -> bool:
+        """Verify system is ready for sync"""
+        checks = []
+        
+        # Check authentication
+        auth_valid = self.auth.is_authenticated()
+        checks.append(('auth_valid', auth_valid))
+        if not auth_valid:
+            logger.error("Pre-flight check failed: Authentication invalid")
+        
+        # Check calendar access
+        try:
+            calendars = self.reader.get_calendars()
+            calendars_accessible = calendars is not None
+            checks.append(('calendars_accessible', calendars_accessible))
+            if not calendars_accessible:
+                logger.error("Pre-flight check failed: Cannot access calendars")
+        except Exception as e:
+            logger.error(f"Pre-flight check failed: Calendar access error: {e}")
+            checks.append(('calendars_accessible', False))
+        
+        # Check rate limit
+        rate_limit_ok = self._check_rate_limit()
+        checks.append(('rate_limit_ok', rate_limit_ok))
+        if not rate_limit_ok:
+            logger.error("Pre-flight check failed: Rate limit exceeded")
+        
+        # Log check results
+        failed_checks = [name for name, result in checks if not result]
+        if failed_checks:
+            logger.error(f"Pre-flight checks failed: {failed_checks}")
+            self.structured_logger.log_sync_event('preflight_checks_failed', {
+                'failed_checks': failed_checks
+            })
+            return False
+        
+        logger.info("All pre-flight checks passed")
+        return True
     
     def _check_rate_limit(self) -> bool:
         """Check if we're within rate limits"""
@@ -320,28 +454,47 @@ class SyncEngine:
         failed = 0
         total = len(to_add) + len(to_update) + len(to_delete)
         
+        # Track operation details
+        operation_details = {
+            'add_success': 0,
+            'add_failed': 0,
+            'update_success': 0,
+            'update_failed': 0,
+            'delete_success': 0,
+            'delete_failed': 0
+        }
+        
         # Add new events
         for event in to_add:
             if self.writer.create_event(target_calendar_id, event):
                 successful += 1
+                operation_details['add_success'] += 1
             else:
                 failed += 1
+                operation_details['add_failed'] += 1
         
         # Update existing events
         for source_event, target_event in to_update:
             event_id = target_event.get('id')
             if self.writer.update_event(target_calendar_id, event_id, source_event):
                 successful += 1
+                operation_details['update_success'] += 1
             else:
                 failed += 1
+                operation_details['update_failed'] += 1
         
         # Delete removed events
         for event in to_delete:
             event_id = event.get('id')
             if self.writer.delete_event(target_calendar_id, event_id):
                 successful += 1
+                operation_details['delete_success'] += 1
             else:
                 failed += 1
+                operation_details['delete_failed'] += 1
+        
+        # Log operation details
+        self.structured_logger.log_sync_event('sync_operations_completed', operation_details)
         
         return {
             'success': True,
@@ -351,6 +504,7 @@ class SyncEngine:
             'added': len(to_add),
             'updated': len(to_update),
             'deleted': len(to_delete),
+            'operation_details': operation_details,
             'safeguards_active': config.MASTER_CALENDAR_PROTECTION
         }
     
@@ -361,5 +515,8 @@ class SyncEngine:
                 'last_sync_time': self.last_sync_time,
                 'last_sync_result': self.last_sync_result,
                 'sync_in_progress': self.sync_in_progress,
-                'rate_limit_remaining': config.MAX_SYNC_REQUESTS_PER_HOUR - len(self.sync_request_times)
+                'rate_limit_remaining': config.MAX_SYNC_REQUESTS_PER_HOUR - len(self.sync_request_times),
+                'circuit_breaker_state': self.circuit_breaker.state,
+                'total_syncs': len(self.history.history),
+                'metrics_summary': self.metrics.get_metrics_summary()
             }
