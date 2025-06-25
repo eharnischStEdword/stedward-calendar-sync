@@ -69,13 +69,24 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 def requires_auth(f):
-    """Decorator to check authentication"""
+    """Decorator to check authentication - IMPROVED"""
     from functools import wraps
     
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # First check if we have basic authentication
         if not auth_manager.is_authenticated():
-            return jsonify({"error": "Not authenticated"}), 401
+            logger.warning("Authentication required but user not authenticated")
+            return jsonify({"error": "Not authenticated", "redirect": "/logout"}), 401
+        
+        # Try to ensure we have a valid token (this will refresh if needed)
+        if not auth_manager.ensure_valid_token():
+            logger.warning("Cannot ensure valid token, forcing reauthentication")
+            # Clear tokens and force reauthentication
+            auth_manager.clear_tokens()
+            return jsonify({"error": "Authentication expired", "redirect": "/logout"}), 401
+        
+        # Authentication is valid, proceed with the request
         return f(*args, **kwargs)
     return decorated_function
 
@@ -222,21 +233,32 @@ def auth_callback():
 @app.route('/sync', methods=['POST'])
 @requires_auth
 def manual_sync():
-    """Trigger manual sync"""
+    """Trigger manual sync - IMPROVED"""
     audit_logger.log_sync_operation('manual_sync_triggered', 'user', {
         'ip': request.remote_addr
     })
     
+    # Double-check authentication before starting sync
+    if not auth_manager.ensure_valid_token():
+        logger.error("Lost authentication during sync request")
+        return jsonify({"error": "Authentication lost", "redirect": "/logout"}), 401
+    
     def sync_thread():
-        result = sync_engine.sync_calendars()
-        audit_logger.log_sync_operation('manual_sync_completed', 'user', {
-            'result': result.get('success', False),
-            'operations': {
-                'added': result.get('added', 0),
-                'updated': result.get('updated', 0),
-                'deleted': result.get('deleted', 0)
-            }
-        })
+        try:
+            result = sync_engine.sync_calendars()
+            audit_logger.log_sync_operation('manual_sync_completed', 'user', {
+                'result': result.get('success', False),
+                'operations': {
+                    'added': result.get('added', 0),
+                    'updated': result.get('updated', 0),
+                    'deleted': result.get('deleted', 0)
+                }
+            })
+        except Exception as e:
+            logger.error(f"Sync thread failed: {e}")
+            audit_logger.log_sync_operation('manual_sync_failed', 'user', {
+                'error': str(e)
+            })
     
     # Run sync in background
     thread = threading.Thread(target=sync_thread)
@@ -413,7 +435,7 @@ def disable_dry_run():
 @requires_auth
 def debug_events(calendar_name):
     """Debug endpoint to inspect calendar events"""
-    if config.APP_VERSION_INFO.get('environment') != 'development':
+    if APP_VERSION_INFO.get('environment') != 'development':
         return jsonify({"error": "Debug endpoint only available in development"}), 403
     
     calendar_id = sync_engine.reader.find_calendar_id(calendar_name)
@@ -470,7 +492,6 @@ def validate_sync():
         'target_count': len(target_events)
     })
 
-# Add this route to your app.py file
 
 @app.route('/debug-validation', methods=['GET'])
 @requires_auth
