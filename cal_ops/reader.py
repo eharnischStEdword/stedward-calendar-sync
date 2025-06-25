@@ -1,11 +1,13 @@
 """
-Calendar Reader - Handles all read operations from Microsoft Graph
+Calendar Reader - Handles all read operations from Microsoft Graph with enhancements
 """
 import logging
 import requests
 from typing import List, Dict, Optional
-from utils.retry import retry_with_backoff
+from datetime import datetime, timedelta
+
 import config
+from utils.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +17,13 @@ class CalendarReader:
     
     def __init__(self, auth_manager):
         self.auth = auth_manager
+        # Add caching for calendar IDs
+        self._calendar_cache = {}
+        self._cache_expiry = {}
     
     @retry_with_backoff(max_retries=3, base_delay=1)
     def get_calendars(self) -> Optional[List[Dict]]:
-        """Get all calendars for the shared mailbox"""
+        """Get all calendars for the shared mailbox with retry logic"""
         headers = self.auth.get_headers()
         if not headers:
             logger.error("No valid authentication headers")
@@ -39,17 +44,34 @@ class CalendarReader:
                     return None
             
             if response.status_code == 200:
-                return response.json().get('value', [])
+                calendars = response.json().get('value', [])
+                logger.info(f"Successfully retrieved {len(calendars)} calendars")
+                return calendars
             else:
                 logger.error(f"Failed to get calendars: {response.status_code}")
+                logger.error(f"Response: {response.text}")
                 return None
         
+        except requests.exceptions.Timeout:
+            logger.error("Request timeout while getting calendars")
+            raise
+        except requests.exceptions.ConnectionError:
+            logger.error("Connection error while getting calendars")
+            raise
         except Exception as e:
             logger.error(f"Error getting calendars: {e}")
-            return None
+            raise
     
     def find_calendar_id(self, calendar_name: str) -> Optional[str]:
-        """Find a calendar ID by name"""
+        """Find a calendar ID by name with caching"""
+        # Check cache first
+        if calendar_name in self._calendar_cache:
+            expiry = self._cache_expiry.get(calendar_name)
+            if expiry and datetime.now() < expiry:
+                logger.info(f"Using cached calendar ID for '{calendar_name}'")
+                return self._calendar_cache[calendar_name]
+        
+        # If not in cache or expired, fetch
         calendars = self.get_calendars()
         if not calendars:
             return None
@@ -58,14 +80,19 @@ class CalendarReader:
             if calendar.get('name') == calendar_name:
                 calendar_id = calendar.get('id')
                 logger.info(f"Found calendar '{calendar_name}' with ID: {calendar_id}")
+                
+                # Cache the result for 1 hour
+                self._calendar_cache[calendar_name] = calendar_id
+                self._cache_expiry[calendar_name] = datetime.now() + timedelta(hours=1)
+                
                 return calendar_id
         
         logger.warning(f"Calendar '{calendar_name}' not found")
         return None
-
+    
     @retry_with_backoff(max_retries=3, base_delay=1)
     def get_calendar_events(self, calendar_id: str, select_fields: List[str] = None) -> Optional[List[Dict]]:
-        """Get all events from a specific calendar"""
+        """Get all events from a specific calendar with retry logic"""
         headers = self.auth.get_headers()
         if not headers:
             return None
@@ -77,28 +104,57 @@ class CalendarReader:
             select_fields = [
                 'id', 'subject', 'start', 'end', 'categories', 
                 'location', 'isAllDay', 'showAs', 'type', 
-                'recurrence', 'seriesMasterId', 'body', 'createdDateTime'
+                'recurrence', 'seriesMasterId', 'body', 'createdDateTime',
+                'lastModifiedDateTime'
             ]
         
-        params = {
-            '$top': 500,
-            '$select': ','.join(select_fields)
-        }
+        all_events = []
         
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=30)
+        # Handle pagination
+        while url:
+            params = {
+                '$top': 100,  # Reduced from 500 for better performance
+                '$select': ','.join(select_fields)
+            }
             
-            if response.status_code == 200:
-                events = response.json().get('value', [])
-                logger.info(f"Retrieved {len(events)} events from calendar {calendar_id}")
-                return events
-            else:
-                logger.error(f"Failed to get events: {response.status_code}")
-                return None
+            try:
+                response = requests.get(url, headers=headers, params=params if not all_events else None, timeout=30)
+                
+                if response.status_code == 401:
+                    # Try refreshing token
+                    if self.auth.refresh_access_token():
+                        headers = self.auth.get_headers()
+                        response = requests.get(url, headers=headers, params=params if not all_events else None, timeout=30)
+                    else:
+                        logger.error("Authentication failed during event retrieval")
+                        return None
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    events = data.get('value', [])
+                    all_events.extend(events)
+                    
+                    # Check for next page
+                    url = data.get('@odata.nextLink')
+                    if url:
+                        logger.info(f"Fetching next page of events (current total: {len(all_events)})")
+                else:
+                    logger.error(f"Failed to get events: {response.status_code}")
+                    logger.error(f"Response: {response.text}")
+                    return None
+            
+            except requests.exceptions.Timeout:
+                logger.error("Request timeout while getting events")
+                raise
+            except requests.exceptions.ConnectionError:
+                logger.error("Connection error while getting events")
+                raise
+            except Exception as e:
+                logger.error(f"Error getting events: {e}")
+                raise
         
-        except Exception as e:
-            logger.error(f"Error getting events: {e}")
-            return None
+        logger.info(f"Retrieved total of {len(all_events)} events from calendar {calendar_id}")
+        return all_events
     
     def get_public_events(self, calendar_id: str) -> Optional[List[Dict]]:
         """Get only public events from a calendar"""
@@ -108,45 +164,65 @@ class CalendarReader:
         
         public_events = []
         stats = {
+            'total_events': len(all_events),
             'non_public': 0,
             'tentative': 0,
             'recurring_instances': 0,
-            'past_events': 0
+            'past_events': 0,
+            'future_events': 0
         }
         
         from datetime import datetime, timedelta
         cutoff_date = datetime.now() - timedelta(days=config.SYNC_CUTOFF_DAYS)
+        future_cutoff = datetime.now() + timedelta(days=365)  # Don't sync events more than a year out
         
         for event in all_events:
             # Check if public
-            if 'Public' not in event.get('categories', []):
+            categories = event.get('categories', [])
+            if 'Public' not in categories:
                 stats['non_public'] += 1
                 continue
             
             # Skip tentative events
-            if event.get('showAs', 'busy') != 'busy':
+            show_as = event.get('showAs', 'busy')
+            if show_as != 'busy':
                 stats['tentative'] += 1
+                logger.debug(f"Skipping tentative event: {event.get('subject')} (showAs: {show_as})")
                 continue
             
-            # Skip recurring instances
-            if event.get('type') == 'occurrence':
+            # Skip recurring instances (we handle series masters)
+            event_type = event.get('type', 'singleInstance')
+            if event_type == 'occurrence':
                 stats['recurring_instances'] += 1
                 continue
             
-            # Skip old events
+            # Check event date
             try:
                 event_start = event.get('start', {}).get('dateTime', '')
                 if event_start:
                     event_date = datetime.fromisoformat(event_start.replace('Z', ''))
+                    
+                    # Skip old events
                     if event_date < cutoff_date:
                         stats['past_events'] += 1
                         continue
-            except:
-                pass
+                    
+                    # Skip events too far in the future
+                    if event_date > future_cutoff:
+                        stats['future_events'] += 1
+                        continue
+            except Exception as e:
+                logger.warning(f"Could not parse date for event {event.get('subject')}: {e}")
             
             public_events.append(event)
         
         logger.info(f"Found {len(public_events)} public events to sync")
-        logger.info(f"Skipped: {stats}")
+        logger.info(f"Event statistics: {stats}")
         
         return public_events
+    
+    def clear_calendar_cache(self):
+        """Clear the calendar ID cache"""
+        self._calendar_cache.clear()
+        self._cache_expiry.clear()
+        logger.info("Calendar cache cleared")
