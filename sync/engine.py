@@ -154,96 +154,66 @@ class SyncEngine:
         except:
             return dt_str
     
-  # Update sync/engine.py - Replace the _create_event_signature method with this improved version:
-
-def _create_event_signature(self, event: Dict) -> str:
-    """Create unique signature for an event"""
-    subject = self._normalize_subject(event.get('subject', ''))
-    event_type = event.get('type', 'unknown')
-    
-    # For recurring events, we need to be more careful
-    if event_type == 'seriesMaster':
-        # For recurring series masters, use subject + recurrence pattern
-        # This ensures the same recurring event is recognized even if IDs differ
-        recurrence = event.get('recurrence', {})
+    def _create_event_signature(self, event: Dict) -> str:
+        """Create unique signature for an event"""
+        subject = self._normalize_subject(event.get('subject', ''))
+        event_type = event.get('type', 'singleInstance')
         
-        # Create a stable signature from recurrence pattern
-        pattern_type = recurrence.get('pattern', {}).get('type', 'unknown')
-        interval = recurrence.get('pattern', {}).get('interval', 1)
+        # Log for debugging
+        logger.debug(f"Creating signature for event: {event.get('subject')} (type: {event_type})")
         
-        # Include key recurrence details in signature
-        recurrence_sig = f"{pattern_type}:{interval}"
-        
-        # For weekly events, include days of week
-        if pattern_type == 'weekly':
-            days = recurrence.get('pattern', {}).get('daysOfWeek', [])
-            days_str = ','.join(sorted(days))
-            recurrence_sig += f":{days_str}"
-        
-        return f"recurring:{subject}:{recurrence_sig}"
-    
-    elif event_type == 'occurrence':
-        # Skip individual occurrences - we handle the series master
-        # This prevents duplicate handling
-        return f"skip:occurrence:{subject}"
-    
-    # For single events, use the existing logic
-    start = self._normalize_datetime(event.get('start', {}).get('dateTime', ''))
-    try:
-        if 'T' in start:
-            date_part = start.split('T')[0]
-            time_part = start.split('T')[1][:5]
-            return f"single:{subject}:{date_part}:{time_part}"
-    except:
-        pass
-    
-    return f"single:{subject}:{start}"
-
-# Also update the sync logic to skip occurrences in _determine_sync_operations:
-def _determine_sync_operations(
-    self, 
-    source_events: List[Dict], 
-    target_events: List[Dict],
-    target_map: Dict[str, Dict]
-) -> Tuple[List[Dict], List[Tuple[Dict, Dict]], List[Dict]]:
-    """Determine what operations are needed"""
-    to_add = []
-    to_update = []
-    
-    # Make a copy of target_map for tracking deletions
-    remaining_targets = target_map.copy()
-    
-    for source_event in source_events:
-        signature = self._create_event_signature(source_event)
-        
-        # Skip individual occurrences of recurring events
-        if signature.startswith("skip:occurrence:"):
-            continue
-        
-        if signature in remaining_targets:
-            # Event exists - check if update needed
-            target_event = remaining_targets[signature]
+        # For recurring events, we need to be more careful
+        if event_type == 'seriesMaster':
+            # For recurring series masters, use subject + recurrence pattern
+            # This ensures the same recurring event is recognized even if IDs differ
+            recurrence = event.get('recurrence', {})
             
-            if self._needs_update(source_event, target_event):
-                to_update.append((source_event, target_event))
+            # Create a stable signature from recurrence pattern
+            pattern = recurrence.get('pattern', {})
+            pattern_type = pattern.get('type', 'unknown')
+            interval = pattern.get('interval', 1)
             
-            # Remove from remaining targets
-            del remaining_targets[signature]
-        else:
-            # Event doesn't exist - add it
-            to_add.append(source_event)
-    
-    # Filter out any "skip:occurrence" signatures from deletions
-    to_delete = [
-        event for sig, event in remaining_targets.items() 
-        if not sig.startswith("skip:occurrence:")
-    ]
-
-    # In _create_event_signature, add:
-logger.debug(f"Creating signature for event: {event.get('subject')} (type: {event_type})")
-logger.debug(f"Generated signature: {signature}")
-    
-    return to_add, to_update, to_delete
+            # Include key recurrence details in signature
+            recurrence_sig = f"{pattern_type}:{interval}"
+            
+            # For weekly events, include days of week
+            if pattern_type == 'weekly':
+                days = pattern.get('daysOfWeek', [])
+                days_str = ','.join(sorted(days))
+                recurrence_sig += f":{days_str}"
+            
+            # For monthly events, include day of month or occurrence
+            elif pattern_type in ['absoluteMonthly', 'relativeMonthly']:
+                if 'dayOfMonth' in pattern:
+                    recurrence_sig += f":day{pattern['dayOfMonth']}"
+                elif 'daysOfWeek' in pattern:
+                    days_str = ','.join(sorted(pattern['daysOfWeek']))
+                    index = pattern.get('index', 'unknown')
+                    recurrence_sig += f":{index}:{days_str}"
+            
+            signature = f"recurring:{subject}:{recurrence_sig}"
+            logger.debug(f"Generated recurring signature: {signature}")
+            return signature
+        
+        elif event_type == 'occurrence':
+            # Skip individual occurrences - we handle the series master
+            # This prevents duplicate handling
+            return f"skip:occurrence:{subject}"
+        
+        # For single events, use the existing logic
+        start = self._normalize_datetime(event.get('start', {}).get('dateTime', ''))
+        try:
+            if 'T' in start:
+                date_part = start.split('T')[0]
+                time_part = start.split('T')[1][:5]
+                signature = f"single:{subject}:{date_part}:{time_part}"
+            else:
+                signature = f"single:{subject}:{start}"
+        except:
+            signature = f"single:{subject}:{start}"
+        
+        logger.debug(f"Generated single event signature: {signature}")
+        return signature
     
     def _build_event_map(self, events: List[Dict]) -> Dict[str, Dict]:
         """Build a map of events by signature"""
@@ -251,6 +221,10 @@ logger.debug(f"Generated signature: {signature}")
         
         for event in events:
             signature = self._create_event_signature(event)
+            
+            # Skip occurrences
+            if signature.startswith("skip:occurrence:"):
+                continue
             
             if signature in event_map:
                 # Keep newer event if duplicate
@@ -279,6 +253,10 @@ logger.debug(f"Generated signature: {signature}")
         for source_event in source_events:
             signature = self._create_event_signature(source_event)
             
+            # Skip individual occurrences of recurring events
+            if signature.startswith("skip:occurrence:"):
+                continue
+            
             if signature in remaining_targets:
                 # Event exists - check if update needed
                 target_event = remaining_targets[signature]
@@ -297,18 +275,17 @@ logger.debug(f"Generated signature: {signature}")
         
         return to_add, to_update, to_delete
     
-def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
-    """Check if an event needs updating"""
-    # First check if modification times are available
-    source_modified = source_event.get('lastModifiedDateTime')
-    target_modified = target_event.get('lastModifiedDateTime')
-    
-    # If both have modification times and source isn't newer, skip update
-    if source_modified and target_modified:
-        if source_modified <= target_modified:
-            return False
-    
-    # Continue with existing checks...
+    def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
+        """Check if an event needs updating"""
+        # First check if modification times are available
+        source_modified = source_event.get('lastModifiedDateTime')
+        target_modified = target_event.get('lastModifiedDateTime')
+        
+        # If both have modification times and source isn't newer, skip update
+        if source_modified and target_modified:
+            if source_modified <= target_modified:
+                return False
+        
         # Compare key fields
         if source_event.get('subject') != target_event.get('subject'):
             return True
@@ -322,8 +299,12 @@ def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
         if source_event.get('isAllDay') != target_event.get('isAllDay'):
             return True
         
-        if source_event.get('recurrence') != target_event.get('recurrence'):
-            return True
+        # For recurring events, check if recurrence pattern changed
+        if source_event.get('type') == 'seriesMaster':
+            source_recurrence = source_event.get('recurrence', {})
+            target_recurrence = target_event.get('recurrence', {})
+            if source_recurrence != target_recurrence:
+                return True
         
         return False
     
