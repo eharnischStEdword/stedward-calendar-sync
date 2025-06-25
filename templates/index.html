@@ -205,6 +205,52 @@
             color: #0c5460;
         }
 
+        /* Results display area */
+        .results-area {
+            margin-bottom: 2rem;
+            min-height: 0;
+        }
+
+        .results-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid #005921;
+        }
+
+        .results-card h4 {
+            margin-bottom: 1rem;
+            color: #005921;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .result-item {
+            background: white;
+            padding: 1rem;
+            border-radius: 6px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .result-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #005921;
+        }
+
+        .result-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 0.5rem;
+        }
+
         /* Action buttons */
         .actions-section {
             display: grid;
@@ -259,6 +305,12 @@
             background: #c0392b;
         }
 
+        .action-btn.small {
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+            min-height: 40px;
+        }
+
         /* Loading spinner */
         .spinner {
             width: 20px;
@@ -288,17 +340,58 @@
             font-size: 1rem;
             font-weight: 600;
             margin-bottom: 1rem;
+            padding: 0.5rem 0;
+        }
+
+        .details-toggle:hover {
+            color: #004a1e;
         }
 
         .details-content {
             display: none;
             background: #f8f9fa;
             border-radius: 8px;
-            padding: 1rem;
+            padding: 1.5rem;
         }
 
         .details-content.show {
             display: block;
+        }
+
+        .tool-section {
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .tool-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .tool-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .tool-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #005921;
+        }
+
+        .tool-description {
+            color: #666;
+            margin-bottom: 1rem;
+            line-height: 1.5;
+        }
+
+        .tool-actions {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
         }
 
         .footer {
@@ -306,6 +399,23 @@
             padding: 2rem;
             color: rgba(238, 244, 241, 0.8);
             font-size: 0.9rem;
+        }
+
+        .mode-indicator {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 6px;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            color: #856404;
+            font-weight: 500;
+            text-align: center;
+        }
+
+        .mode-indicator.active {
+            background: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
         }
 
         @media (max-width: 768px) {
@@ -317,6 +427,14 @@
 
             .actions-section {
                 grid-template-columns: 1fr;
+            }
+
+            .results-grid {
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            }
+
+            .tool-actions {
+                flex-direction: column;
             }
 
             .header-content {
@@ -379,8 +497,16 @@
                     </div>
                 </div>
 
+                <!-- Mode indicator -->
+                <div class="mode-indicator" id="mode-indicator" style="display: none;">
+                    🧪 DRY RUN MODE ACTIVE - No changes will be made to calendars
+                </div>
+
                 <!-- Stable messages area -->
                 <div class="messages-area" id="messages-area"></div>
+
+                <!-- Results display area -->
+                <div class="results-area" id="results-area"></div>
 
                 <!-- Simple action buttons -->
                 <div class="actions-section">
@@ -389,12 +515,12 @@
                         <span id="sync-label">Sync Now</span>
                     </button>
                     
-                    <button class="action-btn secondary" onclick="runDiagnostics()" id="diagnostics-btn">
-                        🔍 Run Diagnostics
+                    <button class="action-btn secondary" onclick="showSystemInfo()" id="info-btn">
+                        📊 System Info
                     </button>
                     
-                    <button class="action-btn secondary" onclick="refreshStatus()">
-                        📊 Refresh Status
+                    <button class="action-btn secondary" onclick="validateSync()" id="validate-btn">
+                        ✅ Validate Sync
                     </button>
                     
                     <a href="/logout" class="action-btn warning">
@@ -405,17 +531,71 @@
                 <!-- Collapsible details -->
                 <div class="details-section">
                     <button class="details-toggle" onclick="toggleDetails()">
-                        ▶ Show Advanced Options & Troubleshooting
+                        ▶ Show Advanced Tools & Options
                     </button>
                     <div class="details-content" id="details-content">
-                        <h4>🔧 Advanced Tools</h4>
-                        <p><strong>Dry Run Mode:</strong> Test sync without making changes</p>
-                        <p><strong>Duplicate Cleanup:</strong> Remove duplicate events from public calendar</p>
-                        <p><strong>Debug Tools:</strong> Investigate calendar issues and permissions</p>
                         
-                        <div style="margin-top: 1rem; padding: 1rem; background: #fff3cd; border-radius: 4px;">
-                            <strong>⚠️ Troubleshooting:</strong> If sync is failing, try signing out and back in to refresh authentication.
+                        <!-- Dry Run Mode Tool -->
+                        <div class="tool-section">
+                            <div class="tool-header">
+                                <span class="tool-title">🧪 Dry Run Mode</span>
+                            </div>
+                            <div class="tool-description">
+                                Test sync operations without making any actual changes to your calendars. Perfect for checking what would happen before running a real sync.
+                            </div>
+                            <div class="tool-actions">
+                                <button class="action-btn small secondary" onclick="toggleDryRun()" id="dry-run-btn">
+                                    Enable Dry Run
+                                </button>
+                                <span id="dry-run-status">Currently: Live Mode</span>
+                            </div>
                         </div>
+
+                        <!-- Calendar Diagnostics Tool -->
+                        <div class="tool-section">
+                            <div class="tool-header">
+                                <span class="tool-title">🔍 Calendar Diagnostics</span>
+                            </div>
+                            <div class="tool-description">
+                                Check calendar access, count events in each calendar, and verify system health. Results show below.
+                            </div>
+                            <div class="tool-actions">
+                                <button class="action-btn small secondary" onclick="runDiagnostics()" id="diagnostics-btn">
+                                    Run Full Diagnostics
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Manual Validation Tool -->
+                        <div class="tool-section">
+                            <div class="tool-header">
+                                <span class="tool-title">✅ Sync Validation</span>
+                            </div>
+                            <div class="tool-description">
+                                Manually check if the calendars are properly synchronized. Validates event counts, checks for duplicates, and ensures no private events leaked.
+                            </div>
+                            <div class="tool-actions">
+                                <button class="action-btn small secondary" onclick="validateSync()" id="validate-sync-btn">
+                                    Check Sync Status
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Emergency Options -->
+                        <div class="tool-section">
+                            <div class="tool-header">
+                                <span class="tool-title">⚠️ Troubleshooting</span>
+                            </div>
+                            <div class="tool-description">
+                                If sync is failing repeatedly, try signing out and back in to refresh authentication tokens. This solves most authentication-related issues.
+                            </div>
+                            <div class="tool-actions">
+                                <a href="/logout" class="action-btn small warning">
+                                    🔄 Reset Authentication
+                                </a>
+                            </div>
+                        </div>
+                        
                     </div>
                 </div>
             </div>
@@ -485,6 +665,53 @@
             }
         }
 
+        function showResults(title, data) {
+            const resultsArea = document.getElementById('results-area');
+            resultsArea.innerHTML = '';
+            
+            const card = document.createElement('div');
+            card.className = 'results-card';
+            
+            const header = document.createElement('h4');
+            header.textContent = title;
+            card.appendChild(header);
+            
+            if (data.grid) {
+                const grid = document.createElement('div');
+                grid.className = 'results-grid';
+                
+                data.grid.forEach(item => {
+                    const resultItem = document.createElement('div');
+                    resultItem.className = 'result-item';
+                    
+                    const number = document.createElement('div');
+                    number.className = 'result-number';
+                    number.textContent = item.value;
+                    
+                    const label = document.createElement('div');
+                    label.className = 'result-label';
+                    label.textContent = item.label;
+                    
+                    resultItem.appendChild(number);
+                    resultItem.appendChild(label);
+                    grid.appendChild(resultItem);
+                });
+                
+                card.appendChild(grid);
+            }
+            
+            if (data.details) {
+                const details = document.createElement('div');
+                details.innerHTML = data.details;
+                card.appendChild(details);
+            }
+            
+            resultsArea.appendChild(card);
+            
+            // Scroll to results
+            card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
         function setButtonState(buttonId, loading, label = '') {
             const btn = document.getElementById(buttonId);
             if (!btn) return;
@@ -507,7 +734,7 @@
                 if (loading) {
                     const originalContent = btn.innerHTML;
                     btn.dataset.originalContent = originalContent;
-                    btn.innerHTML = '<div class="spinner"></div> Processing...';
+                    btn.innerHTML = '<div class="spinner"></div> Working...';
                 } else if (btn.dataset.originalContent) {
                     btn.innerHTML = btn.dataset.originalContent;
                 }
@@ -587,6 +814,21 @@
                 lastSyncElement.textContent = 'Never';
             }
 
+            // Update dry run mode indicator
+            const modeIndicator = document.getElementById('mode-indicator');
+            const dryRunBtn = document.getElementById('dry-run-btn');
+            const dryRunStatus = document.getElementById('dry-run-status');
+            
+            if (status.dry_run_mode) {
+                modeIndicator.style.display = 'block';
+                if (dryRunBtn) dryRunBtn.textContent = 'Disable Dry Run';
+                if (dryRunStatus) dryRunStatus.textContent = 'Currently: Dry Run Mode';
+            } else {
+                modeIndicator.style.display = 'none';
+                if (dryRunBtn) dryRunBtn.textContent = 'Enable Dry Run';
+                if (dryRunStatus) dryRunStatus.textContent = 'Currently: Live Mode';
+            }
+
             // Handle authentication errors
             if (!status.authenticated) {
                 showMessage('⚠️ Authentication lost. Please sign in again.', 'warning', 0);
@@ -648,6 +890,16 @@
                                 if (status.last_sync_result && status.last_sync_result.success) {
                                     const msg = `✅ Sync completed! Added: ${status.last_sync_result.added || 0}, Updated: ${status.last_sync_result.updated || 0}, Deleted: ${status.last_sync_result.deleted || 0}`;
                                     showMessage(msg, 'success');
+                                    
+                                    // Show results
+                                    showResults('📊 Sync Results', {
+                                        grid: [
+                                            { value: status.last_sync_result.added || 0, label: 'Events Added' },
+                                            { value: status.last_sync_result.updated || 0, label: 'Events Updated' },
+                                            { value: status.last_sync_result.deleted || 0, label: 'Events Deleted' },
+                                            { value: (status.last_sync_result.duration || 0).toFixed(1) + 's', label: 'Duration' }
+                                        ]
+                                    });
                                 } else if (status.last_sync_result) {
                                     showMessage('⚠️ Sync completed with issues. Check logs for details.', 'warning');
                                 }
@@ -674,16 +926,60 @@
             }
         }
 
+        async function showSystemInfo() {
+            if (isOperationInProgress) return;
+            
+            isOperationInProgress = true;
+            setButtonState('info-btn', true);
+            showMessage('📊 Getting system information...', 'info', 0);
+            
+            try {
+                const response = await fetch('/status', {
+                    credentials: 'same-origin'
+                });
+                
+                if (handleAuthError(response, 'system info')) {
+                    setButtonState('info-btn', false);
+                    isOperationInProgress = false;
+                    return;
+                }
+                
+                const status = await response.json();
+                
+                showResults('📊 System Information', {
+                    grid: [
+                        { value: status.authenticated ? 'Yes' : 'No', label: 'Connected' },
+                        { value: status.scheduler_running ? 'Active' : 'Stopped', label: 'Auto-sync' },
+                        { value: status.rate_limit_remaining || 0, label: 'Syncs Remaining' },
+                        { value: status.total_syncs || 0, label: 'Total Syncs' }
+                    ],
+                    details: `
+                        <p><strong>Version:</strong> ${status.version || 'Unknown'}</p>
+                        <p><strong>Environment:</strong> ${status.environment || 'Unknown'}</p>
+                        <p><strong>Circuit Breaker:</strong> ${status.circuit_breaker_state || 'Unknown'}</p>
+                        <p><strong>Protection Mode:</strong> ${status.master_calendar_protection ? 'Enabled' : 'Disabled'}</p>
+                    `
+                });
+                
+                showMessage('✅ System information loaded', 'success', 3000);
+                
+            } catch (error) {
+                showMessage('❌ Failed to get system info: ' + error.message, 'error');
+            } finally {
+                setButtonState('info-btn', false);
+                isOperationInProgress = false;
+            }
+        }
+
         async function runDiagnostics() {
             if (isOperationInProgress) return;
             
             isOperationInProgress = true;
             setButtonState('diagnostics-btn', true);
-            showMessage('🔍 Running system diagnostics...', 'info', 0);
+            showMessage('🔍 Running comprehensive diagnostics...', 'info', 0);
             
             try {
-                const response = await fetch('/diagnostics', { 
-                    method: 'POST',
+                const response = await fetch('/health/detailed', {
                     credentials: 'same-origin'
                 });
                 
@@ -693,36 +989,117 @@
                     return;
                 }
                 
-                const result = await response.json();
+                const health = await response.json();
                 
-                if (result.success) {
-                    showMessage('✅ Diagnostics completed. Check results below.', 'success');
+                const checks = health.checks || {};
+                const checkResults = Object.entries(checks).map(([key, value]) => ({
+                    value: value ? '✅' : '❌',
+                    label: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+                }));
+                
+                showResults('🔍 System Diagnostics', {
+                    grid: checkResults,
+                    details: `
+                        <p><strong>Overall Health:</strong> ${health.status === 'healthy' ? '✅ Healthy' : '❌ Issues Detected'}</p>
+                        <p><strong>Last Check:</strong> ${new Date().toLocaleString()}</p>
+                    `
+                });
+                
+                if (health.status === 'healthy') {
+                    showMessage('✅ All diagnostics passed! System is healthy.', 'success');
                 } else {
-                    showMessage('❌ Diagnostics failed: ' + result.message, 'error');
+                    showMessage('⚠️ Some diagnostic checks failed. Review results above.', 'warning');
                 }
+                
             } catch (error) {
-                showMessage('❌ Network error: ' + error.message, 'error');
+                showMessage('❌ Diagnostics failed: ' + error.message, 'error');
             } finally {
                 setButtonState('diagnostics-btn', false);
                 isOperationInProgress = false;
             }
         }
 
-        async function refreshStatus() {
+        async function validateSync() {
+            if (isOperationInProgress) return;
+            
+            isOperationInProgress = true;
+            setButtonState('validate-btn', true);
+            showMessage('✅ Validating calendar synchronization...', 'info', 0);
+            
             try {
-                const response = await fetch('/status', {
+                const response = await fetch('/validate-sync', {
+                    method: 'POST',
                     credentials: 'same-origin'
                 });
                 
-                if (handleAuthError(response, 'status refresh')) {
+                if (handleAuthError(response, 'validation')) {
+                    setButtonState('validate-btn', false);
+                    isOperationInProgress = false;
                     return;
                 }
                 
-                const status = await response.json();
-                updateStatusDots(status);
-                showMessage('📊 Status refreshed', 'success', 2000);
+                const result = await response.json();
+                
+                const validationGrid = [
+                    { value: result.source_count || 0, label: 'Source Events' },
+                    { value: result.target_count || 0, label: 'Public Events' },
+                    { value: result.is_valid ? '✅' : '❌', label: 'Sync Status' }
+                ];
+                
+                if (result.validations) {
+                    const passedChecks = Object.values(result.validations).filter(v => v).length;
+                    const totalChecks = Object.keys(result.validations).length;
+                    validationGrid.push({ value: `${passedChecks}/${totalChecks}`, label: 'Checks Passed' });
+                }
+                
+                showResults('✅ Sync Validation Results', {
+                    grid: validationGrid,
+                    details: result.validations ? 
+                        Object.entries(result.validations).map(([check, passed]) => 
+                            `<p><strong>${check.replace(/_/g, ' ')}:</strong> ${passed ? '✅ Pass' : '❌ Fail'}</p>`
+                        ).join('') : ''
+                });
+                
+                if (result.is_valid) {
+                    showMessage('✅ Calendars are properly synchronized!', 'success');
+                } else {
+                    showMessage('⚠️ Sync validation found issues. Check results above.', 'warning');
+                }
+                
             } catch (error) {
-                showMessage('❌ Failed to refresh status', 'error');
+                showMessage('❌ Validation failed: ' + error.message, 'error');
+            } finally {
+                setButtonState('validate-btn', false);
+                isOperationInProgress = false;
+            }
+        }
+
+        async function toggleDryRun() {
+            if (isOperationInProgress) return;
+            
+            try {
+                const statusResponse = await fetch('/status', { credentials: 'same-origin' });
+                const status = await statusResponse.json();
+                
+                const endpoint = status.dry_run_mode ? '/disable-dry-run' : '/enable-dry-run';
+                const response = await fetch(endpoint, { credentials: 'same-origin' });
+                
+                if (handleAuthError(response, 'dry run toggle')) {
+                    return;
+                }
+                
+                const result = await response.json();
+                showMessage(result.message, 'success', 3000);
+                
+                // Refresh status to update UI
+                setTimeout(() => {
+                    fetch('/status', { credentials: 'same-origin' })
+                        .then(r => r.json())
+                        .then(updateStatusDots);
+                }, 500);
+                
+            } catch (error) {
+                showMessage('❌ Failed to toggle dry run mode: ' + error.message, 'error');
             }
         }
 
@@ -732,22 +1109,28 @@
             
             if (content.classList.contains('show')) {
                 content.classList.remove('show');
-                toggle.textContent = '▶ Show Advanced Options & Troubleshooting';
+                toggle.textContent = '▶ Show Advanced Tools & Options';
             } else {
                 content.classList.add('show');
-                toggle.textContent = '▼ Hide Advanced Options & Troubleshooting';
+                toggle.textContent = '▼ Hide Advanced Tools & Options';
             }
         }
 
         // Initialize on page load
         window.addEventListener('load', () => {
-            refreshStatus();
+            fetch('/status', { credentials: 'same-origin' })
+                .then(response => response.json())
+                .then(updateStatusDots)
+                .catch(error => console.error('Initial status load failed:', error));
             
-            // Start periodic auth check
+            // Start periodic status check
             authCheckInterval = setInterval(() => {
                 // Only refresh if no operation in progress
                 if (!isOperationInProgress) {
-                    refreshStatus();
+                    fetch('/status', { credentials: 'same-origin' })
+                        .then(response => response.json())
+                        .then(updateStatusDots)
+                        .catch(error => console.error('Status refresh failed:', error));
                 }
             }, 60000); // Every 60 seconds
         });
