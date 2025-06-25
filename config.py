@@ -6,7 +6,7 @@ import os
 # Shared Mailbox Configuration
 SHARED_MAILBOX = "calendar@stedward.org"
 SOURCE_CALENDAR = "Calendar"
-TARGET_CALENDAR = "St. Edward Public Calendar"
+TARGET_CALENDAR = "St. Edward Public Calendar"  # Fixed name to match actual calendar
 
 # Azure AD Configuration
 CLIENT_ID = "e139467d-fdeb-40bb-be62-718b007c8e0a"
