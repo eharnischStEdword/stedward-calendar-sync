@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-St. Edward Calendar Sync - Main Application
-Clean, modular architecture version
+St. Edward Calendar Sync - Main Application with Enhancements
 """
 import os
 import logging
 import secrets
 import threading
+import signal
+import sys
+import time
+import requests
+from datetime import datetime
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
 
 import config
@@ -14,6 +18,7 @@ from auth.microsoft_auth import MicrosoftAuth
 from sync.engine import SyncEngine
 from sync.scheduler import SyncScheduler
 from utils.version import get_version_info
+from utils.audit import AuditLogger
 
 # Configure logging
 logging.basicConfig(
@@ -30,6 +35,7 @@ app.secret_key = config.SECRET_KEY or secrets.token_hex(32)
 auth_manager = MicrosoftAuth()
 sync_engine = SyncEngine(auth_manager)
 scheduler = SyncScheduler(sync_engine)
+audit_logger = AuditLogger()
 
 # Get version info
 APP_VERSION_INFO = get_version_info()
@@ -40,6 +46,26 @@ logger.info(f"🚀 {APP_VERSION_INFO['full_version']}")
 logger.info(f"📦 Platform: {APP_VERSION_INFO['deployment_platform']}")
 logger.info(f"🌍 Environment: {APP_VERSION_INFO['environment']}")
 logger.info("=" * 60)
+
+
+def signal_handler(sig, frame):
+    """Handle graceful shutdown"""
+    logger.info('Graceful shutdown initiated...')
+    scheduler.stop()
+    
+    # Wait for any in-progress syncs
+    timeout = 30
+    start = time.time()
+    while sync_engine.sync_in_progress and time.time() - start < timeout:
+        time.sleep(1)
+    
+    logger.info('Shutdown complete')
+    sys.exit(0)
+
+
+# Register signal handlers for graceful shutdown
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 
 def requires_auth(f):
@@ -68,6 +94,47 @@ def make_json_serializable(obj):
         return obj.isoformat()
     else:
         return str(obj)
+
+
+# ==================== HEALTH CHECK HELPERS ====================
+
+def check_microsoft_api():
+    """Check if Microsoft API is accessible"""
+    try:
+        headers = auth_manager.get_headers()
+        if not headers:
+            return False
+        response = requests.get(
+            'https://graph.microsoft.com/v1.0/me',
+            headers=headers,
+            timeout=5
+        )
+        return response.status_code == 200
+    except:
+        return False
+
+
+def check_calendar_access():
+    """Check if calendars are accessible"""
+    try:
+        return sync_engine.reader.get_calendars() is not None
+    except:
+        return False
+
+
+def get_last_sync_health():
+    """Check if last sync was recent and successful"""
+    status = sync_engine.get_status()
+    if not status.get('last_sync_time'):
+        return False
+    
+    last_sync = status['last_sync_time']
+    if isinstance(last_sync, str):
+        last_sync = datetime.fromisoformat(last_sync.replace('Z', '+00:00'))
+    
+    # Check if last sync was within 2 hours
+    time_since_sync = datetime.now() - last_sync
+    return time_since_sync.total_seconds() < 7200  # 2 hours
 
 
 # ==================== ROUTES ====================
@@ -130,14 +197,26 @@ def auth_callback():
     # Verify state
     if state != session.get('oauth_state'):
         logger.warning("Invalid OAuth state - possible CSRF attempt")
+        audit_logger.log_sync_operation('auth_callback', 'unknown', {
+            'error': 'Invalid OAuth state',
+            'ip': request.remote_addr
+        })
         return "Invalid state parameter", 400
     
     if auth_code and auth_manager.exchange_code_for_token(auth_code):
         session.pop('oauth_state', None)
         # Start scheduler after successful auth
         scheduler.start()
+        
+        audit_logger.log_sync_operation('auth_success', 'user', {
+            'ip': request.remote_addr
+        })
+        
         return redirect(url_for('index'))
     else:
+        audit_logger.log_sync_operation('auth_failed', 'user', {
+            'ip': request.remote_addr
+        })
         return "Authentication failed", 400
 
 
@@ -145,9 +224,20 @@ def auth_callback():
 @requires_auth
 def manual_sync():
     """Trigger manual sync"""
+    audit_logger.log_sync_operation('manual_sync_triggered', 'user', {
+        'ip': request.remote_addr
+    })
+    
     def sync_thread():
         result = sync_engine.sync_calendars()
-        # Store result in engine's state (it's already done internally)
+        audit_logger.log_sync_operation('manual_sync_completed', 'user', {
+            'result': result.get('success', False),
+            'operations': {
+                'added': result.get('added', 0),
+                'updated': result.get('updated', 0),
+                'deleted': result.get('deleted', 0)
+            }
+        })
     
     # Run sync in background
     thread = threading.Thread(target=sync_thread)
@@ -190,7 +280,7 @@ def status():
 
 @app.route('/health')
 def health_check():
-    """Health check endpoint"""
+    """Basic health check endpoint"""
     return jsonify({
         "status": "healthy",
         "version": APP_VERSION_INFO["version_string"],
@@ -199,9 +289,50 @@ def health_check():
     })
 
 
+@app.route('/health/detailed')
+@requires_auth
+def detailed_health():
+    """Comprehensive health check"""
+    checks = {
+        'authentication': auth_manager.is_authenticated(),
+        'microsoft_api': check_microsoft_api(),
+        'calendar_access': check_calendar_access(),
+        'scheduler': scheduler.is_running(),
+        'last_sync_healthy': get_last_sync_health(),
+        'circuit_breaker': sync_engine.circuit_breaker.state == 'closed'
+    }
+    
+    overall_health = all(checks.values())
+    status_code = 200 if overall_health else 503
+    
+    # Add more details
+    details = {
+        'last_sync_time': None,
+        'sync_count_24h': 0,
+        'error_count_24h': 0,
+        'average_sync_duration': 0
+    }
+    
+    # Get metrics summary
+    metrics_summary = sync_engine.metrics.get_metrics_summary()
+    if metrics_summary:
+        details.update(metrics_summary)
+    
+    return jsonify({
+        'status': 'healthy' if overall_health else 'unhealthy',
+        'checks': checks,
+        'details': details,
+        'timestamp': datetime.now().isoformat()
+    }), status_code
+
+
 @app.route('/logout')
 def logout():
     """Logout and clear tokens"""
+    audit_logger.log_sync_operation('logout', 'user', {
+        'ip': request.remote_addr
+    })
+    
     auth_manager.clear_tokens()
     scheduler.stop()
     session.clear()
@@ -213,6 +344,10 @@ def logout():
 @requires_auth
 def run_diagnostics():
     """Run diagnostics"""
+    audit_logger.log_sync_operation('diagnostics_run', 'user', {
+        'ip': request.remote_addr
+    })
+    
     # Run in thread for non-blocking
     def diag_thread():
         from cal_ops.reader import CalendarReader
@@ -236,11 +371,31 @@ def version():
     return jsonify(APP_VERSION_INFO)
 
 
+@app.route('/metrics')
+@requires_auth
+def get_metrics():
+    """Get sync metrics"""
+    return jsonify(sync_engine.metrics.get_metrics_summary())
+
+
+@app.route('/history')
+@requires_auth
+def get_sync_history():
+    """Get sync history"""
+    return jsonify({
+        'history': [make_json_serializable(entry) for entry in sync_engine.history.history],
+        'statistics': sync_engine.history.get_statistics()
+    })
+
+
 @app.route('/enable-dry-run')
 @requires_auth
 def enable_dry_run():
     """Enable dry run mode"""
     config.DRY_RUN_MODE = True
+    audit_logger.log_sync_operation('dry_run_enabled', 'user', {
+        'ip': request.remote_addr
+    })
     return jsonify({"message": "DRY RUN mode enabled", "dry_run_mode": True})
 
 
@@ -249,7 +404,85 @@ def enable_dry_run():
 def disable_dry_run():
     """Disable dry run mode"""
     config.DRY_RUN_MODE = False
+    audit_logger.log_sync_operation('dry_run_disabled', 'user', {
+        'ip': request.remote_addr
+    })
     return jsonify({"message": "DRY RUN mode disabled", "dry_run_mode": False})
+
+
+@app.route('/debug/events/<calendar_name>')
+@requires_auth
+def debug_events(calendar_name):
+    """Debug endpoint to inspect calendar events"""
+    if config.APP_VERSION_INFO.get('environment') != 'development':
+        return jsonify({"error": "Debug endpoint only available in development"}), 403
+    
+    calendar_id = sync_engine.reader.find_calendar_id(calendar_name)
+    if not calendar_id:
+        return jsonify({"error": f"Calendar '{calendar_name}' not found"}), 404
+    
+    events = sync_engine.reader.get_calendar_events(calendar_id)
+    if not events:
+        return jsonify({"error": "Failed to retrieve events"}), 500
+    
+    # Sanitize events for display
+    sanitized_events = []
+    for event in events[:10]:  # First 10 only
+        sanitized_events.append({
+            'id': event.get('id', '')[:8] + '...',
+            'subject': event.get('subject'),
+            'start': event.get('start'),
+            'categories': event.get('categories'),
+            'type': event.get('type')
+        })
+    
+    return jsonify({
+        'calendar': calendar_name,
+        'calendar_id': calendar_id,
+        'event_count': len(events),
+        'sample_events': sanitized_events
+    })
+
+
+@app.route('/validate-sync', methods=['POST'])
+@requires_auth
+def validate_sync():
+    """Manually validate sync status"""
+    source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+    target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+    
+    if not source_id or not target_id:
+        return jsonify({"error": "Cannot find calendars"}), 400
+    
+    source_events = sync_engine.reader.get_public_events(source_id)
+    target_events = sync_engine.reader.get_calendar_events(target_id)
+    
+    if source_events is None or target_events is None:
+        return jsonify({"error": "Failed to retrieve events"}), 500
+    
+    is_valid, validations = sync_engine.validator.validate_sync_result(
+        source_events, target_events
+    )
+    
+    return jsonify({
+        'is_valid': is_valid,
+        'validations': validations,
+        'source_count': len(source_events),
+        'target_count': len(target_events)
+    })
+
+
+# ==================== ERROR HANDLERS ====================
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({"error": "Not found"}), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal error: {error}")
+    return jsonify({"error": "Internal server error"}), 500
 
 
 # ==================== MAIN ====================
@@ -263,7 +496,9 @@ if __name__ == '__main__':
     # Try to restore auth on startup
     if auth_manager.is_authenticated():
         scheduler.start()
+        logger.info("Authentication restored, scheduler started")
     
     # Run Flask app
     port = config.PORT
+    logger.info(f"Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port)
