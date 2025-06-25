@@ -7,8 +7,8 @@ from typing import Dict, List, Tuple
 from threading import Lock
 
 import config
-from calendar.reader import CalendarReader
-from calendar.writer import CalendarWriter
+from cal_ops.reader import CalendarReader
+from cal_ops.writer import CalendarWriter
 
 logger = logging.getLogger(__name__)
 
