@@ -424,12 +424,42 @@
 
     <footer class="footer">
         <p>St. Edward Church & School • Calendar Management System</p>
-        <p style="margin-top: 0.5rem; opacity: 0.7;">Automated hourly synchronization</p>
+        <p style="margin-top: 0.5rem; opacity: 0.7;">Automated synchronization every 15 minutes</p>
     </footer>
 
     <script>
         let isOperationInProgress = false;
         let authCheckInterval = null;
+
+        // Add this function to handle authentication errors better
+        function handleAuthError(response, operation = 'operation') {
+            if (response.status === 401) {
+                try {
+                    response.json().then(result => {
+                        if (result.redirect === '/logout') {
+                            showMessage('⚠️ Session expired. Redirecting to login...', 'warning', 3000);
+                            setTimeout(() => {
+                                window.location.href = '/logout';
+                            }, 3000);
+                        } else {
+                            showMessage('❌ Authentication error during ' + operation, 'error');
+                        }
+                    }).catch(() => {
+                        showMessage('❌ Authentication error during ' + operation, 'error');
+                        setTimeout(() => {
+                            window.location.href = '/logout';
+                        }, 2000);
+                    });
+                } catch (e) {
+                    showMessage('❌ Authentication error during ' + operation, 'error');
+                    setTimeout(() => {
+                        window.location.href = '/logout';
+                    }, 2000);
+                }
+                return true;
+            }
+            return false;
+        }
 
         function showMessage(text, type = 'info', duration = 5000) {
             const messagesArea = document.getElementById('messages-area');
@@ -550,9 +580,10 @@
                     credentials: 'same-origin'
                 });
                 
-                if (response.status === 401) {
-                    showMessage('❌ Authentication expired. Redirecting to login...', 'error');
-                    setTimeout(() => window.location.href = '/logout', 2000);
+                // Handle authentication errors
+                if (handleAuthError(response, 'sync')) {
+                    setButtonState('sync-btn', false);
+                    isOperationInProgress = false;
                     return;
                 }
                 
@@ -570,8 +601,16 @@
                             const statusResponse = await fetch('/status', {
                                 credentials: 'same-origin'
                             });
-                            const status = await statusResponse.json();
                             
+                            // Handle auth errors in status check too
+                            if (handleAuthError(statusResponse, 'status check')) {
+                                clearInterval(monitor);
+                                setButtonState('sync-btn', false);
+                                isOperationInProgress = false;
+                                return;
+                            }
+                            
+                            const status = await statusResponse.json();
                             updateStatusDots(status);
                             
                             if (!status.sync_in_progress || checks >= 30) {
@@ -589,6 +628,7 @@
                             }
                         } catch (error) {
                             console.error('Status check failed:', error);
+                            // Don't break the monitoring for network errors
                         }
                     }, 3000);
                     
@@ -618,9 +658,9 @@
                     credentials: 'same-origin'
                 });
                 
-                if (response.status === 401) {
-                    showMessage('❌ Authentication expired. Redirecting to login...', 'error');
-                    setTimeout(() => window.location.href = '/logout', 2000);
+                if (handleAuthError(response, 'diagnostics')) {
+                    setButtonState('diagnostics-btn', false);
+                    isOperationInProgress = false;
                     return;
                 }
                 
@@ -645,9 +685,7 @@
                     credentials: 'same-origin'
                 });
                 
-                if (response.status === 401) {
-                    showMessage('❌ Authentication expired. Redirecting to login...', 'error');
-                    setTimeout(() => window.location.href = '/logout', 2000);
+                if (handleAuthError(response, 'status refresh')) {
                     return;
                 }
                 
