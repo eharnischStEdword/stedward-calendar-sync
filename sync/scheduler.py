@@ -1,164 +1,66 @@
 """
-Calendar Writer - Handles all write operations to Microsoft Graph
+Background Scheduler for automatic sync
 """
 import logging
-import requests
-from typing import Dict, Optional
-
-import config
+import threading
+import time
+import schedule
+from threading import Lock
 
 logger = logging.getLogger(__name__)
 
 
-class CalendarWriter:
-    """Handles writing calendar data to Microsoft Graph"""
+class SyncScheduler:
+    """Manages background sync scheduling"""
     
-    def __init__(self, auth_manager):
-        self.auth = auth_manager
+    def __init__(self, sync_engine):
+        self.sync_engine = sync_engine
+        self.scheduler_lock = Lock()
+        self.scheduler_running = False
+        self.scheduler_thread = None
     
-    def create_event(self, calendar_id: str, event_data: Dict) -> bool:
-        """Create a new event in the specified calendar"""
-        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
-            logger.error("PROTECTION: Attempted to write to source calendar!")
-            return False
-        
-        headers = self.auth.get_headers()
-        if not headers:
-            return False
-        
-        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events"
-        
-        # Prepare event data
-        create_data = self._prepare_event_data(event_data)
-        
-        try:
-            response = requests.post(url, headers=headers, json=create_data, timeout=30)
-            
-            if response.status_code in [200, 201]:
-                logger.info(f"✅ Created event: {event_data.get('subject')}")
-                return True
+    def start(self):
+        """Start the scheduler"""
+        with self.scheduler_lock:
+            if self.scheduler_thread is None or not self.scheduler_thread.is_alive():
+                logger.info("Starting scheduler thread...")
+                self.scheduler_running = True
+                self.scheduler_thread = threading.Thread(target=self._run_scheduler, daemon=True)
+                self.scheduler_thread.start()
             else:
-                logger.error(f"❌ Failed to create event: {response.status_code}")
-                return False
-        
-        except Exception as e:
-            logger.error(f"❌ Error creating event: {e}")
-            return False
+                logger.info("Scheduler already running")
     
-    def update_event(self, calendar_id: str, event_id: str, event_data: Dict) -> bool:
-        """Update an existing event"""
-        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
-            logger.error("PROTECTION: Attempted to update in source calendar!")
-            return False
+    def stop(self):
+        """Stop the scheduler"""
+        with self.scheduler_lock:
+            self.scheduler_running = False
         
-        headers = self.auth.get_headers()
-        if not headers:
-            return False
-        
-        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{event_id}"
-        
-        # Prepare update data
-        update_data = self._prepare_event_data(event_data)
-        
-        try:
-            response = requests.patch(url, headers=headers, json=update_data, timeout=30)
-            
-            if response.status_code == 200:
-                logger.info(f"✅ Updated event: {event_data.get('subject')}")
-                return True
-            else:
-                logger.error(f"❌ Failed to update event: {response.status_code}")
-                return False
-        
-        except Exception as e:
-            logger.error(f"❌ Error updating event: {e}")
-            return False
+        logger.info("Stopping scheduler...")
     
-    def delete_event(self, calendar_id: str, event_id: str, suppress_notifications: bool = True) -> bool:
-        """Delete an event from the calendar"""
-        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
-            logger.error("PROTECTION: Attempted to delete from source calendar!")
-            return False
-        
-        headers = self.auth.get_headers()
-        if not headers:
-            return False
-        
-        # Add header to suppress notifications if requested
-        if suppress_notifications:
-            headers['Prefer'] = 'outlook.timezone="UTC", outlook.send-notifications="false"'
-        
-        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{event_id}"
-        
-        try:
-            response = requests.delete(url, headers=headers, timeout=30)
-            
-            if response.status_code in [200, 204]:
-                logger.info(f"✅ Deleted event ID: {event_id[:8]}...")
-                return True
-            else:
-                logger.error(f"❌ Failed to delete event: {response.status_code}")
-                return False
-        
-        except Exception as e:
-            logger.error(f"❌ Error deleting event: {e}")
-            return False
+    def is_running(self):
+        """Check if scheduler is running"""
+        with self.scheduler_lock:
+            return self.scheduler_running and self.scheduler_thread and self.scheduler_thread.is_alive()
     
-    def _prepare_event_data(self, source_event: Dict) -> Dict:
-        """Prepare event data for creation/update"""
-        # Extract location for body content
-        source_location = source_event.get('location', {})
-        location_text = ""
+    def _run_scheduler(self):
+        """Run the scheduler loop"""
+        # Schedule sync to run every hour
+        schedule.every().hour.do(self._scheduled_sync)
         
-        if source_location:
-            if isinstance(source_location, dict):
-                location_text = source_location.get('displayName', '')
-            else:
-                location_text = str(source_location)
+        logger.info("Scheduler started - sync will run every hour")
         
-        # Create body content with location
-        body_content = ""
-        if location_text:
-            body_content = f"<p><strong>Location:</strong> {location_text}</p>"
+        while True:
+            with self.scheduler_lock:
+                if not self.scheduler_running:
+                    break
+            
+            schedule.run_pending()
+            time.sleep(60)  # Check every minute
         
-        # Build event data
-        event_data = {
-            'subject': source_event.get('subject'),
-            'start': source_event.get('start'),
-            'end': source_event.get('end'),
-            'categories': source_event.get('categories'),
-            'body': {'contentType': 'html', 'content': body_content},
-            'location': {},  # Clear location for privacy
-            'isAllDay': source_event.get('isAllDay', False),
-            'showAs': 'busy',  # Always busy for public calendar
-            'isReminderOn': False  # No reminders on public calendar
-        }
-        
-        # Add recurrence for series masters
-        if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
-            event_data['recurrence'] = source_event.get('recurrence')
-        
-        return event_data
+        logger.info("Scheduler stopped")
     
-    def batch_delete_events(self, calendar_id: str, event_ids: list) -> Dict:
-        """Delete multiple events and return results"""
-        results = {
-            'successful': 0,
-            'failed': 0,
-            'details': []
-        }
-        
-        for event_id in event_ids:
-            success = self.delete_event(calendar_id, event_id)
-            
-            if success:
-                results['successful'] += 1
-            else:
-                results['failed'] += 1
-            
-            results['details'].append({
-                'event_id': event_id[:8] + '...',
-                'success': success
-            })
-        
-        return results
+    def _scheduled_sync(self):
+        """Function called by scheduler"""
+        logger.info("Running scheduled sync")
+        result = self.sync_engine.sync_calendars()
+        logger.info(f"Scheduled sync completed: {result}")
