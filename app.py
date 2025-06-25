@@ -471,6 +471,72 @@ def validate_sync():
         'target_count': len(target_events)
     })
 
+# Add this route to your app.py file
+
+@app.route('/debug-validation', methods=['GET'])
+@requires_auth
+def debug_validation():
+    """Debug validation issues"""
+    source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+    target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+    
+    if not source_id or not target_id:
+        return jsonify({"error": "Cannot find calendars"}), 400
+    
+    source_events = sync_engine.reader.get_public_events(source_id)
+    target_events = sync_engine.reader.get_calendar_events(target_id)
+    
+    if source_events is None or target_events is None:
+        return jsonify({"error": "Failed to retrieve events"}), 500
+    
+    # Find events with "Adoration & Confession" in the name
+    adoration_events = []
+    for event in target_events:
+        if "adoration" in event.get('subject', '').lower():
+            adoration_events.append({
+                'subject': event.get('subject'),
+                'type': event.get('type'),
+                'start': event.get('start'),
+                'end': event.get('end'),
+                'id': event.get('id')[:8] + '...',
+                'seriesMasterId': event.get('seriesMasterId', 'N/A')[:8] + '...' if event.get('seriesMasterId') else 'N/A',
+                'signature': sync_engine._create_event_signature(event),
+                'recurrence': 'Yes' if event.get('recurrence') else 'No'
+            })
+    
+    # Group by signature to find duplicates
+    signature_groups = {}
+    for event in target_events:
+        sig = sync_engine._create_event_signature(event)
+        if not sig.startswith('skip:'):
+            if sig not in signature_groups:
+                signature_groups[sig] = []
+            signature_groups[sig].append({
+                'subject': event.get('subject'),
+                'type': event.get('type'),
+                'start': event.get('start', {}).get('dateTime', 'N/A')
+            })
+    
+    # Find actual duplicates
+    duplicates = {}
+    for sig, events in signature_groups.items():
+        if len(events) > 1:
+            duplicates[sig] = events
+    
+    return jsonify({
+        'adoration_events': adoration_events,
+        'duplicate_signatures': duplicates,
+        'total_source_events': len(source_events),
+        'total_target_events': len(target_events),
+        'signature_count': len(signature_groups),
+        'target_event_types': {
+            'singleInstance': sum(1 for e in target_events if e.get('type') == 'singleInstance'),
+            'seriesMaster': sum(1 for e in target_events if e.get('type') == 'seriesMaster'),
+            'occurrence': sum(1 for e in target_events if e.get('type') == 'occurrence'),
+            'exception': sum(1 for e in target_events if e.get('type') == 'exception')
+        }
+    })
+
 
 # ==================== ERROR HANDLERS ====================
 
