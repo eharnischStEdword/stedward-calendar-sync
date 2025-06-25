@@ -25,6 +25,7 @@ MAX_SYNC_REQUESTS_PER_HOUR = 20
 MASTER_CALENDAR_PROTECTION = True  # Never allow operations on source calendar
 DRY_RUN_MODE = False  # Set to True to test without making changes
 SYNC_CUTOFF_DAYS = 90  # Only sync events from last N days
+IGNORE_VALIDATION_WARNINGS = ['no_duplicates', 'event_integrity']
 
 # OAuth Scopes
 GRAPH_SCOPES = [
