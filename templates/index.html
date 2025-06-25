@@ -515,6 +515,8 @@
         }
 
         function updateStatusDots(status) {
+            console.log('Status received:', status); // Debug log
+            
             // Update auth status
             const authDot = document.getElementById('auth-dot');
             const authText = document.getElementById('auth-text');
@@ -526,21 +528,30 @@
                 authText.textContent = 'Disconnected';
             }
 
-            // Update sync status
+            // Update sync status - FIXED LOGIC
             const syncDot = document.getElementById('sync-dot');
             const syncText = document.getElementById('sync-text');
+            
             if (status.sync_in_progress) {
+                // Currently syncing
                 syncDot.className = 'status-dot warning';
                 syncText.textContent = 'Syncing...';
             } else if (status.last_sync_result && status.last_sync_result.success) {
+                // Last sync was successful
                 syncDot.className = 'status-dot success';
                 syncText.textContent = 'Ready';
+            } else if (status.last_sync_result && status.last_sync_result.message === "Not synced yet") {
+                // Never synced (initial state)
+                syncDot.className = 'status-dot warning';
+                syncText.textContent = 'Never Synced';
             } else if (status.last_sync_result && !status.last_sync_result.success) {
+                // Last sync failed (but has tried before)
                 syncDot.className = 'status-dot error';
                 syncText.textContent = 'Error';
             } else {
+                // Unknown state
                 syncDot.className = 'status-dot warning';
-                syncText.textContent = 'Not synced';
+                syncText.textContent = 'Unknown';
             }
 
             // Update scheduler status
@@ -551,11 +562,29 @@
                 schedulerDot.className = 'status-dot warning';
             }
 
-            // Update last sync time
-            if (status.last_sync_time) {
-                const syncTime = new Date(status.last_sync_time);
-                document.getElementById('last-sync-time').textContent = 
-                    syncTime.toLocaleDateString() + ' at ' + syncTime.toLocaleTimeString();
+            // Update last sync time - IMPROVED
+            const lastSyncElement = document.getElementById('last-sync-time');
+            if (status.last_sync_time && status.last_sync_result && status.last_sync_result.success) {
+                try {
+                    const syncTime = new Date(status.last_sync_time);
+                    if (!isNaN(syncTime.getTime())) {
+                        const options = { 
+                            month: 'short', 
+                            day: 'numeric', 
+                            hour: 'numeric', 
+                            minute: '2-digit',
+                            hour12: true 
+                        };
+                        lastSyncElement.textContent = syncTime.toLocaleDateString('en-US', options);
+                    } else {
+                        lastSyncElement.textContent = 'Never';
+                    }
+                } catch (e) {
+                    console.error('Date parsing error:', e);
+                    lastSyncElement.textContent = 'Never';
+                }
+            } else {
+                lastSyncElement.textContent = 'Never';
             }
 
             // Handle authentication errors
