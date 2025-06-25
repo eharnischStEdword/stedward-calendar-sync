@@ -4,7 +4,7 @@ Calendar Reader - Handles all read operations from Microsoft Graph
 import logging
 import requests
 from typing import List, Dict, Optional
-
+from utils.retry import retry_with_backoff
 import config
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,7 @@ class CalendarReader:
     def __init__(self, auth_manager):
         self.auth = auth_manager
     
+    @retry_with_backoff(max_retries=3, base_delay=1)
     def get_calendars(self) -> Optional[List[Dict]]:
         """Get all calendars for the shared mailbox"""
         headers = self.auth.get_headers()
@@ -61,7 +62,8 @@ class CalendarReader:
         
         logger.warning(f"Calendar '{calendar_name}' not found")
         return None
-    
+
+    @retry_with_backoff(max_retries=3, base_delay=1)
     def get_calendar_events(self, calendar_id: str, select_fields: List[str] = None) -> Optional[List[Dict]]:
         """Get all events from a specific calendar"""
         headers = self.auth.get_headers()
