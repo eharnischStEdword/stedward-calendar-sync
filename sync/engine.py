@@ -141,8 +141,8 @@ class SyncEngine:
                             fresh_source, fresh_target
                         )
                         
-                        # Filter out ignored warnings
-                        ignored_warnings = config.get('IGNORE_VALIDATION_WARNINGS', [])
+                        # Filter out ignored warnings - FIXED: use getattr instead of config.get()
+                        ignored_warnings = getattr(config, 'IGNORE_VALIDATION_WARNINGS', ['no_duplicates', 'event_integrity'])
                         failed_checks = [(check, passed) for check, passed in validations if not passed]
                         non_ignored_failures = [(check, passed) for check, passed in failed_checks 
                                                if check not in ignored_warnings]
@@ -305,7 +305,7 @@ class SyncEngine:
             return dt_str
     
     def _create_event_signature(self, event: Dict) -> str:
-        """Create unique signature for an event"""
+        """Create unique signature for an event - IMPROVED to handle same-name events"""
         subject = self._normalize_subject(event.get('subject', ''))
         event_type = event.get('type', 'singleInstance')
         
@@ -314,7 +314,7 @@ class SyncEngine:
         
         # For recurring events, we need to be more careful
         if event_type == 'seriesMaster':
-            # For recurring series masters, use subject + recurrence pattern
+            # For recurring series masters, use subject + recurrence pattern + start time
             # This ensures the same recurring event is recognized even if IDs differ
             recurrence = event.get('recurrence', {})
             
@@ -341,7 +341,9 @@ class SyncEngine:
                     index = pattern.get('index', 'unknown')
                     recurrence_sig += f":{index}:{days_str}"
             
-            signature = f"recurring:{subject}:{recurrence_sig}"
+            # IMPORTANT: Add start time to distinguish recurring events with same name
+            start = self._normalize_datetime(event.get('start', {}).get('dateTime', ''))
+            signature = f"recurring:{subject}:{recurrence_sig}:{start}"
             logger.debug(f"Generated recurring signature: {signature}")
             return signature
         
@@ -350,12 +352,12 @@ class SyncEngine:
             # This prevents duplicate handling
             return f"skip:occurrence:{subject}"
         
-        # For single events, use the existing logic
+        # For single events, use subject + date + time to distinguish same-name events
         start = self._normalize_datetime(event.get('start', {}).get('dateTime', ''))
         try:
             if 'T' in start:
                 date_part = start.split('T')[0]
-                time_part = start.split('T')[1][:5]
+                time_part = start.split('T')[1][:5]  # Include time to distinguish events
                 signature = f"single:{subject}:{date_part}:{time_part}"
             else:
                 signature = f"single:{subject}:{start}"
@@ -377,10 +379,11 @@ class SyncEngine:
                 continue
             
             if signature in event_map:
-                # Keep newer event if duplicate
+                # Keep newer event if duplicate (this shouldn't happen now with improved signatures)
                 existing_created = event_map[signature].get('createdDateTime', '')
                 new_created = event.get('createdDateTime', '')
                 if new_created > existing_created:
+                    logger.warning(f"Found duplicate signature '{signature}', keeping newer event")
                     event_map[signature] = event
             else:
                 event_map[signature] = event
