@@ -131,26 +131,42 @@ class SyncEngine:
                 result = self._execute_sync_operations(target_id, to_add, to_update, to_delete)
                 
                 # Validate sync result if successful
-                if result.get('success'):
-                    logger.info("Validating sync results...")
-                    fresh_source = self.reader.get_public_events(source_id)
-                    fresh_target = self.reader.get_calendar_events(target_id)
-                    
-                    if fresh_source and fresh_target:
-                        is_valid, validations = self.validator.validate_sync_result(
-                            fresh_source, fresh_target
-                        )
-                        
-                        result['validation'] = {
-                            'is_valid': is_valid,
-                            'checks': validations
-                        }
-                        
-                        if not is_valid:
-                            logger.warning(f"Sync validation failed: {validations}")
-                            self.structured_logger.log_sync_event('sync_validation_failed', {
-                                'validations': validations
-                            })
+                if result.get('success') and not config.DRY_RUN_MODE:
+    logger.info("Validating sync results...")
+    fresh_source = self.reader.get_public_events(source_id)
+    fresh_target = self.reader.get_calendar_events(target_id)
+    
+    if fresh_source and fresh_target:
+        is_valid, validations = self.validator.validate_sync_result(
+            fresh_source, fresh_target
+        )
+        
+        # Filter out ignored warnings
+        ignored_warnings = config.get('IGNORE_VALIDATION_WARNINGS', [])
+        failed_checks = [(check, passed) for check, passed in validations if not passed]
+        non_ignored_failures = [(check, passed) for check, passed in failed_checks 
+                               if check not in ignored_warnings]
+        
+        # Consider valid if only ignored warnings failed
+        is_valid = len(non_ignored_failures) == 0
+        
+        result['validation'] = {
+            'is_valid': is_valid,
+            'checks': validations,
+            'ignored_warnings': ignored_warnings
+        }
+        
+        if not is_valid:
+            logger.warning(f"Sync validation failed: {non_ignored_failures}")
+            self.structured_logger.log_sync_event('sync_validation_failed', {
+                'validations': validations,
+                'non_ignored_failures': non_ignored_failures
+            })
+        elif failed_checks:
+            # Log ignored warnings at INFO level
+            ignored_checks = [(check, passed) for check, passed in failed_checks 
+                            if check in ignored_warnings]
+            logger.info(f"Sync validation passed (ignored warnings: {[check for check, _ in ignored_checks]})")
             
             # Calculate duration
             duration = (datetime.now() - start_time).total_seconds()
