@@ -44,10 +44,10 @@ class SyncScheduler:
     
     def _run_scheduler(self):
         """Run the scheduler loop"""
-        # Schedule sync to run every hour
-        schedule.every().hour.do(self._scheduled_sync)
+        # Schedule sync to run every 15 minutes to keep Render awake and ensure frequent syncing
+        schedule.every(15).minutes.do(self._scheduled_sync)
         
-        logger.info("Scheduler started - sync will run every hour")
+        logger.info("Scheduler started - sync will run every 15 minutes")
         
         while True:
             with self.scheduler_lock:
@@ -61,6 +61,6 @@ class SyncScheduler:
     
     def _scheduled_sync(self):
         """Function called by scheduler"""
-        logger.info("Running scheduled sync")
+        logger.info("Running scheduled sync (every 15 minutes)")
         result = self.sync_engine.sync_calendars()
         logger.info(f"Scheduled sync completed: {result}")
