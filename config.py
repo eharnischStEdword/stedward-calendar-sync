@@ -25,12 +25,14 @@ MAX_SYNC_REQUESTS_PER_HOUR = 20
 MASTER_CALENDAR_PROTECTION = True  # Never allow operations on source calendar
 DRY_RUN_MODE = False  # Set to True to test without making changes
 SYNC_CUTOFF_DAYS = 90  # Only sync events from last N days
+
+# Validation Settings - Ignore warnings for events with same names but different times
 IGNORE_VALIDATION_WARNINGS = ['no_duplicates', 'event_integrity']
 
 # OAuth Scopes
 GRAPH_SCOPES = [
     'https://graph.microsoft.com/Calendars.ReadWrite',
-    'https://graph.microsoft.com/User.Read',
+    'https://graph.Microsoft.com/User.Read',
     'https://graph.microsoft.com/Calendars.ReadWrite.Shared',
     'offline_access'
 ]
