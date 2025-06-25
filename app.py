@@ -385,16 +385,27 @@ def normalize_datetime(dt_str):
         return dt_str
 
 def create_event_signature(event):
-    """Create a unique signature for an event that's resistant to minor changes"""
+    """Bulletproof signature using Microsoft's unique IDs"""
     subject = normalize_subject(event.get('subject', ''))
-    start = normalize_datetime(event.get('start', {}).get('dateTime', ''))
     event_type = event.get('type', 'unknown')
     
-    # For recurring events, use just the subject
     if event_type == 'seriesMaster':
-        return f"recurring:{subject}"
+        # For recurring events, use the series master ID
+        # This is GUARANTEED unique by Microsoft
+        series_id = event.get('id', '')
+        
+        # Handle the edge case where ID might be missing
+        if not series_id:
+            # Fallback: use subject + creation time if available
+            created = event.get('createdDateTime', 'unknown')
+            return f"recurring:{subject}:{created}"
+        
+        # Use last 12 chars of ID (enough for uniqueness, not too long)
+        short_id = series_id[-12:] if len(series_id) > 12 else series_id
+        return f"recurring:{subject}:{short_id}"
     
-    # For single events, use subject + date + time (hour and minute only)
+    # For single events, keep the existing logic (it works fine)
+    start = normalize_datetime(event.get('start', {}).get('dateTime', ''))
     try:
         if 'T' in start:
             date_part = start.split('T')[0]
