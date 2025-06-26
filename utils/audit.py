@@ -8,6 +8,7 @@ from typing import Dict, Optional, Any
 import os
 import hashlib
 from enum import Enum
+from utils.timezone import get_central_time
 
 # Set up a separate audit logger
 audit_logger = logging.getLogger('audit')
@@ -179,7 +180,8 @@ class AuditLogger:
     ) -> Dict[str, Any]:
         """Create base audit log entry"""
         return {
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': get_central_time().isoformat(),
+            'timezone': 'America/Chicago',
             'event_type': event_type,
             'service': self.service_name,
             'deployment_id': self.deployment_id,
