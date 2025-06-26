@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import Dict, List, Optional
 import statistics
+from utils.timezone import get_central_time
 
 
 class MetricsCollector:
@@ -17,14 +18,14 @@ class MetricsCollector:
     def record_sync_duration(self, duration_seconds: float):
         """Record the duration of a sync operation"""
         self._add_metric('sync_duration', {
-            'timestamp': datetime.utcnow(),
+            'timestamp': get_central_time(),
             'duration': duration_seconds
         })
     
     def record_sync_result(self, added: int, updated: int, deleted: int, failed: int):
         """Record the results of a sync operation"""
         self._add_metric('sync_results', {
-            'timestamp': datetime.utcnow(),
+            'timestamp': get_central_time(),
             'added': added,
             'updated': updated,
             'deleted': deleted,
@@ -35,7 +36,7 @@ class MetricsCollector:
     def record_api_call(self, endpoint: str, duration_ms: float, status_code: int):
         """Record API call metrics"""
         self._add_metric('api_calls', {
-            'timestamp': datetime.utcnow(),
+            'timestamp': get_central_time(),
             'endpoint': endpoint,
             'duration_ms': duration_ms,
             'status_code': status_code,
@@ -45,7 +46,7 @@ class MetricsCollector:
     def record_error(self, error_type: str, error_message: str):
         """Record error occurrences"""
         self._add_metric('errors', {
-            'timestamp': datetime.utcnow(),
+            'timestamp': get_central_time(),
             'error_type': error_type,
             'error_message': error_message[:200]  # Truncate long messages
         })
@@ -53,7 +54,7 @@ class MetricsCollector:
     def record_calendar_stats(self, source_events: int, target_events: int, public_events: int):
         """Record calendar statistics"""
         self._add_metric('calendar_stats', {
-            'timestamp': datetime.utcnow(),
+            'timestamp': get_central_time(),
             'source_events': source_events,
             'target_events': target_events,
             'public_events': public_events
@@ -63,7 +64,7 @@ class MetricsCollector:
         """Get a summary of metrics for the specified time period"""
         self._cleanup_old_metrics()
         
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+        cutoff_time = get_central_time() - timedelta(hours=hours)
         summary = {
             'period_hours': hours,
             'sync_metrics': self._get_sync_metrics(cutoff_time),
@@ -79,7 +80,7 @@ class MetricsCollector:
         trends = []
         
         for i in range(days):
-            date = datetime.utcnow().date() - timedelta(days=i)
+            date = get_central_time().date() - timedelta(days=i)
             start_time = datetime.combine(date, datetime.min.time())
             end_time = start_time + timedelta(days=1)
             
@@ -116,7 +117,7 @@ class MetricsCollector:
     
     def _cleanup_old_metrics(self):
         """Remove metrics older than max_metrics_age_days"""
-        cutoff_time = datetime.utcnow() - timedelta(days=self.max_metrics_age_days)
+        cutoff_time = get_central_time() - timedelta(days=self.max_metrics_age_days)
         
         for metric_type in self.metrics:
             self.metrics[metric_type] = [
@@ -231,7 +232,7 @@ class MetricsCollector:
         
         return {
             'total_errors': len(errors),
-            'errors_per_hour': len(errors) / ((datetime.utcnow() - cutoff_time).total_seconds() / 3600),
+            'errors_per_hour': len(errors) / ((get_central_time() - cutoff_time).total_seconds() / 3600),
             'by_type': dict(by_type),
             'recent_errors': [
                 {
