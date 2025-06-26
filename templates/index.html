@@ -184,12 +184,6 @@
             animation: spin 1s linear infinite;
         }
 
-        .timezone-note {
-            font-size: 0.8rem;
-            color: #666;
-            font-style: italic;
-        }
-
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -199,6 +193,12 @@
             padding: 2rem;
             color: rgba(238, 244, 241, 0.8);
             font-size: 0.9rem;
+        }
+
+        .timezone-info {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 0.25rem;
         }
 
         @media (max-width: 768px) {
@@ -247,13 +247,13 @@
                     </div>
                     <div style="text-align: right;">
                         <div>Last sync: <span id="last-sync-time">
-                            {% if last_sync_time %}
-                                {{ last_sync_time_local }}
+                            {% if last_sync_time_display %}
+                                {{ last_sync_time_display }}
                             {% else %}
                                 Never
                             {% endif %}
                         </span></div>
-                        <div class="timezone-note" id="timezone-display"></div>
+                        <div class="timezone-info">All times in Central Time (CT)</div>
                     </div>
                 </div>
 
@@ -284,52 +284,12 @@
     </div>
 
     <footer class="footer">
-        <p>St. Edward Church & School • Calendar Management System</p>
+        <p>St. Edward Church & School • Calendar Management System • Nashville, TN</p>
         <p style="margin-top: 0.5rem; opacity: 0.7;">Automated synchronization every 15 minutes</p>
     </footer>
 
     <script>
         let isOperationInProgress = false;
-        
-        // Detect and display user's timezone
-        function displayUserTimezone() {
-            try {
-                const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                const timezoneDisplay = document.getElementById('timezone-display');
-                if (timezoneDisplay) {
-                    timezoneDisplay.textContent = `Times shown in ${timezone}`;
-                }
-            } catch (e) {
-                console.log('Could not detect timezone:', e);
-            }
-        }
-
-        function formatLocalTime(utcTimeString) {
-            if (!utcTimeString) return 'Never';
-            
-            try {
-                const utcDate = new Date(utcTimeString);
-                if (isNaN(utcDate.getTime())) {
-                    return 'Never';
-                }
-                
-                // Format for Central Time (Chicago timezone)
-                const options = {
-                    timeZone: 'America/Chicago',
-                    month: 'short',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    hour12: true
-                };
-                
-                const localTime = utcDate.toLocaleString('en-US', options);
-                return localTime;
-            } catch (e) {
-                console.error('Time formatting error:', e);
-                return 'Never';
-            }
-        }
 
         function showMessage(text, type = 'info', duration = 5000) {
             const messagesArea = document.getElementById('messages-area');
@@ -337,7 +297,13 @@
             
             const message = document.createElement('div');
             message.className = `message ${type}`;
-            message.textContent = text;
+            
+            // Handle multi-line messages
+            if (text.includes('\n')) {
+                message.innerHTML = text.split('\n').map(line => `<div>${line}</div>`).join('');
+            } else {
+                message.textContent = text;
+            }
             
             messagesArea.appendChild(message);
             setTimeout(() => message.classList.add('show'), 100);
@@ -409,11 +375,10 @@
                 syncText.textContent = 'Never Synced';
             }
 
-            // Update last sync time - NOW WITH PROPER TIMEZONE CONVERSION
+            // Update last sync time using the pre-formatted display string
             const lastSyncElement = document.getElementById('last-sync-time');
-            if (status.last_sync_time && status.last_sync_result && status.last_sync_result.success) {
-                const formattedTime = formatLocalTime(status.last_sync_time);
-                lastSyncElement.textContent = formattedTime;
+            if (status.last_sync_time_display) {
+                lastSyncElement.textContent = status.last_sync_time_display;
             } else {
                 lastSyncElement.textContent = 'Never';
             }
@@ -437,6 +402,11 @@
                 if (result.success) {
                     const msg = `✅ Sync completed! Added: ${result.added || 0}, Updated: ${result.updated || 0}, Deleted: ${result.deleted || 0}`;
                     showMessage(msg, 'success');
+                    
+                    // Update last sync time if provided
+                    if (result.last_sync_time_display) {
+                        document.getElementById('last-sync-time').textContent = result.last_sync_time_display;
+                    }
                 } else {
                     showMessage('⚠️ Sync completed with issues: ' + (result.message || result.error), 'warning');
                 }
@@ -466,7 +436,15 @@
                 statusMsg += `• Authentication: ${status.authenticated ? '✅' : '❌'}\n`;
                 statusMsg += `• Scheduler: ${status.scheduler_running ? '✅ Running' : '❌ Stopped'}\n`;
                 statusMsg += `• Rate Limit: ${status.rate_limit_remaining || 0} syncs remaining\n`;
-                statusMsg += `• Total Syncs: ${status.total_syncs || 0}`;
+                statusMsg += `• Total Syncs: ${status.total_syncs || 0}\n`;
+                if (status.current_time) {
+                    const time = new Date(status.current_time);
+                    statusMsg += `• Current Time: ${time.toLocaleString('en-US', {
+                        timeZone: 'America/Chicago',
+                        dateStyle: 'short',
+                        timeStyle: 'short'
+                    })} CT`;
+                }
                 
                 showMessage(statusMsg, 'info', 8000);
                 
@@ -490,7 +468,6 @@
 
         // Initialize on page load
         window.addEventListener('load', () => {
-            displayUserTimezone();
             loadStatus();
             
             // Refresh status every 60 seconds
