@@ -565,6 +565,40 @@ def disable_dry_run():
     config.DRY_RUN_MODE = False
     return jsonify({"message": "Dry run mode disabled", "dry_run": False})
 
+@app.route('/clean-dupes')
+def clean_dupes_page():
+    """Simple page to trigger duplicate cleanup"""
+    return '''
+    <html><body style="font-family: Arial; padding: 20px;">
+        <h1>🧹 Clean Duplicates</h1>
+        <button onclick="cleanDupes()" style="background: #e74c3c; color: white; padding: 15px 30px; border: none; border-radius: 5px; font-size: 18px;">
+            Delete All Duplicates
+        </button>
+        <div id="result" style="margin-top: 20px; padding: 10px; background: #f8f9fa; border-radius: 5px;"></div>
+        
+        <script>
+        async function cleanDupes() {
+            document.getElementById('result').innerHTML = '🔄 Cleaning duplicates...';
+            
+            try {
+                const response = await fetch('/debug/clean-duplicates', {method: 'POST'});
+                const result = await response.json();
+                
+                document.getElementById('result').innerHTML = `
+                    <h3>✅ Cleanup Complete!</h3>
+                    <p><strong>Total events found:</strong> ${result.total_events_found}</p>
+                    <p><strong>Duplicates deleted:</strong> ${result.duplicates_deleted}</p>
+                    <p><strong>Events kept:</strong> ${result.events_kept}</p>
+                    <p><strong>Failed deletes:</strong> ${result.failed_deletes}</p>
+                `;
+            } catch (error) {
+                document.getElementById('result').innerHTML = `❌ Error: ${error.message}`;
+            }
+        }
+        </script>
+    </body></html>
+    '''
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
