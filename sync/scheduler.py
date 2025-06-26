@@ -1,5 +1,5 @@
 """
-Background Scheduler for automatic sync
+Background Scheduler for automatic sync - IMPROVED for Render Uptime
 """
 import logging
 import threading
@@ -60,7 +60,24 @@ class SyncScheduler:
         logger.info("Scheduler stopped")
     
     def _scheduled_sync(self):
-        """Function called by scheduler"""
-        logger.info("Running scheduled sync (every 15 minutes)")
-        result = self.sync_engine.sync_calendars()
-        logger.info(f"Scheduled sync completed: {result}")
+        """Function called by scheduler - IMPROVED with error handling"""
+        try:
+            logger.info("Running scheduled sync (every 15 minutes)")
+            
+            # Check if authenticated before trying to sync
+            if not self.sync_engine.auth.is_authenticated():
+                logger.warning("⚠️ Scheduled sync skipped - not authenticated")
+                return
+            
+            result = self.sync_engine.sync_calendars()
+            
+            if result.get('needs_auth'):
+                logger.warning("⚠️ Scheduled sync indicates authentication needed")
+            elif result.get('success'):
+                logger.info(f"✅ Scheduled sync completed successfully")
+            else:
+                logger.warning(f"⚠️ Scheduled sync completed with issues: {result.get('message')}")
+                
+        except Exception as e:
+            # Don't let sync errors crash the scheduler
+            logger.error(f"❌ Scheduled sync failed: {e}")
