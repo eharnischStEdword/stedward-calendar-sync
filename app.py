@@ -1,619 +1,263 @@
 #!/usr/bin/env python3
 """
-St. Edward Calendar Sync - Main Application with Enhanced Render Uptime
+St. Edward Calendar Sync - Main Application (Render-Optimized)
 """
 import os
 import logging
 import secrets
 import threading
-import signal
 import sys
 import time
-import requests
 from datetime import datetime
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
 
-import config
-from auth.microsoft_auth import MicrosoftAuth
-from sync.engine import SyncEngine
-from sync.scheduler import SyncScheduler
-from utils.version import get_version_info
-from utils.audit import AuditLogger
-
-# Configure logging
+# Configure logging FIRST
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
+# Initialize Flask app EARLY
 app = Flask(__name__)
-app.secret_key = config.SECRET_KEY or secrets.token_hex(32)
 
-# Initialize components
-auth_manager = MicrosoftAuth()
-sync_engine = SyncEngine(auth_manager)
-scheduler = SyncScheduler(sync_engine)
-audit_logger = AuditLogger()
+# Basic configuration
+try:
+    import config
+    app.secret_key = getattr(config, 'SECRET_KEY', None) or secrets.token_hex(32)
+    logger.info("✅ Config loaded successfully")
+except Exception as e:
+    logger.error(f"❌ Config import failed: {e}")
+    app.secret_key = secrets.token_hex(32)
 
-# Get version info
-APP_VERSION_INFO = get_version_info()
+# Initialize components with error handling
+auth_manager = None
+sync_engine = None
+scheduler = None
+audit_logger = None
+APP_VERSION_INFO = {"version": "2025.06.26", "full_version": "Calendar Sync v2025.06.26"}
+
+def safe_import_components():
+    """Import components with error handling"""
+    global auth_manager, sync_engine, scheduler, audit_logger, APP_VERSION_INFO
+    
+    try:
+        from auth.microsoft_auth import MicrosoftAuth
+        auth_manager = MicrosoftAuth()
+        logger.info("✅ Auth manager initialized")
+    except Exception as e:
+        logger.error(f"❌ Auth manager failed: {e}")
+        return False
+    
+    try:
+        from sync.engine import SyncEngine
+        sync_engine = SyncEngine(auth_manager)
+        logger.info("✅ Sync engine initialized")
+    except Exception as e:
+        logger.error(f"❌ Sync engine failed: {e}")
+        return False
+    
+    try:
+        from sync.scheduler import SyncScheduler
+        scheduler = SyncScheduler(sync_engine)
+        logger.info("✅ Scheduler initialized")
+    except Exception as e:
+        logger.error(f"❌ Scheduler failed: {e}")
+        return False
+    
+    try:
+        from utils.audit import AuditLogger
+        audit_logger = AuditLogger()
+        logger.info("✅ Audit logger initialized")
+    except Exception as e:
+        logger.error(f"❌ Audit logger failed: {e}")
+        
+    try:
+        from utils.version import get_version_info
+        APP_VERSION_INFO = get_version_info()
+        logger.info("✅ Version info loaded")
+    except Exception as e:
+        logger.warning(f"⚠️ Version info failed: {e}")
+    
+    return True
 
 # Log startup
-logger.info("=" * 60)
-logger.info(f"🚀 {APP_VERSION_INFO['full_version']}")
-logger.info(f"📦 Platform: {APP_VERSION_INFO['deployment_platform']}")
-logger.info(f"🌍 Environment: {APP_VERSION_INFO['environment']}")
-logger.info("=" * 60)
+logger.info("🚀 Starting St. Edward Calendar Sync")
+logger.info(f"🐍 Python version: {sys.version}")
+logger.info(f"📦 Environment: {os.environ.get('RENDER', 'local')}")
 
-
-def signal_handler(sig, frame):
-    """Handle graceful shutdown"""
-    logger.info('Graceful shutdown initiated...')
-    scheduler.stop()
-    
-    # Wait for any in-progress syncs
-    timeout = 30
-    start = time.time()
-    while sync_engine.sync_in_progress and time.time() - start < timeout:
-        time.sleep(1)
-    
-    logger.info('Shutdown complete')
-    sys.exit(0)
-
-
-# Register signal handlers for graceful shutdown
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-
+# Simple decorator for auth (fallback version)
 def requires_auth(f):
-    """Decorator to check authentication - ULTRA FORGIVING VERSION"""
+    """Simple auth decorator with fallback"""
     from functools import wraps
     
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        try:
-            # Check if we have any tokens at all (more lenient than is_authenticated)
-            if not hasattr(auth_manager, 'access_token') or not auth_manager.access_token:
-                logger.warning("No access token found")
-                return jsonify({"error": "Not authenticated", "redirect": "/logout"}), 401
-            
-            # Try to ensure we have a valid token, but be very forgiving
-            try:
-                auth_manager.ensure_valid_token()
-            except Exception as e:
-                logger.warning(f"Token validation warning (continuing anyway): {e}")
-                # Continue regardless - let the API call itself fail if needed
-                pass
-                
-        except Exception as e:
-            logger.error(f"Authentication check exception (continuing anyway): {e}")
-            # Continue regardless - ultra forgiving
-            pass
+        if not auth_manager:
+            return jsonify({"error": "System not initialized"}), 503
         
-        # Always proceed - let the actual API calls handle auth failures
+        if not hasattr(auth_manager, 'access_token') or not auth_manager.access_token:
+            return jsonify({"error": "Not authenticated", "redirect": "/logout"}), 401
+        
         return f(*args, **kwargs)
     return decorated_function
 
+# ==================== BASIC ROUTES ====================
 
-def make_json_serializable(obj):
-    """Convert objects to JSON-serializable format"""
-    if obj is None:
-        return None
-    elif isinstance(obj, (str, int, float, bool)):
-        return obj
-    elif isinstance(obj, dict):
-        return {key: make_json_serializable(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [make_json_serializable(item) for item in obj]
-    elif hasattr(obj, 'isoformat'):  # datetime objects
-        return obj.isoformat()
-    else:
-        return str(obj)
-
-
-# ==================== HEALTH CHECK HELPERS ====================
-
-def check_microsoft_api():
-    """Check if Microsoft API is accessible"""
-    try:
-        headers = auth_manager.get_headers()
-        if not headers:
-            return False
-        response = requests.get(
-            'https://graph.microsoft.com/v1.0/me',
-            headers=headers,
-            timeout=5
-        )
-        return response.status_code == 200
-    except:
-        return False
-
-
-def check_calendar_access():
-    """Check if calendars are accessible"""
-    try:
-        return sync_engine.reader.get_calendars() is not None
-    except:
-        return False
-
-
-def get_last_sync_health():
-    """Check if last sync was recent and successful"""
-    status = sync_engine.get_status()
-    if not status.get('last_sync_time'):
-        return False
-    
-    last_sync = status['last_sync_time']
-    if isinstance(last_sync, str):
-        last_sync = datetime.fromisoformat(last_sync.replace('Z', '+00:00'))
-    
-    # Check if last sync was within 2 hours
-    time_since_sync = datetime.now() - last_sync
-    return time_since_sync.total_seconds() < 7200  # 2 hours
-
-
-# ==================== ROUTES ====================
+@app.route('/health')
+def health_check():
+    """Ultra-simple health check"""
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "service": "calendar-sync"
+    }), 200
 
 @app.route('/')
 def index():
-    """Main page"""
-    if not auth_manager.is_authenticated():
-        state = secrets.token_urlsafe(16)
-        session['oauth_state'] = state
-        auth_url = auth_manager.get_auth_url(state)
+    """Main page with error handling"""
+    try:
+        if not auth_manager:
+            return '''
+            <html><body style="font-family: Arial; text-align: center; margin-top: 100px;">
+                <h1>🔧 System Initializing</h1>
+                <p>Please wait while the system starts up...</p>
+                <script>setTimeout(() => location.reload(), 5000);</script>
+            </body></html>
+            '''
         
+        if not auth_manager.is_authenticated():
+            state = secrets.token_urlsafe(16)
+            session['oauth_state'] = state
+            auth_url = auth_manager.get_auth_url(state)
+            
+            return f'''
+            <html>
+            <head>
+                <title>St. Edward Calendar Sync - Sign In</title>
+                <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
+            </head>
+            <body style="font-family: Arial; text-align: center; margin-top: 100px;">
+                <h1>🗓️ St. Edward Calendar Sync</h1>
+                <p>Sign in with your Microsoft account to access calendar sync.</p>
+                <a href="{auth_url}" style="background: #0078d4; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 18px;">
+                    Sign in with Microsoft
+                </a>
+            </body>
+            </html>
+            '''
+        
+        # Try to render the full template
+        try:
+            status = sync_engine.get_status() if sync_engine else {}
+            return render_template('index.html', 
+                                 last_sync_time=None,
+                                 last_sync_result=status.get('last_sync_result'),
+                                 sync_in_progress=status.get('sync_in_progress', False))
+        except Exception as e:
+            logger.error(f"Template render failed: {e}")
+            return f'''
+            <html><body style="font-family: Arial; text-align: center; margin-top: 100px;">
+                <h1>📅 Calendar Sync Dashboard</h1>
+                <p>Welcome! System is running but dashboard is loading...</p>
+                <p><a href="/health">Health Check</a> | <a href="/status">Status</a></p>
+            </body></html>
+            '''
+            
+    except Exception as e:
+        logger.error(f"Index route failed: {e}")
         return f'''
-        <html>
-        <head>
-            <title>St. Edward Calendar Sync - Sign In</title>
-            <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
-        </head>
-        <body style="font-family: Arial; text-align: center; margin-top: 100px;">
-            <h1>🗓️ St. Edward Calendar Sync</h1>
-            <p>You need to sign in with your Microsoft account to access the calendar sync.</p>
-            <a href="{auth_url}" style="background: #0078d4; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 18px;">
-                Sign in with Microsoft
-            </a>
-        </body>
-        </html>
+        <html><body style="font-family: Arial; text-align: center; margin-top: 100px;">
+            <h1>⚠️ Temporary Error</h1>
+            <p>Service is starting up. Please refresh in a moment.</p>
+            <script>setTimeout(() => location.reload(), 3000);</script>
+        </body></html>
         '''
-    
-    # Get sync status for display
-    status = sync_engine.get_status()
-    
-    # Convert last sync time to Central Time for display
-    import pytz
-    central_tz = pytz.timezone('US/Central')
-    display_sync_time = None
-    
-    if status.get('last_sync_time'):
-        last_sync_time = status['last_sync_time']
-        if last_sync_time.tzinfo is None:
-            # If no timezone info, assume UTC and convert
-            utc_time = pytz.utc.localize(last_sync_time)
-            display_sync_time = utc_time.astimezone(central_tz)
-        else:
-            # Already has timezone info, convert to Central
-            display_sync_time = last_sync_time.astimezone(central_tz)
-    
-    return render_template('index.html', 
-                         last_sync_time=display_sync_time,
-                         last_sync_result=status.get('last_sync_result'),
-                         sync_in_progress=status.get('sync_in_progress'))
-
 
 @app.route('/auth/callback')
 def auth_callback():
     """Handle OAuth callback"""
-    auth_code = request.args.get('code')
-    state = request.args.get('state')
-    
-    # Verify state
-    if state != session.get('oauth_state'):
-        logger.warning("Invalid OAuth state - possible CSRF attempt")
-        audit_logger.log_sync_operation('auth_callback', 'unknown', {
-            'error': 'Invalid OAuth state',
-            'ip': request.remote_addr
-        })
-        return "Invalid state parameter", 400
-    
-    if auth_code and auth_manager.exchange_code_for_token(auth_code):
-        session.pop('oauth_state', None)
-        # Start scheduler after successful auth
-        scheduler.start()
+    try:
+        if not auth_manager:
+            return "System not ready", 503
+            
+        auth_code = request.args.get('code')
+        state = request.args.get('state')
         
-        audit_logger.log_sync_operation('auth_success', 'user', {
-            'ip': request.remote_addr
-        })
+        if state != session.get('oauth_state'):
+            return "Invalid state", 400
         
-        return redirect(url_for('index'))
-    else:
-        audit_logger.log_sync_operation('auth_failed', 'user', {
-            'ip': request.remote_addr
-        })
-        return "Authentication failed", 400
-
-
-@app.route('/sync', methods=['POST'])
-@requires_auth
-def manual_sync():
-    """Trigger manual sync"""
-    audit_logger.log_sync_operation('manual_sync_triggered', 'user', {
-        'ip': request.remote_addr
-    })
-    
-    def sync_thread():
-        try:
-            result = sync_engine.sync_calendars()
-            audit_logger.log_sync_operation('manual_sync_completed', 'user', {
-                'result': result.get('success', False),
-                'operations': {
-                    'added': result.get('added', 0),
-                    'updated': result.get('updated', 0),
-                    'deleted': result.get('deleted', 0)
-                }
-            })
-        except Exception as e:
-            logger.error(f"Sync thread failed: {e}")
-            audit_logger.log_sync_operation('manual_sync_failed', 'user', {
-                'error': str(e)
-            })
-    
-    # Run sync in background
-    thread = threading.Thread(target=sync_thread)
-    thread.start()
-    
-    return jsonify({"success": True, "message": "Sync started"})
-
+        if auth_code and auth_manager.exchange_code_for_token(auth_code):
+            session.pop('oauth_state', None)
+            if scheduler:
+                scheduler.start()
+            return redirect(url_for('index'))
+        else:
+            return "Authentication failed", 400
+    except Exception as e:
+        logger.error(f"Auth callback failed: {e}")
+        return "Authentication error", 500
 
 @app.route('/status')
 def status():
     """Get current status"""
     try:
+        if not sync_engine:
+            return jsonify({
+                "authenticated": False,
+                "scheduler_running": False,
+                "sync_in_progress": False,
+                "system_status": "initializing"
+            })
+        
         sync_status = sync_engine.get_status()
-        
-        # Convert datetime objects to strings safely
-        if sync_status.get('last_sync_time'):
-            import pytz
-            central_tz = pytz.timezone('US/Central')
-            last_sync_time = sync_status['last_sync_time']
-            
-            try:
-                if last_sync_time.tzinfo is None:
-                    utc_time = pytz.utc.localize(last_sync_time)
-                    sync_status['last_sync_time'] = utc_time.astimezone(central_tz).isoformat()
-                else:
-                    sync_status['last_sync_time'] = last_sync_time.astimezone(central_tz).isoformat()
-            except Exception as e:
-                logger.warning(f"Date conversion error: {e}")
-                sync_status['last_sync_time'] = str(last_sync_time)
-        
-        # Make the result JSON serializable
-        sync_status['last_sync_result'] = make_json_serializable(sync_status.get('last_sync_result'))
         
         return jsonify({
             **sync_status,
-            "authenticated": auth_manager.is_authenticated(),
-            "scheduler_running": scheduler.is_running(),
-            "token_status": auth_manager.get_token_status(),
-            "version": APP_VERSION_INFO["version"],
-            "build_number": APP_VERSION_INFO["build_number"],
-            "environment": APP_VERSION_INFO["environment"],
-            "app_info": APP_VERSION_INFO["full_version"],
-            "master_calendar_protection": config.MASTER_CALENDAR_PROTECTION,
-            "dry_run_mode": config.DRY_RUN_MODE
+            "authenticated": auth_manager.is_authenticated() if auth_manager else False,
+            "scheduler_running": scheduler.is_running() if scheduler else False,
+            "version": APP_VERSION_INFO.get("version", "unknown"),
+            "system_status": "ready"
         })
     except Exception as e:
-        logger.error(f"Status endpoint error: {e}")
-        # Return minimal status on error
+        logger.error(f"Status failed: {e}")
         return jsonify({
-            "authenticated": False,
-            "scheduler_running": False,
-            "sync_in_progress": False,
-            "last_sync_time": None,
-            "last_sync_result": {"success": False, "message": "Status error"},
-            "error": str(e)
+            "error": str(e),
+            "system_status": "error"
         }), 500
 
-
-@app.route('/health')
-def health_check():
-    """Basic health check endpoint - NEVER fails due to auth issues"""
-    try:
-        # Always return healthy if the Flask app is responding
-        # Don't check authentication status for basic health
-        return jsonify({
-            "status": "healthy",
-            "version": APP_VERSION_INFO["version_string"],
-            "timestamp": datetime.now().isoformat(),
-            "uptime": "ok"
-        }), 200
-    except Exception as e:
-        # Even if something goes wrong, return 200 to keep Render happy
-        logger.error(f"Health check error: {e}")
-        return jsonify({
-            "status": "degraded",
-            "error": str(e)
-        }), 200
-
-
-@app.route('/health/detailed')
-def detailed_health():
-    """Detailed health check that can show auth issues but doesn't require auth"""
-    checks = {
-        'flask_app': True,  # If we're here, Flask is working
-        'authentication': False,
-        'microsoft_api': False,
-        'calendar_access': False,
-        'scheduler': False
-    }
+@app.route('/sync', methods=['POST'])
+@requires_auth
+def manual_sync():
+    """Trigger manual sync"""
+    if not sync_engine:
+        return jsonify({"error": "Sync engine not available"}), 503
     
-    try:
-        checks['authentication'] = auth_manager.is_authenticated()
-        
-        if checks['authentication']:
-            checks['microsoft_api'] = check_microsoft_api()
-            checks['calendar_access'] = check_calendar_access()
-        
-        checks['scheduler'] = scheduler.is_running()
-        
-    except Exception as e:
-        logger.warning(f"Health check warning: {e}")
+    def sync_thread():
+        try:
+            result = sync_engine.sync_calendars()
+            logger.info(f"Sync result: {result}")
+        except Exception as e:
+            logger.error(f"Sync failed: {e}")
     
-    # Always return 200 - use the response body to indicate issues
-    overall_health = checks['flask_app']  # Only require Flask to be working
+    thread = threading.Thread(target=sync_thread)
+    thread.start()
     
-    return jsonify({
-        'status': 'healthy' if overall_health else 'unhealthy',
-        'checks': checks,
-        'needs_auth': not checks['authentication'],
-        'timestamp': datetime.now().isoformat()
-    }), 200
-
+    return jsonify({"success": True, "message": "Sync started"})
 
 @app.route('/logout')
 def logout():
-    """Logout and clear tokens"""
-    audit_logger.log_sync_operation('logout', 'user', {
-        'ip': request.remote_addr
-    })
-    
-    auth_manager.clear_tokens()
-    scheduler.stop()
-    session.clear()
-    logger.info("User logged out")
-    return redirect(url_for('index'))
-
-
-@app.route('/diagnostics', methods=['POST'])
-@requires_auth
-def run_diagnostics():
-    """Run diagnostics"""
-    audit_logger.log_sync_operation('diagnostics_run', 'user', {
-        'ip': request.remote_addr
-    })
-    
-    # Run in thread for non-blocking
-    def diag_thread():
-        try:
-            from cal_ops.reader import CalendarReader
-            reader = CalendarReader(auth_manager)
-            
-            calendars = reader.get_calendars()
-            if calendars:
-                logger.info(f"✅ Found {len(calendars)} calendars")
-                for cal in calendars:
-                    logger.info(f"   📅 {cal.get('name')} (ID: {cal.get('id')[:8]}...)")
-            else:
-                logger.warning("❌ No calendars found or access denied")
-                
-            # Test specific calendars
-            source_id = reader.find_calendar_id(config.SOURCE_CALENDAR)
-            target_id = reader.find_calendar_id(config.TARGET_CALENDAR)
-            
-            if source_id:
-                logger.info(f"✅ Source calendar '{config.SOURCE_CALENDAR}' found")
-            else:
-                logger.error(f"❌ Source calendar '{config.SOURCE_CALENDAR}' NOT found")
-                
-            if target_id:
-                logger.info(f"✅ Target calendar '{config.TARGET_CALENDAR}' found")
-            else:
-                logger.error(f"❌ Target calendar '{config.TARGET_CALENDAR}' NOT found")
-                
-        except Exception as e:
-            logger.error(f"❌ Diagnostics failed: {e}")
-    
-    thread = threading.Thread(target=diag_thread)
-    thread.start()
-    
-    return jsonify({"success": True, "message": "Diagnostics started - results will appear in System Info"})
-
-
-@app.route('/version')
-def version():
-    """Get detailed version information"""
-    return jsonify(APP_VERSION_INFO)
-
-
-@app.route('/metrics')
-@requires_auth
-def get_metrics():
-    """Get sync metrics"""
-    return jsonify(sync_engine.metrics.get_metrics_summary())
-
-
-@app.route('/history')
-@requires_auth
-def get_sync_history():
-    """Get sync history"""
-    return jsonify({
-        'history': [make_json_serializable(entry) for entry in sync_engine.history.history],
-        'statistics': sync_engine.history.get_statistics()
-    })
-
-
-@app.route('/enable-dry-run')
-@requires_auth
-def enable_dry_run():
-    """Enable dry run mode"""
-    config.DRY_RUN_MODE = True
-    audit_logger.log_sync_operation('dry_run_enabled', 'user', {
-        'ip': request.remote_addr
-    })
-    return jsonify({"message": "DRY RUN mode enabled", "dry_run_mode": True})
-
-
-@app.route('/disable-dry-run')
-@requires_auth
-def disable_dry_run():
-    """Disable dry run mode"""
-    config.DRY_RUN_MODE = False
-    audit_logger.log_sync_operation('dry_run_disabled', 'user', {
-        'ip': request.remote_addr
-    })
-    return jsonify({"message": "DRY RUN mode disabled", "dry_run_mode": False})
-
-
-@app.route('/debug/events/<calendar_name>')
-@requires_auth
-def debug_events(calendar_name):
-    """Debug endpoint to inspect calendar events"""
-    if APP_VERSION_INFO.get('environment') != 'development':
-        return jsonify({"error": "Debug endpoint only available in development"}), 403
-    
-    calendar_id = sync_engine.reader.find_calendar_id(calendar_name)
-    if not calendar_id:
-        return jsonify({"error": f"Calendar '{calendar_name}' not found"}), 404
-    
-    events = sync_engine.reader.get_calendar_events(calendar_id)
-    if not events:
-        return jsonify({"error": "Failed to retrieve events"}), 500
-    
-    # Sanitize events for display
-    sanitized_events = []
-    for event in events[:10]:  # First 10 only
-        sanitized_events.append({
-            'id': event.get('id', '')[:8] + '...',
-            'subject': event.get('subject'),
-            'start': event.get('start'),
-            'categories': event.get('categories'),
-            'type': event.get('type')
-        })
-    
-    return jsonify({
-        'calendar': calendar_name,
-        'calendar_id': calendar_id,
-        'event_count': len(events),
-        'sample_events': sanitized_events
-    })
-
-
-@app.route('/validate-sync', methods=['POST'])
-@requires_auth
-def validate_sync():
-    """Manually validate sync status"""
+    """Logout"""
     try:
-        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
-        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
-        
-        if not source_id or not target_id:
-            return jsonify({"error": "Cannot find required calendars"}), 400
-        
-        source_events = sync_engine.reader.get_public_events(source_id)
-        target_events = sync_engine.reader.get_calendar_events(target_id)
-        
-        if source_events is None or target_events is None:
-            return jsonify({"error": "Failed to retrieve events"}), 500
-        
-        is_valid, validations = sync_engine.validator.validate_sync_result(
-            source_events, target_events
-        )
-        
-        # Convert validations to a more friendly format
-        validation_dict = {}
-        for check, passed in validations:
-            validation_dict[check] = passed
-        
-        return jsonify({
-            'is_valid': is_valid,
-            'validations': validation_dict,
-            'source_count': len(source_events),
-            'target_count': len(target_events)
-        })
-        
+        if auth_manager:
+            auth_manager.clear_tokens()
+        if scheduler:
+            scheduler.stop()
+        session.clear()
     except Exception as e:
-        logger.error(f"Validation failed: {e}")
-        return jsonify({"error": f"Validation failed: {str(e)}"}), 500
-
-
-@app.route('/debug-validation', methods=['GET'])
-@requires_auth
-def debug_validation():
-    """Debug validation issues"""
-    source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
-    target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        logger.error(f"Logout error: {e}")
     
-    if not source_id or not target_id:
-        return jsonify({"error": "Cannot find calendars"}), 400
-    
-    source_events = sync_engine.reader.get_public_events(source_id)
-    target_events = sync_engine.reader.get_calendar_events(target_id)
-    
-    if source_events is None or target_events is None:
-        return jsonify({"error": "Failed to retrieve events"}), 500
-    
-    # Find events with "Adoration & Confession" in the name
-    adoration_events = []
-    for event in target_events:
-        if "adoration" in event.get('subject', '').lower():
-            adoration_events.append({
-                'subject': event.get('subject'),
-                'type': event.get('type'),
-                'start': event.get('start'),
-                'end': event.get('end'),
-                'id': event.get('id')[:8] + '...',
-                'seriesMasterId': event.get('seriesMasterId', 'N/A')[:8] + '...' if event.get('seriesMasterId') else 'N/A',
-                'signature': sync_engine._create_event_signature(event),
-                'recurrence': 'Yes' if event.get('recurrence') else 'No'
-            })
-    
-    # Group by signature to find duplicates
-    signature_groups = {}
-    for event in target_events:
-        sig = sync_engine._create_event_signature(event)
-        if not sig.startswith('skip:'):
-            if sig not in signature_groups:
-                signature_groups[sig] = []
-            signature_groups[sig].append({
-                'subject': event.get('subject'),
-                'type': event.get('type'),
-                'start': event.get('start', {}).get('dateTime', 'N/A')
-            })
-    
-    # Find actual duplicates
-    duplicates = {}
-    for sig, events in signature_groups.items():
-        if len(events) > 1:
-            duplicates[sig] = events
-    
-    return jsonify({
-        'adoration_events': adoration_events,
-        'duplicate_signatures': duplicates,
-        'total_source_events': len(source_events),
-        'total_target_events': len(target_events),
-        'signature_count': len(signature_groups),
-        'target_event_types': {
-            'singleInstance': sum(1 for e in target_events if e.get('type') == 'singleInstance'),
-            'seriesMaster': sum(1 for e in target_events if e.get('type') == 'seriesMaster'),
-            'occurrence': sum(1 for e in target_events if e.get('type') == 'occurrence'),
-            'exception': sum(1 for e in target_events if e.get('type') == 'exception')
-        }
-    })
-
+    return redirect(url_for('index'))
 
 # ==================== ERROR HANDLERS ====================
 
@@ -621,46 +265,40 @@ def debug_validation():
 def not_found(error):
     return jsonify({"error": "Not found"}), 404
 
-
 @app.errorhandler(500)
 def internal_error(error):
     logger.error(f"Internal error: {error}")
     return jsonify({"error": "Internal server error"}), 500
 
+# ==================== INITIALIZATION ====================
 
-# ==================== STARTUP INITIALIZATION ====================
+def initialize_app():
+    """Initialize app components in a thread"""
+    logger.info("🔄 Initializing components...")
+    success = safe_import_components()
+    
+    if success:
+        logger.info("✅ All components initialized successfully")
+        
+        # Try to restore auth
+        try:
+            if auth_manager and auth_manager.is_authenticated():
+                if scheduler:
+                    scheduler.start()
+                logger.info("🔐 Authentication restored")
+        except Exception as e:
+            logger.warning(f"Auth restoration failed: {e}")
+    else:
+        logger.error("❌ Component initialization failed")
 
-# Try to restore auth on startup if possible
-try:
-    if auth_manager.is_authenticated():
-        scheduler.start()
-        logger.info("Authentication restored, scheduler started")
-except Exception as e:
-    logger.warning(f"Could not restore authentication on startup: {e}")
+# Start initialization in background (don't block app startup)
+init_thread = threading.Thread(target=initialize_app, daemon=True)
+init_thread.start()
 
-# Add startup success indicator
-logger.info("=" * 60)
-logger.info("🎉 APPLICATION INITIALIZED SUCCESSFULLY")
-logger.info("📊 Check /health for basic status")
-logger.info("🔍 Check /health/detailed for full diagnostics")
-logger.info("🔐 Visit the main page to authenticate if needed")
-logger.info("=" * 60)
-
+logger.info("🎉 Flask app ready - components initializing in background")
 
 # ==================== MAIN ====================
 
 if __name__ == '__main__':
-    # This block only runs when the script is executed directly
-    # (not when imported by Gunicorn)
-    
-    # Validate configuration
-    if not config.CLIENT_SECRET:
-        logger.error("CLIENT_SECRET environment variable is not set!")
-        exit(1)
-    
-    # Run Flask development server
-    port = config.PORT
-    logger.info(f"🚀 Starting Flask development server on port {port}")
-    logger.info(f"🌐 Development server will be available at: http://localhost:{port}")
-    
+    port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
