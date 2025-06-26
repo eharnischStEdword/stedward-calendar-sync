@@ -823,6 +823,198 @@ def clean_precise_duplicates():
             "traceback": traceback.format_exc()
         }), 500
 
+# Add this BETTER duplicate detector that catches what you see visually
+
+@app.route('/debug/visual-duplicates')
+def visual_duplicates():
+    """Find ALL duplicates - including recurring event occurrences that show up as visual duplicates"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        if not target_events:
+            return jsonify({"error": "Could not retrieve target events"}), 500
+        
+        # Group by VISUAL appearance - how they look in the calendar
+        visual_groups = {}
+        
+        for event in target_events:
+            subject = event.get('subject', '').strip()
+            start_datetime = event.get('start', {}).get('dateTime', '')
+            
+            # Extract date and time for visual grouping
+            if 'T' in start_datetime:
+                date_part = start_datetime.split('T')[0]  # YYYY-MM-DD
+                time_part = start_datetime.split('T')[1][:5]  # HH:MM
+                visual_key = f"{subject}|{date_part}|{time_part}"
+            else:
+                visual_key = f"{subject}|{start_datetime}|no-time"
+            
+            if visual_key not in visual_groups:
+                visual_groups[visual_key] = []
+            
+            visual_groups[visual_key].append({
+                'id': event.get('id'),
+                'subject': event.get('subject'),
+                'start': start_datetime,
+                'type': event.get('type'),
+                'created': event.get('createdDateTime'),
+                'modified': event.get('lastModifiedDateTime'),
+                'series_master_id': event.get('seriesMasterId'),
+                'categories': event.get('categories', [])
+            })
+        
+        # Find visual duplicates
+        visual_duplicates = {}
+        for key, events in visual_groups.items():
+            if len(events) > 1:
+                # Parse the key for display
+                parts = key.split('|')
+                subject = parts[0]
+                date = parts[1]
+                time = parts[2] if len(parts) > 2 else 'no-time'
+                
+                visual_duplicates[key] = {
+                    'subject': subject,
+                    'date': date,
+                    'time': time,
+                    'count': len(events),
+                    'events': events,
+                    'description': f"'{subject}' on {date} at {time}",
+                    'types': [e['type'] for e in events],
+                    'series_masters': list(set([e['series_master_id'] for e in events if e['series_master_id']]))
+                }
+        
+        return jsonify({
+            "total_events_checked": len(target_events),
+            "visual_duplicate_groups": len(visual_duplicates),
+            "visual_duplicates": visual_duplicates,
+            "summary": {
+                "total_duplicate_events": sum(dup['count'] for dup in visual_duplicates.values()),
+                "duplicate_descriptions": [dup['description'] for dup in visual_duplicates.values()]
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/debug/clean-visual-duplicates', methods=['POST'])
+def clean_visual_duplicates():
+    """Remove visual duplicates - keeps one copy of each event that appears multiple times"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        if not target_events:
+            return jsonify({"error": "Could not retrieve target events"}), 500
+        
+        # Group by visual appearance
+        visual_groups = {}
+        
+        for event in target_events:
+            subject = event.get('subject', '').strip()
+            start_datetime = event.get('start', {}).get('dateTime', '')
+            
+            # Create visual key
+            if 'T' in start_datetime:
+                date_part = start_datetime.split('T')[0]
+                time_part = start_datetime.split('T')[1][:5]
+                visual_key = f"{subject}|{date_part}|{time_part}"
+            else:
+                visual_key = f"{subject}|{start_datetime}|no-time"
+            
+            if visual_key not in visual_groups:
+                visual_groups[visual_key] = []
+            visual_groups[visual_key].append(event)
+        
+        # Find duplicates and delete extras
+        to_delete = []
+        kept_count = 0
+        duplicate_groups_found = 0
+        
+        for key, events in visual_groups.items():
+            if len(events) > 1:
+                duplicate_groups_found += 1
+                
+                # Sort by preference: seriesMaster > singleInstance > occurrence
+                # Then by creation time (newest first)
+                def sort_preference(event):
+                    type_priority = {
+                        'seriesMaster': 0,
+                        'singleInstance': 1, 
+                        'occurrence': 2
+                    }
+                    event_type = event.get('type', 'singleInstance')
+                    created = event.get('createdDateTime', '')
+                    return (type_priority.get(event_type, 9), created)
+                
+                events.sort(key=sort_preference, reverse=True)
+                kept_event = events[0]
+                duplicates = events[1:]
+                
+                kept_count += 1
+                to_delete.extend(duplicates)
+                
+                # Parse key for logging
+                parts = key.split('|')
+                subject = parts[0]
+                date = parts[1]
+                time = parts[2] if len(parts) > 2 else 'no-time'
+                
+                logger.info(f"Found {len(duplicates)} VISUAL duplicates for '{subject}' on {date} at {time}")
+                logger.info(f"  Keeping: {kept_event.get('type')} (ID: {kept_event.get('id', '')[:8]}...)")
+                for dup in duplicates:
+                    logger.info(f"  Deleting: {dup.get('type')} (ID: {dup.get('id', '')[:8]}...)")
+        
+        # Delete the visual duplicates
+        deleted_count = 0
+        failed_deletes = []
+        
+        for event in to_delete:
+            event_id = event.get('id')
+            subject = event.get('subject', 'Unknown')
+            event_type = event.get('type', 'unknown')
+            
+            if sync_engine.writer.delete_event(target_id, event_id):
+                deleted_count += 1
+                logger.info(f"✅ Deleted VISUAL duplicate: {subject} ({event_type}) (ID: {event_id[:8]}...)")
+            else:
+                failed_deletes.append(event_id)
+                logger.error(f"❌ Failed to delete VISUAL duplicate: {subject} ({event_type}) (ID: {event_id[:8]}...)")
+        
+        return jsonify({
+            "success": True,
+            "total_events_found": len(target_events),
+            "visual_duplicate_groups": duplicate_groups_found,
+            "visual_duplicates_found": len(to_delete),
+            "visual_duplicates_deleted": deleted_count,
+            "failed_deletes": len(failed_deletes),
+            "events_kept": kept_count + len([g for g in visual_groups.values() if len(g) == 1]),
+            "failed_delete_ids": failed_deletes,
+            "note": "Removed events that appear identical in calendar view (same subject, date, time)"
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
