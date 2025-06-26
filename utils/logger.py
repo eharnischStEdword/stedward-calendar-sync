@@ -5,6 +5,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Dict, Any, Optional
+from utils.timezone import get_central_time
 
 
 class StructuredLogger:
@@ -24,7 +25,8 @@ class StructuredLogger:
     def log_sync_event(self, event_type: str, details: Dict[str, Any]):
         """Log a sync-related event with structured data"""
         log_entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": get_central_time().isoformat(),
+            "timezone": "America/Chicago",
             "event_type": event_type,
             "service": "calendar-sync",
             "logger": self.name,
@@ -43,7 +45,8 @@ class StructuredLogger:
                      duration_ms: Optional[float] = None, error: Optional[str] = None):
         """Log API call details"""
         log_entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": get_central_time().isoformat(),
+            "timezone": "America/Chicago",
             "event_type": "api_call",
             "service": "calendar-sync",
             "logger": self.name,
@@ -67,7 +70,8 @@ class StructuredLogger:
                        item_count: Optional[int] = None, success: bool = True):
         """Log performance metrics"""
         log_entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": get_central_time().isoformat(),
+            "timezone": "America/Chicago",
             "event_type": "performance",
             "service": "calendar-sync",
             "logger": self.name,
@@ -86,7 +90,8 @@ class StructuredLogger:
                           ip_address: Optional[str] = None, details: Optional[Dict] = None):
         """Log security-related events"""
         log_entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": get_central_time().isoformat(),
+            "timezone": "America/Chicago",
             "event_type": "security",
             "service": "calendar-sync",
             "logger": self.name,
@@ -114,7 +119,8 @@ class JsonFormatter(logging.Formatter):
         except (json.JSONDecodeError, TypeError):
             # Otherwise, create a JSON log entry
             log_entry = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": get_central_time().isoformat(),
+                "timezone": "America/Chicago",
                 "level": record.levelname,
                 "logger": record.name,
                 "message": record.getMessage()
