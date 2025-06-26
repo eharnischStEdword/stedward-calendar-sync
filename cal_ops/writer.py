@@ -174,18 +174,12 @@ class CalendarWriter:
             else:
                 location_text = str(source_location)
         
-        # Get original body content if it exists
-        original_body = source_event.get('body', {})
-        original_content = original_body.get('content', '') if isinstance(original_body, dict) else ''
-        
-        # Create body content with location
+        # Create body content with ONLY location - NO original content
         body_content = ""
         if location_text:
             body_content = f"<p><strong>Location:</strong> {location_text}</p>"
         
-        # Append original content if it exists and doesn't already contain location
-        if original_content and 'Location:' not in original_content:
-            body_content += f"\n{original_content}"
+        # DO NOT append original content - public calendar should only show location
         
         # Build event data
         event_data = {
