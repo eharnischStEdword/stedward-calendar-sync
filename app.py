@@ -642,6 +642,187 @@ signal.signal(signal.SIGTERM, signal_handler)
 logger.info("🚀 Starting St. Edward Calendar Sync")
 initialize_components()
 
+# Add this improved duplicate detector to your app.py
+
+@app.route('/debug/precise-duplicates')
+def precise_duplicates():
+    """Find TRUE duplicates - identical events that shouldn't exist twice"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        if not target_events:
+            return jsonify({"error": "Could not retrieve target events"}), 500
+        
+        # Group events by EXACT match criteria for true duplicates
+        exact_groups = {}
+        
+        for event in target_events:
+            subject = event.get('subject', '').strip()
+            start_datetime = event.get('start', {}).get('dateTime', '')
+            end_datetime = event.get('end', {}).get('dateTime', '')
+            is_all_day = event.get('isAllDay', False)
+            event_type = event.get('type', 'singleInstance')
+            
+            # Skip recurring series masters and occurrences for now - focus on single events
+            if event_type in ['seriesMaster', 'occurrence']:
+                continue
+                
+            # Create precise matching key
+            # For single events: subject + start + end + all-day flag
+            key = f"{subject}|{start_datetime}|{end_datetime}|{is_all_day}"
+            
+            if key not in exact_groups:
+                exact_groups[key] = []
+            
+            exact_groups[key].append({
+                'id': event.get('id'),
+                'subject': event.get('subject'),
+                'start': start_datetime,
+                'end': end_datetime,
+                'isAllDay': is_all_day,
+                'type': event_type,
+                'created': event.get('createdDateTime'),
+                'modified': event.get('lastModifiedDateTime'),
+                'categories': event.get('categories', [])
+            })
+        
+        # Find groups with multiple identical events
+        true_duplicates = {}
+        for key, events in exact_groups.items():
+            if len(events) > 1:
+                # Parse the key for display
+                parts = key.split('|')
+                subject = parts[0]
+                start = parts[1]
+                
+                # Extract date for easier reading
+                date_part = start.split('T')[0] if 'T' in start else start
+                
+                true_duplicates[key] = {
+                    'subject': subject,
+                    'date': date_part,
+                    'start_time': start,
+                    'count': len(events),
+                    'events': events,
+                    'description': f"'{subject}' on {date_part}"
+                }
+        
+        return jsonify({
+            "total_events_checked": len(target_events),
+            "true_duplicate_groups": len(true_duplicates),
+            "true_duplicates": true_duplicates,
+            "summary": {
+                "total_duplicate_events": sum(dup['count'] for dup in true_duplicates.values()),
+                "duplicate_descriptions": [dup['description'] for dup in true_duplicates.values()]
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/debug/clean-precise-duplicates', methods=['POST'])
+def clean_precise_duplicates():
+    """Remove TRUE duplicates only - keeps legitimate recurring series"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        if not target_events:
+            return jsonify({"error": "Could not retrieve target events"}), 500
+        
+        # Group events by EXACT match criteria
+        exact_groups = {}
+        
+        for event in target_events:
+            subject = event.get('subject', '').strip()
+            start_datetime = event.get('start', {}).get('dateTime', '')
+            end_datetime = event.get('end', {}).get('dateTime', '')
+            is_all_day = event.get('isAllDay', False)
+            event_type = event.get('type', 'singleInstance')
+            
+            # Skip recurring series for this cleanup - only handle single events
+            if event_type in ['seriesMaster', 'occurrence']:
+                continue
+                
+            # Create precise matching key
+            key = f"{subject}|{start_datetime}|{end_datetime}|{is_all_day}"
+            
+            if key not in exact_groups:
+                exact_groups[key] = []
+            exact_groups[key].append(event)
+        
+        # Find true duplicates and keep only the newest
+        to_delete = []
+        kept_count = 0
+        duplicate_groups_found = 0
+        
+        for key, events in exact_groups.items():
+            if len(events) > 1:
+                duplicate_groups_found += 1
+                
+                # Sort by creation time, keep the newest
+                events.sort(key=lambda x: x.get('createdDateTime', ''), reverse=True)
+                kept_event = events[0]
+                duplicates = events[1:]
+                
+                kept_count += 1
+                to_delete.extend(duplicates)
+                
+                subject = kept_event.get('subject', 'Unknown')
+                start = kept_event.get('start', {}).get('dateTime', '')
+                date_part = start.split('T')[0] if 'T' in start else start
+                
+                logger.info(f"Found {len(duplicates)} TRUE duplicates for '{subject}' on {date_part}, keeping newest")
+        
+        # Delete the true duplicates
+        deleted_count = 0
+        failed_deletes = []
+        
+        for event in to_delete:
+            event_id = event.get('id')
+            subject = event.get('subject', 'Unknown')
+            
+            if sync_engine.writer.delete_event(target_id, event_id):
+                deleted_count += 1
+                logger.info(f"Deleted TRUE duplicate: {subject} (ID: {event_id[:8]}...)")
+            else:
+                failed_deletes.append(event_id)
+                logger.error(f"Failed to delete TRUE duplicate: {subject} (ID: {event_id[:8]}...)")
+        
+        return jsonify({
+            "success": True,
+            "total_events_found": len(target_events),
+            "true_duplicate_groups": duplicate_groups_found,
+            "true_duplicates_found": len(to_delete),
+            "true_duplicates_deleted": deleted_count,
+            "failed_deletes": len(failed_deletes),
+            "events_kept": kept_count + len([g for g in exact_groups.values() if len(g) == 1]),
+            "failed_delete_ids": failed_deletes,
+            "note": "This only removes TRUE duplicates (identical single events), not legitimate recurring series with same names"
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
