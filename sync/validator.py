@@ -5,6 +5,7 @@ import logging
 from typing import List, Dict, Tuple, Set
 from datetime import datetime, timedelta
 from collections import defaultdict
+from utils.timezone import get_central_time
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ class SyncValidator:
         from datetime import datetime, timedelta
         import config
         
-        cutoff_date = datetime.now() - timedelta(days=config.SYNC_CUTOFF_DAYS)
+        cutoff_date = get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
         past_events = []
         
         for event in target_events:
@@ -326,7 +327,8 @@ class SyncValidator:
         is_valid, validations = self.validate_sync_result(source_events, target_events)
         
         report = {
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': get_central_time().isoformat(),
+            'timezone': 'America/Chicago',
             'is_valid': is_valid,
             'source_event_count': len(source_events),
             'target_event_count': len(target_events),
