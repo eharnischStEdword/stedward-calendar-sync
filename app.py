@@ -1015,6 +1015,96 @@ def clean_visual_duplicates():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/calendar-view-duplicates')
+def calendar_view_duplicates():
+    """Check duplicates using calendarView (actual calendar instances)"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        headers = sync_engine.auth.get_headers()
+        if not headers:
+            return jsonify({"error": "No valid headers"}), 401
+        
+        # Use calendarView to get actual calendar instances
+        import requests
+        from datetime import datetime, timedelta
+        
+        # Get events for next 30 days (including the dates you showed)
+        start_date = "2025-06-20T00:00:00.000Z"
+        end_date = "2025-07-10T23:59:59.999Z"
+        
+        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{target_id}/calendarView"
+        params = {
+            'startDateTime': start_date,
+            'endDateTime': end_date,
+            '$select': 'id,subject,start,end,type,seriesMasterId,categories,createdDateTime'
+        }
+        
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        
+        if response.status_code != 200:
+            return jsonify({"error": f"API error: {response.status_code}", "details": response.text}), 500
+        
+        events = response.json().get('value', [])
+        
+        # Group by visual appearance (subject + start time)
+        visual_groups = {}
+        
+        for event in events:
+            subject = event.get('subject', '').strip()
+            start_time = event.get('start', {}).get('dateTime', '')
+            
+            # Create visual key
+            visual_key = f"{subject}|{start_time}"
+            
+            if visual_key not in visual_groups:
+                visual_groups[visual_key] = []
+            visual_groups[visual_key].append({
+                'id': event.get('id'),
+                'subject': event.get('subject'),
+                'start': start_time,
+                'type': event.get('type'),
+                'seriesMasterId': event.get('seriesMasterId'),
+                'created': event.get('createdDateTime')
+            })
+        
+        # Find duplicates
+        duplicates = {}
+        for key, events_list in visual_groups.items():
+            if len(events_list) > 1:
+                parts = key.split('|')
+                subject = parts[0]
+                start_time = parts[1] if len(parts) > 1 else ''
+                
+                duplicates[key] = {
+                    'subject': subject,
+                    'start_time': start_time,
+                    'count': len(events_list),
+                    'events': events_list
+                }
+        
+        return jsonify({
+            "total_calendar_instances": len(events),
+            "duplicate_groups": len(duplicates),
+            "duplicates": duplicates,
+            "summary": {
+                "total_duplicate_events": sum(dup['count'] for dup in duplicates.values()),
+                "date_range": f"{start_date} to {end_date}"
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
