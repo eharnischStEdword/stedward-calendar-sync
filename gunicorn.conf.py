@@ -1,28 +1,23 @@
 import os
-import multiprocessing
 
-# Worker configuration
-workers = int(os.environ.get('GUNICORN_WORKERS', 2))
-worker_class = 'gthread'
-threads = int(os.environ.get('GUNICORN_THREADS', 4))
-
-# Timeout configuration - critical for Render stability
-timeout = int(os.environ.get('GUNICORN_TIMEOUT', 120))  # 120 seconds vs default 30
-graceful_timeout = int(os.environ.get('GUNICORN_GRACEFUL_TIMEOUT', 60))  # Time for graceful shutdown
+# Basic worker configuration
+workers = 1  # Start with just 1 worker for Render
+worker_class = 'sync'  # Use sync workers instead of threaded
+timeout = 120
 keepalive = 2
 
-# Bind configuration
+# Bind to the port Render provides
 bind = f"0.0.0.0:{os.environ.get('PORT', '10000')}"
-
-# Performance settings
-preload_app = True  # Load app before forking workers
-max_requests = 1000  # Restart workers after handling this many requests
-max_requests_jitter = 100  # Add randomness to avoid all workers restarting at once
 
 # Logging
 loglevel = 'info'
-accesslog = '-'  # Log to stdout
-errorlog = '-'   # Log to stderr
+accesslog = '-'
+errorlog = '-'
+
+# Don't preload - let each worker load the app
+preload_app = False
 
 # Process naming
-proc_name = 'stedward-calendar-sync'
+proc_name = 'calendar-sync'
+
+print(f"Gunicorn binding to {bind}")
