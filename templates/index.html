@@ -184,6 +184,12 @@
             animation: spin 1s linear infinite;
         }
 
+        .timezone-note {
+            font-size: 0.8rem;
+            color: #666;
+            font-style: italic;
+        }
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -242,11 +248,12 @@
                     <div style="text-align: right;">
                         <div>Last sync: <span id="last-sync-time">
                             {% if last_sync_time %}
-                                {{ last_sync_time.strftime('%b %d at %I:%M %p') }}
+                                {{ last_sync_time_local }}
                             {% else %}
                                 Never
                             {% endif %}
                         </span></div>
+                        <div class="timezone-note" id="timezone-display"></div>
                     </div>
                 </div>
 
@@ -283,6 +290,46 @@
 
     <script>
         let isOperationInProgress = false;
+        
+        // Detect and display user's timezone
+        function displayUserTimezone() {
+            try {
+                const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                const timezoneDisplay = document.getElementById('timezone-display');
+                if (timezoneDisplay) {
+                    timezoneDisplay.textContent = `Times shown in ${timezone}`;
+                }
+            } catch (e) {
+                console.log('Could not detect timezone:', e);
+            }
+        }
+
+        function formatLocalTime(utcTimeString) {
+            if (!utcTimeString) return 'Never';
+            
+            try {
+                const utcDate = new Date(utcTimeString);
+                if (isNaN(utcDate.getTime())) {
+                    return 'Never';
+                }
+                
+                // Format for Central Time (Chicago timezone)
+                const options = {
+                    timeZone: 'America/Chicago',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                };
+                
+                const localTime = utcDate.toLocaleString('en-US', options);
+                return localTime;
+            } catch (e) {
+                console.error('Time formatting error:', e);
+                return 'Never';
+            }
+        }
 
         function showMessage(text, type = 'info', duration = 5000) {
             const messagesArea = document.getElementById('messages-area');
@@ -362,26 +409,11 @@
                 syncText.textContent = 'Never Synced';
             }
 
-            // Update last sync time
+            // Update last sync time - NOW WITH PROPER TIMEZONE CONVERSION
             const lastSyncElement = document.getElementById('last-sync-time');
             if (status.last_sync_time && status.last_sync_result && status.last_sync_result.success) {
-                try {
-                    const syncTime = new Date(status.last_sync_time);
-                    if (!isNaN(syncTime.getTime())) {
-                        const options = { 
-                            month: 'short', 
-                            day: 'numeric', 
-                            hour: 'numeric', 
-                            minute: '2-digit',
-                            hour12: true 
-                        };
-                        lastSyncElement.textContent = syncTime.toLocaleDateString('en-US', options);
-                    } else {
-                        lastSyncElement.textContent = 'Never';
-                    }
-                } catch (e) {
-                    lastSyncElement.textContent = 'Never';
-                }
+                const formattedTime = formatLocalTime(status.last_sync_time);
+                lastSyncElement.textContent = formattedTime;
             } else {
                 lastSyncElement.textContent = 'Never';
             }
@@ -458,6 +490,7 @@
 
         // Initialize on page load
         window.addEventListener('load', () => {
+            displayUserTimezone();
             loadStatus();
             
             // Refresh status every 60 seconds
