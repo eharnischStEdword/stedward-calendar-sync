@@ -628,33 +628,39 @@ def internal_error(error):
     return jsonify({"error": "Internal server error"}), 500
 
 
+# ==================== STARTUP INITIALIZATION ====================
+
+# Try to restore auth on startup if possible
+try:
+    if auth_manager.is_authenticated():
+        scheduler.start()
+        logger.info("Authentication restored, scheduler started")
+except Exception as e:
+    logger.warning(f"Could not restore authentication on startup: {e}")
+
+# Add startup success indicator
+logger.info("=" * 60)
+logger.info("🎉 APPLICATION INITIALIZED SUCCESSFULLY")
+logger.info("📊 Check /health for basic status")
+logger.info("🔍 Check /health/detailed for full diagnostics")
+logger.info("🔐 Visit the main page to authenticate if needed")
+logger.info("=" * 60)
+
+
 # ==================== MAIN ====================
 
 if __name__ == '__main__':
+    # This block only runs when the script is executed directly
+    # (not when imported by Gunicorn)
+    
     # Validate configuration
     if not config.CLIENT_SECRET:
         logger.error("CLIENT_SECRET environment variable is not set!")
         exit(1)
     
-    # Try to restore auth on startup if possible
-    try:
-        if auth_manager.is_authenticated():
-            scheduler.start()
-            logger.info("Authentication restored, scheduler started")
-    except Exception as e:
-        logger.warning(f"Could not restore authentication on startup: {e}")
-    
-    # Run Flask app
+    # Run Flask development server
     port = config.PORT
-    logger.info(f"🚀 Starting Flask app on port {port}")
-    logger.info(f"🌐 App will be available at: https://stedward-calendar-sync.onrender.com")
+    logger.info(f"🚀 Starting Flask development server on port {port}")
+    logger.info(f"🌐 Development server will be available at: http://localhost:{port}")
     
-    # Add startup success indicator
-    logger.info("=" * 60)
-    logger.info("🎉 SERVER STARTED SUCCESSFULLY")
-    logger.info("📊 Check /health for basic status")
-    logger.info("🔍 Check /health/detailed for full diagnostics")
-    logger.info("🔐 Visit the main page to authenticate if needed")
-    logger.info("=" * 60)
-    
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=True)
