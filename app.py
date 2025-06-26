@@ -1105,6 +1105,257 @@ def calendar_view_duplicates():
             "traceback": traceback.format_exc()
         }), 500
 
+# Add these endpoints to your app.py for better diagnostics
+
+@app.route('/debug/comprehensive-duplicates')
+def comprehensive_duplicates():
+    """Comprehensive duplicate detection across multiple date ranges"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        headers = sync_engine.auth.get_headers()
+        if not headers:
+            return jsonify({"error": "No valid headers"}), 401
+        
+        import requests
+        from datetime import datetime, timedelta
+        
+        # Check multiple approaches
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "calendar_view_analysis": {},
+            "events_analysis": {},
+            "date_ranges_checked": []
+        }
+        
+        # Test multiple date ranges
+        date_ranges = [
+            # Past 30 days
+            {
+                "name": "past_30_days",
+                "start": (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00.000Z"),
+                "end": datetime.now().strftime("%Y-%m-%dT23:59:59.999Z")
+            },
+            # Next 30 days  
+            {
+                "name": "next_30_days",
+                "start": datetime.now().strftime("%Y-%m-%dT00:00:00.000Z"),
+                "end": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%dT23:59:59.999Z")
+            },
+            # Specific range around June 22-28 (where you saw duplicates)
+            {
+                "name": "june_focus",
+                "start": "2025-06-20T00:00:00.000Z",
+                "end": "2025-06-30T23:59:59.999Z"
+            }
+        ]
+        
+        for date_range in date_ranges:
+            range_name = date_range["name"]
+            results["date_ranges_checked"].append(date_range)
+            
+            # Method 1: CalendarView (actual instances)
+            try:
+                url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{target_id}/calendarView"
+                params = {
+                    'startDateTime': date_range["start"],
+                    'endDateTime': date_range["end"],
+                    '$select': 'id,subject,start,end,type,seriesMasterId,categories,createdDateTime,lastModifiedDateTime'
+                }
+                
+                response = requests.get(url, headers=headers, params=params, timeout=30)
+                
+                if response.status_code == 200:
+                    calendar_events = response.json().get('value', [])
+                    
+                    # Analyze for visual duplicates
+                    visual_groups = {}
+                    for event in calendar_events:
+                        subject = event.get('subject', '').strip()
+                        start_time = event.get('start', {}).get('dateTime', '')
+                        
+                        # Extract date and hour for grouping
+                        if 'T' in start_time:
+                            date_part = start_time.split('T')[0]
+                            hour_part = start_time.split('T')[1][:2]  # Just hour
+                            visual_key = f"{subject}|{date_part}|{hour_part}"
+                        else:
+                            visual_key = f"{subject}|{start_time}"
+                        
+                        if visual_key not in visual_groups:
+                            visual_groups[visual_key] = []
+                        visual_groups[visual_key].append({
+                            'id': event.get('id'),
+                            'subject': subject,
+                            'start': start_time,
+                            'type': event.get('type'),
+                            'created': event.get('createdDateTime'),
+                            'modified': event.get('lastModifiedDateTime')
+                        })
+                    
+                    # Find duplicates
+                    duplicates = {k: v for k, v in visual_groups.items() if len(v) > 1}
+                    
+                    results["calendar_view_analysis"][range_name] = {
+                        "total_instances": len(calendar_events),
+                        "duplicate_groups": len(duplicates),
+                        "duplicates": duplicates,
+                        "all_events": calendar_events[:10]  # First 10 for inspection
+                    }
+                else:
+                    results["calendar_view_analysis"][range_name] = {
+                        "error": f"API error: {response.status_code}",
+                        "details": response.text[:200]
+                    }
+            except Exception as e:
+                results["calendar_view_analysis"][range_name] = {
+                    "error": str(e)
+                }
+            
+            # Method 2: Regular events endpoint (for comparison)
+            try:
+                url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{target_id}/events"
+                params = {
+                    '$select': 'id,subject,start,end,type,seriesMasterId,categories,createdDateTime,lastModifiedDateTime',
+                    '$top': 100
+                }
+                
+                response = requests.get(url, headers=headers, params=params, timeout=30)
+                
+                if response.status_code == 200:
+                    logical_events = response.json().get('value', [])
+                    
+                    results["events_analysis"][range_name] = {
+                        "total_events": len(logical_events),
+                        "event_types": {},
+                        "recurring_events": [],
+                        "single_events": []
+                    }
+                    
+                    # Analyze event types
+                    type_counts = {}
+                    for event in logical_events:
+                        event_type = event.get('type', 'unknown')
+                        type_counts[event_type] = type_counts.get(event_type, 0) + 1
+                        
+                        if event_type == 'seriesMaster':
+                            results["events_analysis"][range_name]["recurring_events"].append({
+                                'subject': event.get('subject'),
+                                'id': event.get('id'),
+                                'start': event.get('start', {}).get('dateTime'),
+                                'recurrence': event.get('recurrence', {}).get('pattern', {}).get('type')
+                            })
+                        else:
+                            results["events_analysis"][range_name]["single_events"].append({
+                                'subject': event.get('subject'),
+                                'id': event.get('id'),
+                                'start': event.get('start', {}).get('dateTime'),
+                                'type': event_type
+                            })
+                    
+                    results["events_analysis"][range_name]["event_types"] = type_counts
+                else:
+                    results["events_analysis"][range_name] = {
+                        "error": f"API error: {response.status_code}"
+                    }
+            except Exception as e:
+                results["events_analysis"][range_name] = {
+                    "error": str(e)
+                }
+        
+        return jsonify(results)
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/debug/realtime-sync-test', methods=['POST'])
+def realtime_sync_test():
+    """Trigger a sync and immediately check for duplicates"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        logger.info("🧪 REALTIME SYNC TEST - Before sync analysis")
+        
+        # 1. Get state before sync
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        before_events = sync_engine.reader.get_calendar_events(target_id)
+        before_count = len(before_events) if before_events else 0
+        
+        # 2. Trigger sync
+        logger.info("🔄 Triggering sync...")
+        sync_result = sync_engine.sync_calendars()
+        
+        # 3. Get state after sync
+        after_events = sync_engine.reader.get_calendar_events(target_id)
+        after_count = len(after_events) if after_events else 0
+        
+        # 4. Check for duplicates immediately after sync
+        visual_duplicates = {}
+        if after_events:
+            visual_groups = {}
+            for event in after_events:
+                subject = event.get('subject', '').strip()
+                start_time = event.get('start', {}).get('dateTime', '')
+                
+                if 'T' in start_time:
+                    date_part = start_time.split('T')[0]
+                    time_part = start_time.split('T')[1][:5]
+                    visual_key = f"{subject}|{date_part}|{time_part}"
+                else:
+                    visual_key = f"{subject}|{start_time}"
+                
+                if visual_key not in visual_groups:
+                    visual_groups[visual_key] = []
+                visual_groups[visual_key].append({
+                    'id': event.get('id'),
+                    'subject': subject,
+                    'start': start_time,
+                    'type': event.get('type'),
+                    'created': event.get('createdDateTime')
+                })
+            
+            visual_duplicates = {k: v for k, v in visual_groups.items() if len(v) > 1}
+        
+        return jsonify({
+            "sync_result": sync_result,
+            "before_sync": {
+                "event_count": before_count
+            },
+            "after_sync": {
+                "event_count": after_count,
+                "change": after_count - before_count
+            },
+            "immediate_duplicate_check": {
+                "duplicate_groups_found": len(visual_duplicates),
+                "duplicates": visual_duplicates
+            },
+            "analysis": {
+                "duplicates_created_by_sync": len(visual_duplicates) > 0,
+                "sync_added_events": sync_result.get('added', 0),
+                "net_change": after_count - before_count
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
