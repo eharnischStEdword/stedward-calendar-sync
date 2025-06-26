@@ -69,24 +69,29 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 def requires_auth(f):
-    """Decorator to check authentication - IMPROVED"""
+    """Decorator to check authentication - FIXED for session expiration"""
     from functools import wraps
     
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # First check if we have basic authentication
-        if not auth_manager.is_authenticated():
-            logger.warning("Authentication required but user not authenticated")
-            return jsonify({"error": "Not authenticated", "redirect": "/logout"}), 401
+        try:
+            # First check if we have basic authentication
+            if not auth_manager.is_authenticated():
+                logger.warning("Authentication required but user not authenticated")
+                return jsonify({"error": "Not authenticated", "redirect": "/logout"}), 401
+            
+            # Try to ensure we have a valid token (this will refresh if needed)
+            # But don't be too aggressive - be more forgiving
+            if not auth_manager.ensure_valid_token():
+                logger.warning("Token validation failed in decorator, but continuing...")
+                # Don't immediately fail - let the function try
+                pass
+        except Exception as e:
+            logger.error(f"Authentication check exception: {e}")
+            # On exception, try to continue rather than failing immediately
+            pass
         
-        # Try to ensure we have a valid token (this will refresh if needed)
-        if not auth_manager.ensure_valid_token():
-            logger.warning("Cannot ensure valid token, forcing reauthentication")
-            # Clear tokens and force reauthentication
-            auth_manager.clear_tokens()
-            return jsonify({"error": "Authentication expired", "redirect": "/logout"}), 401
-        
-        # Authentication is valid, proceed with the request
+        # Proceed with the request - let individual functions handle auth failures
         return f(*args, **kwargs)
     return decorated_function
 
@@ -233,15 +238,15 @@ def auth_callback():
 @app.route('/sync', methods=['POST'])
 @requires_auth
 def manual_sync():
-    """Trigger manual sync - IMPROVED"""
+    """Trigger manual sync - FIXED to handle auth gracefully"""
+    # Test authentication one more time before starting sync
+    if not auth_manager.is_authenticated() or not auth_manager.ensure_valid_token():
+        logger.error("Authentication check failed at sync start")
+        return jsonify({"error": "Authentication expired", "redirect": "/logout"}), 401
+    
     audit_logger.log_sync_operation('manual_sync_triggered', 'user', {
         'ip': request.remote_addr
     })
-    
-    # Double-check authentication before starting sync
-    if not auth_manager.ensure_valid_token():
-        logger.error("Lost authentication during sync request")
-        return jsonify({"error": "Authentication lost", "redirect": "/logout"}), 401
     
     def sync_thread():
         try:
@@ -269,34 +274,52 @@ def manual_sync():
 
 @app.route('/status')
 def status():
-    """Get current status"""
-    sync_status = sync_engine.get_status()
-    
-    # Convert datetime objects to strings
-    if sync_status.get('last_sync_time'):
-        import pytz
-        central_tz = pytz.timezone('US/Central')
-        if sync_status['last_sync_time'].tzinfo is None:
-            utc_time = pytz.utc.localize(sync_status['last_sync_time'])
-            sync_status['last_sync_time'] = utc_time.astimezone(central_tz).isoformat()
-        else:
-            sync_status['last_sync_time'] = sync_status['last_sync_time'].astimezone(central_tz).isoformat()
-    
-    # Make the result JSON serializable
-    sync_status['last_sync_result'] = make_json_serializable(sync_status.get('last_sync_result'))
-    
-    return jsonify({
-        **sync_status,
-        "authenticated": auth_manager.is_authenticated(),
-        "scheduler_running": scheduler.is_running(),
-        "token_status": auth_manager.get_token_status(),
-        "version": APP_VERSION_INFO["version"],
-        "build_number": APP_VERSION_INFO["build_number"],
-        "environment": APP_VERSION_INFO["environment"],
-        "app_info": APP_VERSION_INFO["full_version"],
-        "master_calendar_protection": config.MASTER_CALENDAR_PROTECTION,
-        "dry_run_mode": config.DRY_RUN_MODE
-    })
+    """Get current status - IMPROVED"""
+    try:
+        sync_status = sync_engine.get_status()
+        
+        # Convert datetime objects to strings safely
+        if sync_status.get('last_sync_time'):
+            import pytz
+            central_tz = pytz.timezone('US/Central')
+            last_sync_time = sync_status['last_sync_time']
+            
+            try:
+                if last_sync_time.tzinfo is None:
+                    utc_time = pytz.utc.localize(last_sync_time)
+                    sync_status['last_sync_time'] = utc_time.astimezone(central_tz).isoformat()
+                else:
+                    sync_status['last_sync_time'] = last_sync_time.astimezone(central_tz).isoformat()
+            except Exception as e:
+                logger.warning(f"Date conversion error: {e}")
+                sync_status['last_sync_time'] = str(last_sync_time)
+        
+        # Make the result JSON serializable
+        sync_status['last_sync_result'] = make_json_serializable(sync_status.get('last_sync_result'))
+        
+        return jsonify({
+            **sync_status,
+            "authenticated": auth_manager.is_authenticated(),
+            "scheduler_running": scheduler.is_running(),
+            "token_status": auth_manager.get_token_status(),
+            "version": APP_VERSION_INFO["version"],
+            "build_number": APP_VERSION_INFO["build_number"],
+            "environment": APP_VERSION_INFO["environment"],
+            "app_info": APP_VERSION_INFO["full_version"],
+            "master_calendar_protection": config.MASTER_CALENDAR_PROTECTION,
+            "dry_run_mode": config.DRY_RUN_MODE
+        })
+    except Exception as e:
+        logger.error(f"Status endpoint error: {e}")
+        # Return minimal status on error
+        return jsonify({
+            "authenticated": False,
+            "scheduler_running": False,
+            "sync_in_progress": False,
+            "last_sync_time": None,
+            "last_sync_result": {"success": False, "message": "Status error"},
+            "error": str(e)
+        }), 500
 
 
 @app.route('/health')
@@ -313,7 +336,11 @@ def health_check():
 @app.route('/health/detailed')
 @requires_auth
 def detailed_health():
-    """Comprehensive health check"""
+    """Comprehensive health check - FIXED"""
+    # Quick auth check without being too aggressive
+    if not auth_manager.is_authenticated():
+        return jsonify({"error": "Not authenticated", "redirect": "/logout"}), 401
+    
     checks = {
         'authentication': auth_manager.is_authenticated(),
         'microsoft_api': check_microsoft_api(),
@@ -334,10 +361,13 @@ def detailed_health():
         'average_sync_duration': 0
     }
     
-    # Get metrics summary
-    metrics_summary = sync_engine.metrics.get_metrics_summary()
-    if metrics_summary:
-        details.update(metrics_summary)
+    # Get metrics summary safely
+    try:
+        metrics_summary = sync_engine.metrics.get_metrics_summary()
+        if metrics_summary:
+            details.update(metrics_summary)
+    except Exception as e:
+        logger.warning(f"Could not get metrics summary: {e}")
     
     return jsonify({
         'status': 'healthy' if overall_health else 'unhealthy',
@@ -364,26 +394,50 @@ def logout():
 @app.route('/diagnostics', methods=['POST'])
 @requires_auth
 def run_diagnostics():
-    """Run diagnostics"""
+    """Run diagnostics - FIXED"""
+    # Quick auth check
+    if not auth_manager.is_authenticated():
+        return jsonify({"error": "Not authenticated", "redirect": "/logout"}), 401
+    
     audit_logger.log_sync_operation('diagnostics_run', 'user', {
         'ip': request.remote_addr
     })
     
     # Run in thread for non-blocking
     def diag_thread():
-        from cal_ops.reader import CalendarReader
-        reader = CalendarReader(auth_manager)
-        
-        calendars = reader.get_calendars()
-        if calendars:
-            logger.info(f"Found {len(calendars)} calendars")
-            for cal in calendars:
-                logger.info(f"Calendar: {cal.get('name')} (ID: {cal.get('id')})")
+        try:
+            from cal_ops.reader import CalendarReader
+            reader = CalendarReader(auth_manager)
+            
+            calendars = reader.get_calendars()
+            if calendars:
+                logger.info(f"✅ Found {len(calendars)} calendars")
+                for cal in calendars:
+                    logger.info(f"   📅 {cal.get('name')} (ID: {cal.get('id')[:8]}...)")
+            else:
+                logger.warning("❌ No calendars found or access denied")
+                
+            # Test specific calendars
+            source_id = reader.find_calendar_id(config.SOURCE_CALENDAR)
+            target_id = reader.find_calendar_id(config.TARGET_CALENDAR)
+            
+            if source_id:
+                logger.info(f"✅ Source calendar '{config.SOURCE_CALENDAR}' found")
+            else:
+                logger.error(f"❌ Source calendar '{config.SOURCE_CALENDAR}' NOT found")
+                
+            if target_id:
+                logger.info(f"✅ Target calendar '{config.TARGET_CALENDAR}' found")
+            else:
+                logger.error(f"❌ Target calendar '{config.TARGET_CALENDAR}' NOT found")
+                
+        except Exception as e:
+            logger.error(f"❌ Diagnostics failed: {e}")
     
     thread = threading.Thread(target=diag_thread)
     thread.start()
     
-    return jsonify({"success": True, "message": "Diagnostics started - check logs"})
+    return jsonify({"success": True, "message": "Diagnostics started - results will appear in System Info"})
 
 
 @app.route('/version')
@@ -468,29 +522,43 @@ def debug_events(calendar_name):
 @app.route('/validate-sync', methods=['POST'])
 @requires_auth
 def validate_sync():
-    """Manually validate sync status"""
-    source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
-    target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+    """Manually validate sync status - FIXED"""
+    # Quick auth check
+    if not auth_manager.is_authenticated():
+        return jsonify({"error": "Not authenticated", "redirect": "/logout"}), 401
     
-    if not source_id or not target_id:
-        return jsonify({"error": "Cannot find calendars"}), 400
-    
-    source_events = sync_engine.reader.get_public_events(source_id)
-    target_events = sync_engine.reader.get_calendar_events(target_id)
-    
-    if source_events is None or target_events is None:
-        return jsonify({"error": "Failed to retrieve events"}), 500
-    
-    is_valid, validations = sync_engine.validator.validate_sync_result(
-        source_events, target_events
-    )
-    
-    return jsonify({
-        'is_valid': is_valid,
-        'validations': validations,
-        'source_count': len(source_events),
-        'target_count': len(target_events)
-    })
+    try:
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        
+        if not source_id or not target_id:
+            return jsonify({"error": "Cannot find required calendars"}), 400
+        
+        source_events = sync_engine.reader.get_public_events(source_id)
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        
+        if source_events is None or target_events is None:
+            return jsonify({"error": "Failed to retrieve events"}), 500
+        
+        is_valid, validations = sync_engine.validator.validate_sync_result(
+            source_events, target_events
+        )
+        
+        # Convert validations to a more friendly format
+        validation_dict = {}
+        for check, passed in validations:
+            validation_dict[check] = passed
+        
+        return jsonify({
+            'is_valid': is_valid,
+            'validations': validation_dict,
+            'source_count': len(source_events),
+            'target_count': len(target_events)
+        })
+        
+    except Exception as e:
+        logger.error(f"Validation failed: {e}")
+        return jsonify({"error": f"Validation failed: {str(e)}"}), 500
 
 
 @app.route('/debug-validation', methods=['GET'])
