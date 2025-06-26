@@ -381,6 +381,57 @@ signal.signal(signal.SIGTERM, signal_handler)
 logger.info("🚀 Starting St. Edward Calendar Sync")
 initialize_components()
 
+# Add this route to your app.py file
+
+@app.route('/debug/calendars')
+def debug_calendars():
+    """Debug: List all available calendars"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get all calendars
+        all_calendars = sync_engine.reader.get_calendars()
+        
+        if not all_calendars:
+            return jsonify({"error": "Could not retrieve calendars"}), 500
+        
+        # Format calendar info
+        calendar_info = []
+        for cal in all_calendars:
+            calendar_info.append({
+                "name": cal.get('name'),
+                "id": cal.get('id'),
+                "owner": cal.get('owner', {}).get('name', 'Unknown'),
+                "canEdit": cal.get('canEdit', False),
+                "canShare": cal.get('canShare', False)
+            })
+        
+        # Also show which ones we're configured to use
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        
+        return jsonify({
+            "all_calendars": calendar_info,
+            "configuration": {
+                "source_calendar_name": config.SOURCE_CALENDAR,
+                "target_calendar_name": config.TARGET_CALENDAR,
+                "source_calendar_id": source_id,
+                "target_calendar_id": target_id,
+                "shared_mailbox": config.SHARED_MAILBOX
+            },
+            "web_calendar_url": "https://outlook.office365.com/owa/calendar/fbd704b50f2540068cb048469a830830@stedward.org/e399b41349f3441ca9b092248fc807f56673636587944979855/calendar.html"
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
