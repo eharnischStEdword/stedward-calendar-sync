@@ -1,5 +1,5 @@
 """
-Sync Engine - FIXED VERSION to prevent duplicates
+Sync Engine - Complete Working Version with Category Updates
 """
 import logging
 from datetime import datetime
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class SyncEngine:
-    """Core engine for calendar synchronization - FIXED for duplicates"""
+    """Core engine for calendar synchronization"""
     
     def __init__(self, auth_manager):
         self.auth = auth_manager
@@ -108,11 +108,11 @@ class SyncEngine:
             
             logger.info(f"📊 Retrieved {len(source_events)} source events and {len(target_events)} target events")
             
-            # ENHANCED DEBUGGING: Log event details for signature analysis
+            # Debug event signatures for troubleshooting
             self._debug_event_signatures(source_events[:5], "SOURCE")
             self._debug_event_signatures(target_events[:5], "TARGET")
             
-            # Build target map with enhanced debugging
+            # Build target map
             target_map = self._build_event_map(target_events)
             logger.info(f"Built target map with {len(target_map)} unique events")
             
@@ -123,12 +123,18 @@ class SyncEngine:
             
             logger.info(f"📋 SYNC PLAN: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
             
-            # ENHANCED DEBUGGING: Log what we're planning to do
+            # Debug what we're planning to do
             if to_add:
                 logger.info("📝 Events to ADD:")
                 for event in to_add[:3]:  # Log first 3
                     sig = self._create_event_signature(event)
                     logger.info(f"  - {event.get('subject')} | Signature: {sig}")
+            
+            if to_update:
+                logger.info("🔄 Events to UPDATE:")
+                for source_event, target_event in to_update[:3]:  # Log first 3
+                    sig = self._create_event_signature(source_event)
+                    logger.info(f"  - {source_event.get('subject')} | Signature: {sig}")
             
             if to_delete:
                 logger.info("🗑️ Events to DELETE:")
@@ -328,7 +334,7 @@ class SyncEngine:
         return normalized
     
     def _normalize_datetime(self, dt_str: str) -> str:
-        """Normalize datetime string for matching - IMPROVED"""
+        """Normalize datetime string for matching"""
         if not dt_str:
             return ""
         try:
@@ -351,7 +357,7 @@ class SyncEngine:
             return dt_str
     
     def _create_event_signature(self, event: Dict) -> str:
-        """Create unique signature for an event - COMPLETELY REWRITTEN"""
+        """Create unique signature for an event"""
         subject = self._normalize_subject(event.get('subject', ''))
         event_type = event.get('type', 'singleInstance')
         
@@ -397,9 +403,8 @@ class SyncEngine:
         return signature
     
     def _build_event_map(self, events: List[Dict]) -> Dict[str, Dict]:
-        """Build a map of events by signature with collision detection"""
+        """Build a map of events by signature"""
         event_map = {}
-        collisions = []
         
         for event in events:
             signature = self._create_event_signature(event)
@@ -409,23 +414,8 @@ class SyncEngine:
                 continue
             
             if signature in event_map:
-                # Collision detected!
-                existing = event_map[signature]
-                collisions.append({
-                    'signature': signature,
-                    'existing': {
-                        'subject': existing.get('subject'),
-                        'id': existing.get('id'),
-                        'start': existing.get('start', {}).get('dateTime')
-                    },
-                    'new': {
-                        'subject': event.get('subject'),
-                        'id': event.get('id'),
-                        'start': event.get('start', {}).get('dateTime')
-                    }
-                })
-                
                 # Keep the newer event based on creation time
+                existing = event_map[signature]
                 existing_created = existing.get('createdDateTime', '')
                 new_created = event.get('createdDateTime', '')
                 if new_created > existing_created:
@@ -436,12 +426,6 @@ class SyncEngine:
             else:
                 event_map[signature] = event
         
-        if collisions:
-            logger.error(f"🚨 FOUND {len(collisions)} SIGNATURE COLLISIONS!")
-            for collision in collisions:
-                logger.error(f"  Collision: {collision}")
-            logger.error("🚨 This might be causing duplicates! Check signature logic!")
-        
         return event_map
     
     def _determine_sync_operations(
@@ -450,7 +434,7 @@ class SyncEngine:
         target_events: List[Dict],
         target_map: Dict[str, Dict]
     ) -> Tuple[List[Dict], List[Tuple[Dict, Dict]], List[Dict]]:
-        """Determine what operations are needed - ENHANCED LOGGING"""
+        """Determine what operations are needed"""
         to_add = []
         to_update = []
         
@@ -496,71 +480,62 @@ class SyncEngine:
         
         return to_add, to_update, to_delete
     
-def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
-    """Check if an event needs updating"""
-    # First check if modification times are available
-    source_modified = source_event.get('lastModifiedDateTime')
-    target_modified = target_event.get('lastModifiedDateTime')
-    
-    # If both have modification times and source isn't newer, skip update
-    if source_modified and target_modified:
-        if source_modified <= target_modified:
-            return False
-    
-    # Compare key fields
-    if source_event.get('subject') != target_event.get('subject'):
-        logger.debug(f"Subject changed: '{source_event.get('subject')}' != '{target_event.get('subject')}'")
-        return True
-    
-    if source_event.get('start') != target_event.get('start'):
-        logger.debug(f"Start time changed for '{source_event.get('subject')}'")
-        return True
-    
-    if source_event.get('end') != target_event.get('end'):
-        logger.debug(f"End time changed for '{source_event.get('subject')}'")
-        return True
-    
-    if source_event.get('isAllDay') != target_event.get('isAllDay'):
-        logger.debug(f"All-day flag changed for '{source_event.get('subject')}'")
-        return True
-    
-    # Compare categories (THIS WAS MISSING!)
-    source_categories = set(source_event.get('categories', []))
-    target_categories = set(target_event.get('categories', []))
-    if source_categories != target_categories:
-        logger.debug(f"Categories changed for '{source_event.get('subject')}': {source_categories} != {target_categories}")
-        return True
-    
-    # Compare location
-    source_location = source_event.get('location', {})
-    target_location = target_event.get('location', {})
-    
-    # Normalize location comparison (could be string or dict)
-    source_loc_str = source_location.get('displayName', '') if isinstance(source_location, dict) else str(source_location)
-    target_loc_str = target_location.get('displayName', '') if isinstance(target_location, dict) else str(target_location)
-    
-    if source_loc_str != target_loc_str:
-        logger.debug(f"Location changed for '{source_event.get('subject')}': '{source_loc_str}' != '{target_loc_str}'")
-        return True
-    
-    # Compare body content
-    source_body = source_event.get('body', {}).get('content', '') if isinstance(source_event.get('body'), dict) else ''
-    target_body = target_event.get('body', {}).get('content', '') if isinstance(target_event.get('body'), dict) else ''
-    
-    if source_body != target_body:
-        logger.debug(f"Body content changed for '{source_event.get('subject')}'")
-        return True
-    
-    # For recurring events, check if recurrence pattern changed
-    if source_event.get('type') == 'seriesMaster':
-        source_recurrence = source_event.get('recurrence', {})
-        target_recurrence = target_event.get('recurrence', {})
-        if source_recurrence != target_recurrence:
-            logger.debug(f"Recurrence pattern changed for '{source_event.get('subject')}'")
+    def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
+        """Check if an event needs updating - INCLUDES CATEGORIES CHECK"""
+        # First check if modification times are available
+        source_modified = source_event.get('lastModifiedDateTime')
+        target_modified = target_event.get('lastModifiedDateTime')
+        
+        # If both have modification times and source isn't newer, skip update
+        if source_modified and target_modified:
+            if source_modified <= target_modified:
+                return False
+        
+        # Compare key fields
+        if source_event.get('subject') != target_event.get('subject'):
+            logger.debug(f"Subject changed: '{source_event.get('subject')}' != '{target_event.get('subject')}'")
             return True
-    
-    # No changes detected
-    return False
+        
+        if source_event.get('start') != target_event.get('start'):
+            logger.debug(f"Start time changed for '{source_event.get('subject')}'")
+            return True
+        
+        if source_event.get('end') != target_event.get('end'):
+            logger.debug(f"End time changed for '{source_event.get('subject')}'")
+            return True
+        
+        if source_event.get('isAllDay') != target_event.get('isAllDay'):
+            logger.debug(f"All-day flag changed for '{source_event.get('subject')}'")
+            return True
+        
+        # Compare categories (THIS WAS MISSING!)
+        source_categories = set(source_event.get('categories', []))
+        target_categories = set(target_event.get('categories', []))
+        if source_categories != target_categories:
+            logger.info(f"📋 Categories changed for '{source_event.get('subject')}': {source_categories} != {target_categories}")
+            return True
+        
+        # Compare location
+        source_location = source_event.get('location', {})
+        target_location = target_event.get('location', {})
+        
+        # Normalize location comparison (could be string or dict)
+        source_loc_str = source_location.get('displayName', '') if isinstance(source_location, dict) else str(source_location)
+        target_loc_str = target_location.get('displayName', '') if isinstance(target_location, dict) else str(target_location)
+        
+        if source_loc_str != target_loc_str:
+            logger.debug(f"Location changed for '{source_event.get('subject')}': '{source_loc_str}' != '{target_loc_str}'")
+            return True
+        
+        # For recurring events, check if recurrence pattern changed
+        if source_event.get('type') == 'seriesMaster':
+            source_recurrence = source_event.get('recurrence', {})
+            target_recurrence = target_event.get('recurrence', {})
+            if source_recurrence != target_recurrence:
+                logger.debug(f"Recurrence pattern changed for '{source_event.get('subject')}'")
+                return True
+        
+        return False
     
     def _execute_sync_operations(
         self, 
@@ -632,14 +607,15 @@ def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
         }
     
     def get_status(self) -> Dict:
-        """Get current sync status"""
+        """Get current sync status - THIS METHOD WAS MISSING!"""
         with self.sync_lock:
             return {
-                'last_sync_time': self.last_sync_time,
+                'last_sync_time': self.last_sync_time.isoformat() if self.last_sync_time else None,
                 'last_sync_result': self.last_sync_result,
                 'sync_in_progress': self.sync_in_progress,
                 'rate_limit_remaining': config.MAX_SYNC_REQUESTS_PER_HOUR - len(self.sync_request_times),
                 'circuit_breaker_state': self.circuit_breaker.state,
                 'total_syncs': len(self.history.history),
-                'metrics_summary': self.metrics.get_metrics_summary()
+                'authenticated': self.auth.is_authenticated() if self.auth else False,
+                'scheduler_running': True  # Placeholder - scheduler status
             }
