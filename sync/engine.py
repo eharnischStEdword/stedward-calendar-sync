@@ -1,5 +1,5 @@
 """
-Sync Engine - Complete Working Version with Category Updates
+Sync Engine - Complete Working Version with Category Updates and Central Time
 """
 import logging
 from datetime import datetime
@@ -16,6 +16,7 @@ from utils.metrics import MetricsCollector
 from utils.circuit_breaker import CircuitBreaker
 from sync.history import SyncHistory
 from sync.validator import SyncValidator
+from utils.timezone import get_central_time, format_central_time
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class SyncEngine:
     
     def _do_sync(self) -> Dict:
         """Actual sync implementation"""
-        start_time = datetime.now()
+        start_time = get_central_time()
         
         # Check if already syncing
         with self.sync_lock:
@@ -73,11 +74,11 @@ class SyncEngine:
             return {"error": "Rate limit exceeded. Please wait before syncing again."}
         
         # Record sync request
-        self.sync_request_times.append(datetime.now())
+        self.sync_request_times.append(get_central_time())
         
         logger.info("🚀 Starting calendar sync")
         self.structured_logger.log_sync_event('sync_started', {
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': get_central_time().isoformat()
         })
         
         try:
@@ -196,12 +197,12 @@ class SyncEngine:
                             logger.info(f"Sync validation passed (ignored warnings: {[check for check, _ in ignored_checks]})")
             
             # Calculate duration
-            duration = (datetime.now() - start_time).total_seconds()
+            duration = (get_central_time() - start_time).total_seconds()
             result['duration'] = duration
             
             # Update sync state
             with self.sync_lock:
-                self.last_sync_time = datetime.now()
+                self.last_sync_time = get_central_time()
                 self.last_sync_result = result
             
             # Record metrics and history
@@ -230,7 +231,7 @@ class SyncEngine:
             
         except Exception as e:
             import traceback
-            duration = (datetime.now() - start_time).total_seconds()
+            duration = (get_central_time() - start_time).total_seconds()
             
             error_result = {
                 'success': False,
@@ -312,7 +313,7 @@ class SyncEngine:
     
     def _check_rate_limit(self) -> bool:
         """Check if we're within rate limits"""
-        current_time = datetime.now()
+        current_time = get_central_time()
         from datetime import timedelta
         
         # Remove old requests
@@ -634,15 +635,18 @@ class SyncEngine:
         }
     
     def get_status(self) -> Dict:
-        """Get current sync status - THIS METHOD WAS MISSING!"""
+        """Get current sync status"""
         with self.sync_lock:
             return {
                 'last_sync_time': self.last_sync_time.isoformat() if self.last_sync_time else None,
+                'last_sync_time_display': format_central_time(self.last_sync_time) if self.last_sync_time else 'Never',
                 'last_sync_result': self.last_sync_result,
                 'sync_in_progress': self.sync_in_progress,
                 'rate_limit_remaining': config.MAX_SYNC_REQUESTS_PER_HOUR - len(self.sync_request_times),
                 'circuit_breaker_state': self.circuit_breaker.state,
                 'total_syncs': len(self.history.history),
                 'authenticated': self.auth.is_authenticated() if self.auth else False,
-                'scheduler_running': True  # Placeholder - scheduler status
+                'scheduler_running': True,  # Placeholder - scheduler status
+                'timezone': 'America/Chicago',
+                'current_time': get_central_time().isoformat()
             }
