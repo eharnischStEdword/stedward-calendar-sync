@@ -1,11 +1,12 @@
 """
-Microsoft OAuth - Complete Fast-Loading Version with Token Refresh
+Microsoft OAuth - Complete Fast-Loading Version with Token Refresh and Central Time
 """
 import os
 import requests
 import urllib.parse
 from datetime import datetime, timedelta
 import logging
+from utils.timezone import get_central_time, format_central_time
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,9 @@ class MicrosoftAuth:
             return True
         
         # Check if token is expired or about to expire (within 5 minutes)
-        now = datetime.utcnow()
+        now = get_central_time()
         if now >= (self.token_expires_at - timedelta(minutes=5)):
-            logger.info(f"Access token expires soon ({self.token_expires_at}), refreshing...")
+            logger.info(f"Access token expires soon ({format_central_time(self.token_expires_at)}), refreshing...")
             return self.refresh_access_token()
         else:
             # Token is still valid
@@ -95,7 +96,7 @@ class MicrosoftAuth:
             logger.warning("No refresh token available")
             return False
         
-        logger.info("Refreshing access token...")
+        logger.info(f"Refreshing access token at {format_central_time(get_central_time())}...")
         import config
         token_url = f"https://login.microsoftonline.com/{config.TENANT_ID}/oauth2/v2.0/token"
         
@@ -119,9 +120,9 @@ class MicrosoftAuth:
                 
                 expires_in = tokens.get('expires_in', 3600)
                 # Add 5 minute buffer before expiration
-                self.token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in - 300)
+                self.token_expires_at = get_central_time() + timedelta(seconds=expires_in - 300)
                 
-                logger.info(f"Token refreshed successfully. New expiration: {self.token_expires_at}")
+                logger.info(f"Token refreshed successfully. New expiration: {format_central_time(self.token_expires_at)}")
                 
                 # Log tokens for manual environment variable update
                 logger.info("=" * 40)
@@ -164,7 +165,7 @@ class MicrosoftAuth:
                 self.access_token = tokens.get('access_token')
                 self.refresh_token = tokens.get('refresh_token')
                 expires_in = tokens.get('expires_in', 3600)
-                self.token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in - 300)
+                self.token_expires_at = get_central_time() + timedelta(seconds=expires_in - 300)
                 
                 # Log tokens for manual environment variable update
                 logger.info("=" * 50)
