@@ -10,7 +10,7 @@ import signal
 import sys
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask, render_template, jsonify, request, redirect, session, url_for
 
 import config
@@ -155,76 +155,6 @@ def get_last_sync_health():
     return time_since_sync.total_seconds() < 7200  # 2 hours
 
 
-def attempt_startup_recovery():
-    """Attempt to recover authentication and start services"""
-    logger.info("🔄 Attempting startup recovery...")
-    
-    # Try to load and refresh tokens
-    auth_recovered = False
-    try:
-        if auth_manager.load_tokens_from_env():
-            auth_recovered = True
-            logger.info("✅ Authentication recovered from environment")
-        else:
-            logger.warning("⚠️ Could not recover authentication - manual login required")
-    except Exception as e:
-        logger.error(f"❌ Authentication recovery failed: {e}")
-    
-    # Start scheduler regardless of auth status
-    # It will handle auth failures gracefully
-    try:
-        scheduler.start()
-        logger.info("✅ Scheduler started")
-    except Exception as e:
-        logger.error(f"❌ Could not start scheduler: {e}")
-    
-    # Log status for debugging
-    logger.info(f"🏁 Startup recovery complete - Auth: {auth_recovered}, Scheduler: {scheduler.is_running()}")
-    
-    return auth_recovered
-
-
-def create_resilient_sync_function():
-    """Create a sync function that handles auth failures gracefully"""
-    original_sync = sync_engine.sync_calendars
-    
-    def resilient_sync():
-        try:
-            # Check if we're authenticated
-            if not auth_manager.is_authenticated():
-                logger.warning("⚠️ Sync skipped - not authenticated")
-                return {
-                    'success': False,
-                    'message': 'Sync skipped - authentication required',
-                    'needs_auth': True
-                }
-            
-            # Try the actual sync
-            return original_sync()
-            
-        except Exception as e:
-            # Log error but don't crash
-            logger.error(f"❌ Sync failed with error: {e}")
-            
-            # Check if it's an auth error
-            if "401" in str(e) or "unauthorized" in str(e).lower():
-                auth_manager.clear_tokens()
-                return {
-                    'success': False,
-                    'message': 'Authentication expired - please sign in again',
-                    'needs_auth': True
-                }
-            
-            return {
-                'success': False,
-                'message': f'Sync failed: {str(e)}',
-                'error': str(e)
-            }
-    
-    # Replace the sync method
-    sync_engine.sync_calendars = resilient_sync
-
-
 # ==================== ROUTES ====================
 
 @app.route('/')
@@ -310,7 +240,7 @@ def auth_callback():
 @app.route('/sync', methods=['POST'])
 @requires_auth
 def manual_sync():
-    """Trigger manual sync - ULTRA SIMPLIFIED"""
+    """Trigger manual sync"""
     audit_logger.log_sync_operation('manual_sync_triggered', 'user', {
         'ip': request.remote_addr
     })
@@ -341,7 +271,7 @@ def manual_sync():
 
 @app.route('/status')
 def status():
-    """Get current status - IMPROVED"""
+    """Get current status"""
     try:
         sync_status = sync_engine.get_status()
         
@@ -403,6 +333,7 @@ def health_check():
         }), 200
     except Exception as e:
         # Even if something goes wrong, return 200 to keep Render happy
+        logger.error(f"Health check error: {e}")
         return jsonify({
             "status": "degraded",
             "error": str(e)
@@ -443,58 +374,6 @@ def detailed_health():
     }), 200
 
 
-@app.route('/status/simple')
-def simple_status():
-    """Ultra-simple status for external monitoring"""
-    try:
-        auth_ok = auth_manager.is_authenticated()
-        sync_ok = not sync_engine.sync_in_progress  # Not currently stuck
-        
-        status = "ok" if auth_ok else "needs_auth"
-        
-        return jsonify({
-            "status": status,
-            "authenticated": auth_ok,
-            "sync_healthy": sync_ok,
-            "timestamp": datetime.now().isoformat()
-        })
-    except:
-        return jsonify({"status": "error"}), 500
-
-
-@app.route('/auth/recover', methods=['POST'])
-def auth_recovery():
-    """Emergency authentication recovery endpoint"""
-    try:
-        # Try to recover from environment variables
-        if auth_manager.load_tokens_from_env():
-            # Restart scheduler if auth was recovered
-            if not scheduler.is_running():
-                scheduler.start()
-            
-            return jsonify({
-                "success": True,
-                "message": "Authentication recovered successfully",
-                "authenticated": auth_manager.is_authenticated(),
-                "scheduler_running": scheduler.is_running()
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "message": "Could not recover authentication - manual login required",
-                "authenticated": False,
-                "login_url": "/logout"  # Redirect to start fresh auth
-            })
-            
-    except Exception as e:
-        logger.error(f"Auth recovery failed: {e}")
-        return jsonify({
-            "success": False,
-            "message": f"Recovery failed: {str(e)}",
-            "authenticated": False
-        }), 500
-
-
 @app.route('/logout')
 def logout():
     """Logout and clear tokens"""
@@ -512,7 +391,7 @@ def logout():
 @app.route('/diagnostics', methods=['POST'])
 @requires_auth
 def run_diagnostics():
-    """Run diagnostics - ULTRA SIMPLIFIED"""
+    """Run diagnostics"""
     audit_logger.log_sync_operation('diagnostics_run', 'user', {
         'ip': request.remote_addr
     })
@@ -636,7 +515,7 @@ def debug_events(calendar_name):
 @app.route('/validate-sync', methods=['POST'])
 @requires_auth
 def validate_sync():
-    """Manually validate sync status - ULTRA SIMPLIFIED"""
+    """Manually validate sync status"""
     try:
         source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
         target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
@@ -757,11 +636,13 @@ if __name__ == '__main__':
         logger.error("CLIENT_SECRET environment variable is not set!")
         exit(1)
     
-    # Make sync more resilient
-    create_resilient_sync_function()
-    
-    # Attempt startup recovery
-    attempt_startup_recovery()
+    # Try to restore auth on startup if possible
+    try:
+        if auth_manager.is_authenticated():
+            scheduler.start()
+            logger.info("Authentication restored, scheduler started")
+    except Exception as e:
+        logger.warning(f"Could not restore authentication on startup: {e}")
     
     # Run Flask app
     port = config.PORT
