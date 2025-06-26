@@ -14,6 +14,7 @@
             background: linear-gradient(135deg, #005921 0%, #004a1e 100%);
             min-height: 100vh;
             color: #333;
+            overflow-x: hidden;
         }
 
         .header {
@@ -52,6 +53,18 @@
             border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
             overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .main-card.success-pulse {
+            animation: successPulse 2s ease-in-out;
+            box-shadow: 0 0 30px rgba(0, 89, 33, 0.5);
+        }
+
+        @keyframes successPulse {
+            0% { transform: scale(1); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+            50% { transform: scale(1.02); box-shadow: 0 20px 50px rgba(0, 89, 33, 0.3); }
+            100% { transform: scale(1); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
         }
 
         .card-header {
@@ -59,6 +72,24 @@
             color: #EEF4F1;
             padding: 1.5rem;
             text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card-header.success-shimmer::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 1.5s ease-in-out;
+        }
+
+        @keyframes shimmer {
+            0% { left: -100%; }
+            100% { left: 100%; }
         }
 
         .card-header h1 {
@@ -82,6 +113,19 @@
             justify-content: space-between;
             flex-wrap: wrap;
             gap: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .status-bar.success-glow {
+            border-left-color: #005921;
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            animation: successGlow 2s ease-in-out;
+        }
+
+        @keyframes successGlow {
+            0% { box-shadow: 0 0 0 rgba(0, 89, 33, 0); }
+            50% { box-shadow: 0 0 20px rgba(0, 89, 33, 0.4); }
+            100% { box-shadow: 0 0 0 rgba(0, 89, 33, 0); }
         }
 
         .status-item {
@@ -95,11 +139,22 @@
             height: 12px;
             border-radius: 50%;
             flex-shrink: 0;
+            transition: all 0.3s ease;
         }
 
         .status-dot.success { background: #005921; }
         .status-dot.warning { background: #DAAA00; }
         .status-dot.error { background: #dc3545; }
+
+        .status-dot.pulse {
+            animation: dotPulse 1.5s infinite;
+        }
+
+        @keyframes dotPulse {
+            0% { box-shadow: 0 0 0 0 rgba(0, 89, 33, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(0, 89, 33, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 89, 33, 0); }
+        }
 
         .messages-area {
             margin-bottom: 2rem;
@@ -114,10 +169,32 @@
             opacity: 0;
             transform: translateY(-10px);
             transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
 
         .message.show { opacity: 1; transform: translateY(0); }
-        .message.success { background: #d4edda; border-color: #005921; color: #155724; }
+        .message.success { 
+            background: #d4edda; 
+            border-color: #005921; 
+            color: #155724;
+        }
+
+        .message.success::before {
+            content: '✨';
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1.2em;
+            animation: sparkle 2s ease-in-out infinite;
+        }
+
+        @keyframes sparkle {
+            0%, 100% { opacity: 0.5; transform: translateY(-50%) scale(1); }
+            50% { opacity: 1; transform: translateY(-50%) scale(1.2); }
+        }
+
         .message.warning { background: #fff3cd; border-color: #DAAA00; color: #856404; }
         .message.error { background: #f8d7da; border-color: #dc3545; color: #721c24; }
         .message.info { background: #d1ecf1; border-color: #0c5460; color: #0c5460; }
@@ -145,6 +222,8 @@
             justify-content: center;
             gap: 0.5rem;
             text-decoration: none;
+            position: relative;
+            overflow: hidden;
         }
 
         .action-btn:hover:not(:disabled) {
@@ -157,6 +236,16 @@
             opacity: 0.6;
             cursor: not-allowed;
             transform: none !important;
+        }
+
+        .action-btn.success-bounce {
+            animation: successBounce 0.6s ease-in-out;
+        }
+
+        @keyframes successBounce {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
         }
 
         .action-btn.secondary {
@@ -201,6 +290,117 @@
             margin-top: 0.25rem;
         }
 
+        /* Confetti Styles */
+        .confetti-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1000;
+            overflow: hidden;
+        }
+
+        .confetti {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            animation: confettiFall 3s linear infinite;
+        }
+
+        .confetti:nth-child(odd) {
+            background: #005921;
+            border-radius: 50%;
+        }
+
+        .confetti:nth-child(even) {
+            background: #DAAA00;
+            transform: rotate(45deg);
+        }
+
+        .confetti:nth-child(3n) {
+            background: #00843D;
+            border-radius: 2px;
+        }
+
+        @keyframes confettiFall {
+            0% {
+                transform: translateY(-100vh) rotate(0deg);
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(100vh) rotate(720deg);
+                opacity: 0;
+            }
+        }
+
+        /* Success Checkmark Animation */
+        .success-checkmark {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1001;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .success-checkmark.show {
+            opacity: 1;
+            animation: checkmarkBounce 1.5s ease-in-out;
+        }
+
+        .checkmark-circle {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: #005921;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 30px rgba(0, 89, 33, 0.5);
+        }
+
+        .checkmark {
+            color: white;
+            font-size: 40px;
+            font-weight: bold;
+        }
+
+        @keyframes checkmarkBounce {
+            0% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
+            50% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        }
+
+        /* Particle burst effect */
+        .particle-burst {
+            position: fixed;
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        .particle {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: #005921;
+            border-radius: 50%;
+            animation: particleBurst 1s ease-out forwards;
+        }
+
+        @keyframes particleBurst {
+            0% {
+                opacity: 1;
+                transform: scale(1);
+            }
+            100% {
+                opacity: 0;
+                transform: scale(0);
+            }
+        }
+
         @media (max-width: 768px) {
             .status-bar {
                 flex-direction: column;
@@ -222,15 +422,15 @@
     </header>
 
     <div class="container">
-        <div class="main-card">
-            <div class="card-header">
+        <div class="main-card" id="main-card">
+            <div class="card-header" id="card-header">
                 <h1>Calendar Sync Dashboard</h1>
                 <p>Automated synchronization between internal and public calendars</p>
             </div>
 
             <div class="card-content">
                 <!-- Status bar -->
-                <div class="status-bar">
+                <div class="status-bar" id="status-bar">
                     <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
                         <div class="status-item">
                             <div class="status-dot success" id="auth-dot"></div>
@@ -246,13 +446,7 @@
                         </div>
                     </div>
                     <div style="text-align: right;">
-                        <div>Last sync: <span id="last-sync-time">
-                            {% if last_sync_time_display %}
-                                {{ last_sync_time_display }}
-                            {% else %}
-                                Never
-                            {% endif %}
-                        </span></div>
+                        <div>Last sync: <span id="last-sync-time">Never</span></div>
                         <div class="timezone-info">All times in Central Time (CT)</div>
                     </div>
                 </div>
@@ -287,6 +481,16 @@
         <p>St. Edward Church & School • Calendar Management System • Nashville, TN</p>
         <p style="margin-top: 0.5rem; opacity: 0.7;">Automated synchronization every 15 minutes</p>
     </footer>
+
+    <!-- Confetti Container -->
+    <div class="confetti-container" id="confetti-container"></div>
+
+    <!-- Success Checkmark -->
+    <div class="success-checkmark" id="success-checkmark">
+        <div class="checkmark-circle">
+            <div class="checkmark">✓</div>
+        </div>
+    </div>
 
     <script>
         let isOperationInProgress = false;
@@ -343,6 +547,102 @@
                     btn.innerHTML = btn.dataset.originalContent;
                 }
             }
+        }
+
+        function createConfetti() {
+            const confettiContainer = document.getElementById('confetti-container');
+            const confettiCount = 50;
+            
+            for (let i = 0; i < confettiCount; i++) {
+                const confetti = document.createElement('div');
+                confetti.className = 'confetti';
+                confetti.style.left = Math.random() * 100 + '%';
+                confetti.style.animationDelay = Math.random() * 2 + 's';
+                confetti.style.animationDuration = (Math.random() * 2 + 2) + 's';
+                confettiContainer.appendChild(confetti);
+                
+                // Remove confetti after animation
+                setTimeout(() => {
+                    if (confetti.parentNode) {
+                        confetti.parentNode.removeChild(confetti);
+                    }
+                }, 4000);
+            }
+        }
+
+        function showSuccessCheckmark() {
+            const checkmark = document.getElementById('success-checkmark');
+            checkmark.classList.add('show');
+            
+            setTimeout(() => {
+                checkmark.classList.remove('show');
+            }, 1500);
+        }
+
+        function createParticleBurst(element) {
+            const rect = element.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            
+            const burstContainer = document.createElement('div');
+            burstContainer.className = 'particle-burst';
+            burstContainer.style.left = centerX + 'px';
+            burstContainer.style.top = centerY + 'px';
+            document.body.appendChild(burstContainer);
+            
+            const particleCount = 12;
+            for (let i = 0; i < particleCount; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                
+                const angle = (360 / particleCount) * i;
+                const distance = 50;
+                const x = Math.cos(angle * Math.PI / 180) * distance;
+                const y = Math.sin(angle * Math.PI / 180) * distance;
+                
+                particle.style.transform = `translate(${x}px, ${y}px)`;
+                burstContainer.appendChild(particle);
+            }
+            
+            setTimeout(() => {
+                document.body.removeChild(burstContainer);
+            }, 1000);
+        }
+
+        function triggerSuccessAnimations() {
+            // Confetti
+            createConfetti();
+            
+            // Success checkmark
+            showSuccessCheckmark();
+            
+            // Card pulse
+            const mainCard = document.getElementById('main-card');
+            mainCard.classList.add('success-pulse');
+            setTimeout(() => mainCard.classList.remove('success-pulse'), 2000);
+            
+            // Header shimmer
+            const cardHeader = document.getElementById('card-header');
+            cardHeader.classList.add('success-shimmer');
+            setTimeout(() => cardHeader.classList.remove('success-shimmer'), 1500);
+            
+            // Status bar glow
+            const statusBar = document.getElementById('status-bar');
+            statusBar.classList.add('success-glow');
+            setTimeout(() => statusBar.classList.remove('success-glow'), 2000);
+            
+            // Button bounce
+            const syncBtn = document.getElementById('sync-btn');
+            syncBtn.classList.add('success-bounce');
+            setTimeout(() => syncBtn.classList.remove('success-bounce'), 600);
+            
+            // Particle burst from sync button
+            createParticleBurst(syncBtn);
+            
+            // Status dot pulse
+            const syncDot = document.getElementById('sync-dot');
+            syncDot.classList.add('pulse');
+            setTimeout(() => syncDot.classList.remove('pulse'), 1500);
         }
 
         function updateStatusDots(status) {
@@ -402,6 +702,9 @@
                 if (result.success) {
                     const msg = `✅ Sync completed! Added: ${result.added || 0}, Updated: ${result.updated || 0}, Deleted: ${result.deleted || 0}`;
                     showMessage(msg, 'success');
+                    
+                    // TRIGGER ALL THE SUCCESS ANIMATIONS! 🎉
+                    triggerSuccessAnimations();
                     
                     // Update last sync time if provided
                     if (result.last_sync_time_display) {
