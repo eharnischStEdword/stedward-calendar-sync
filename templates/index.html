@@ -3,19 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>St. Edward Parish - Calendar Sync Management</title>
-    <!-- Calendar emoji as favicon -->
+    <title>St. Edward Parish - Calendar Sync</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
     
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Segoe UI', Arial, sans-serif;
             background: linear-gradient(135deg, #005921 0%, #004a1e 100%);
             min-height: 100vh;
             color: #333;
@@ -23,113 +18,70 @@
 
         .header {
             background: #005921;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
             padding: 1rem 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
 
         .header-content {
-            max-width: 1200px;
+            max-width: 1000px;
             margin: 0 auto;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
             text-align: center;
             padding: 0 2rem;
-            position: relative;
         }
 
-        .logout-btn {
-            position: absolute;
-            top: 10px;
-            right: 20px;
-            background: rgba(238, 244, 241, 0.2);
+        .logo-text {
             color: #EEF4F1;
-            border: 1px solid rgba(238, 244, 241, 0.3);
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            text-decoration: none;
-            font-size: 0.85rem;
-            font-weight: 500;
-            transition: all 0.3s ease;
-            backdrop-filter: blur(5px);
+            font-size: 1.8rem;
+            font-weight: 300;
+            margin-bottom: 0.5rem;
         }
 
-        .logout-btn:hover {
-            background: rgba(238, 244, 241, 0.3);
-            border-color: rgba(238, 244, 241, 0.5);
-            transform: translateY(-1px);
-        }
-
-        .logo-img {
-            width: 280px;
-            height: auto;
-            margin-bottom: 1rem;
-            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
-        }
-
-        .church-subtitle {
-            color: rgba(238, 244, 241, 0.9);
-            font-size: 1.1rem;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+        .subtitle {
+            color: rgba(238, 244, 241, 0.8);
+            font-size: 1rem;
         }
 
         .container {
-            max-width: 1000px;
+            max-width: 800px;
             margin: 2rem auto;
             padding: 0 2rem;
         }
 
         .main-card {
             background: rgba(238, 244, 241, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
             overflow: hidden;
-            margin-bottom: 2rem;
         }
 
         .card-header {
             background: #00843D;
             color: #EEF4F1;
-            padding: 2rem;
+            padding: 1.5rem;
             text-align: center;
         }
 
         .card-header h1 {
-            font-size: 2rem;
+            font-size: 1.8rem;
             margin-bottom: 0.5rem;
             font-weight: 300;
-        }
-
-        .card-header p {
-            opacity: 0.9;
-            font-size: 1.1rem;
         }
 
         .card-content {
             padding: 2rem;
         }
 
-        /* Persistent status bar at top */
         .status-bar {
             background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            border-radius: 12px;
+            border-radius: 10px;
             padding: 1rem;
             margin-bottom: 2rem;
             border-left: 4px solid #DAAA00;
-            min-height: 60px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-        }
-
-        .status-summary {
-            display: flex;
-            align-items: center;
-            gap: 2rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .status-item {
@@ -149,18 +101,6 @@
         .status-dot.warning { background: #DAAA00; }
         .status-dot.error { background: #dc3545; }
 
-        .status-text {
-            font-weight: 500;
-            color: #333;
-        }
-
-        .last-sync {
-            font-size: 0.9rem;
-            color: #666;
-            text-align: right;
-        }
-
-        /* Messages area - stable position */
         .messages-area {
             margin-bottom: 2rem;
             min-height: 40px;
@@ -176,82 +116,12 @@
             transition: all 0.3s ease;
         }
 
-        .message.show {
-            opacity: 1;
-            transform: translateY(0);
-        }
+        .message.show { opacity: 1; transform: translateY(0); }
+        .message.success { background: #d4edda; border-color: #005921; color: #155724; }
+        .message.warning { background: #fff3cd; border-color: #DAAA00; color: #856404; }
+        .message.error { background: #f8d7da; border-color: #dc3545; color: #721c24; }
+        .message.info { background: #d1ecf1; border-color: #0c5460; color: #0c5460; }
 
-        .message.success {
-            background: #d4edda;
-            border-color: #005921;
-            color: #155724;
-        }
-
-        .message.warning {
-            background: #fff3cd;
-            border-color: #DAAA00;
-            color: #856404;
-        }
-
-        .message.error {
-            background: #f8d7da;
-            border-color: #dc3545;
-            color: #721c24;
-        }
-
-        .message.info {
-            background: #d1ecf1;
-            border-color: #0c5460;
-            color: #0c5460;
-        }
-
-        /* Results display area */
-        .results-area {
-            margin-bottom: 2rem;
-            min-height: 0;
-        }
-
-        .results-card {
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 1.5rem;
-            margin-bottom: 1rem;
-            border-left: 4px solid #005921;
-        }
-
-        .results-card h4 {
-            margin-bottom: 1rem;
-            color: #005921;
-        }
-
-        .results-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1rem;
-        }
-
-        .result-item {
-            background: white;
-            padding: 1rem;
-            border-radius: 6px;
-            text-align: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-
-        .result-number {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #005921;
-        }
-
-        .result-label {
-            font-size: 0.9rem;
-            color: #666;
-            margin-top: 0.5rem;
-        }
-
-        /* Action buttons */
         .actions-section {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -269,12 +139,12 @@
             font-size: 1rem;
             font-weight: 600;
             transition: all 0.3s ease;
-            position: relative;
             min-height: 60px;
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 0.5rem;
+            text-decoration: none;
         }
 
         .action-btn:hover:not(:disabled) {
@@ -305,13 +175,6 @@
             background: #c0392b;
         }
 
-        .action-btn.small {
-            padding: 0.5rem 1rem;
-            font-size: 0.9rem;
-            min-height: 40px;
-        }
-
-        /* Loading spinner */
         .spinner {
             width: 20px;
             height: 20px;
@@ -325,75 +188,6 @@
             to { transform: rotate(360deg); }
         }
 
-        /* Details section - collapsible */
-        .details-section {
-            border-top: 1px solid #e9ecef;
-            padding-top: 2rem;
-            margin-top: 2rem;
-        }
-
-        .details-toggle {
-            background: none;
-            border: none;
-            color: #005921;
-            cursor: pointer;
-            font-size: 1rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            padding: 0.5rem 0;
-        }
-
-        .details-toggle:hover {
-            color: #004a1e;
-        }
-
-        .details-content {
-            display: none;
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 1.5rem;
-        }
-
-        .details-content.show {
-            display: block;
-        }
-
-        .tool-section {
-            margin-bottom: 2rem;
-            padding-bottom: 1.5rem;
-            border-bottom: 1px solid #e9ecef;
-        }
-
-        .tool-section:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-        }
-
-        .tool-header {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .tool-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #005921;
-        }
-
-        .tool-description {
-            color: #666;
-            margin-bottom: 1rem;
-            line-height: 1.5;
-        }
-
-        .tool-actions {
-            display: flex;
-            gap: 1rem;
-            flex-wrap: wrap;
-        }
-
         .footer {
             text-align: center;
             padding: 2rem;
@@ -401,54 +195,14 @@
             font-size: 0.9rem;
         }
 
-        .mode-indicator {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 6px;
-            padding: 0.75rem;
-            margin-bottom: 1rem;
-            color: #856404;
-            font-weight: 500;
-            text-align: center;
-        }
-
-        .mode-indicator.active {
-            background: #d4edda;
-            border-color: #c3e6cb;
-            color: #155724;
-        }
-
         @media (max-width: 768px) {
-            .status-summary {
+            .status-bar {
                 flex-direction: column;
-                gap: 1rem;
                 align-items: flex-start;
             }
-
+            
             .actions-section {
                 grid-template-columns: 1fr;
-            }
-
-            .results-grid {
-                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            }
-
-            .tool-actions {
-                flex-direction: column;
-            }
-
-            .header-content {
-                padding: 0 1rem;
-            }
-
-            .container {
-                padding: 0 1rem;
-            }
-
-            .logout-btn {
-                position: static;
-                margin-bottom: 0.5rem;
-                align-self: flex-end;
             }
         }
     </style>
@@ -456,37 +210,36 @@
 <body>
     <header class="header">
         <div class="header-content">
-            <a href="/logout" class="logout-btn">🚪 Sign Out</a>
-            <img src="https://static.wixstatic.com/media/14d135_cacfd4daea32497f8e3982453de34768~mv2.png" alt="St. Edward Church & School Logo" class="logo-img">
-            <div class="church-subtitle">Calendar Synchronization Management</div>
+            <div class="logo-text">📅 St. Edward Church & School</div>
+            <div class="subtitle">Calendar Synchronization Management</div>
         </div>
     </header>
 
     <div class="container">
         <div class="main-card">
             <div class="card-header">
-                <h1>📅 Calendar Sync Dashboard</h1>
+                <h1>Calendar Sync Dashboard</h1>
                 <p>Automated synchronization between internal and public calendars</p>
             </div>
 
             <div class="card-content">
-                <!-- Stable status bar -->
+                <!-- Status bar -->
                 <div class="status-bar">
-                    <div class="status-summary">
+                    <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
                         <div class="status-item">
                             <div class="status-dot success" id="auth-dot"></div>
-                            <span class="status-text" id="auth-text">Connected</span>
+                            <span id="auth-text">Connected</span>
                         </div>
                         <div class="status-item">
                             <div class="status-dot success" id="sync-dot"></div>
-                            <span class="status-text" id="sync-text">Ready</span>
+                            <span id="sync-text">Ready</span>
                         </div>
                         <div class="status-item">
                             <div class="status-dot success" id="scheduler-dot"></div>
-                            <span class="status-text">Auto-sync Active</span>
+                            <span>Auto-sync Active</span>
                         </div>
                     </div>
-                    <div class="last-sync">
+                    <div style="text-align: right;">
                         <div>Last sync: <span id="last-sync-time">
                             {% if last_sync_time %}
                                 {{ last_sync_time.strftime('%b %d at %I:%M %p') }}
@@ -497,106 +250,27 @@
                     </div>
                 </div>
 
-                <!-- Mode indicator -->
-                <div class="mode-indicator" id="mode-indicator" style="display: none;">
-                    🧪 DRY RUN MODE ACTIVE - No changes will be made to calendars
-                </div>
-
-                <!-- Stable messages area -->
+                <!-- Messages area -->
                 <div class="messages-area" id="messages-area"></div>
 
-                <!-- Results display area -->
-                <div class="results-area" id="results-area"></div>
-
-                <!-- Simple action buttons -->
+                <!-- Action buttons -->
                 <div class="actions-section">
                     <button class="action-btn" onclick="syncNow()" id="sync-btn">
                         <span id="sync-icon">🔄</span>
                         <span id="sync-label">Sync Now</span>
                     </button>
                     
-                    <button class="action-btn secondary" onclick="showSystemInfo()" id="info-btn">
-                        📊 System Info
+                    <button class="action-btn secondary" onclick="showStatus()" id="status-btn">
+                        📊 System Status
                     </button>
                     
-                    <button class="action-btn secondary" onclick="validateSync()" id="validate-btn">
-                        ✅ Validate Sync
-                    </button>
+                    <a href="/debug" class="action-btn secondary">
+                        🔍 Debug Info
+                    </a>
                     
                     <a href="/logout" class="action-btn warning">
-                        🚪 Sign Out & Restart
+                        🚪 Sign Out
                     </a>
-                </div>
-
-                <!-- Collapsible details -->
-                <div class="details-section">
-                    <button class="details-toggle" onclick="toggleDetails()">
-                        ▶ Show Advanced Tools & Options
-                    </button>
-                    <div class="details-content" id="details-content">
-                        
-                        <!-- Dry Run Mode Tool -->
-                        <div class="tool-section">
-                            <div class="tool-header">
-                                <span class="tool-title">🧪 Dry Run Mode</span>
-                            </div>
-                            <div class="tool-description">
-                                Test sync operations without making any actual changes to your calendars. Perfect for checking what would happen before running a real sync.
-                            </div>
-                            <div class="tool-actions">
-                                <button class="action-btn small secondary" onclick="toggleDryRun()" id="dry-run-btn">
-                                    Enable Dry Run
-                                </button>
-                                <span id="dry-run-status">Currently: Live Mode</span>
-                            </div>
-                        </div>
-
-                        <!-- Calendar Diagnostics Tool -->
-                        <div class="tool-section">
-                            <div class="tool-header">
-                                <span class="tool-title">🔍 Calendar Diagnostics</span>
-                            </div>
-                            <div class="tool-description">
-                                Check calendar access, count events in each calendar, and verify system health. Results show below.
-                            </div>
-                            <div class="tool-actions">
-                                <button class="action-btn small secondary" onclick="runDiagnostics()" id="diagnostics-btn">
-                                    Run Full Diagnostics
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Manual Validation Tool -->
-                        <div class="tool-section">
-                            <div class="tool-header">
-                                <span class="tool-title">✅ Sync Validation</span>
-                            </div>
-                            <div class="tool-description">
-                                Manually check if the calendars are properly synchronized. Validates event counts, checks for duplicates, and ensures no private events leaked.
-                            </div>
-                            <div class="tool-actions">
-                                <button class="action-btn small secondary" onclick="validateSync()" id="validate-sync-btn">
-                                    Check Sync Status
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Emergency Options -->
-                        <div class="tool-section">
-                            <div class="tool-header">
-                                <span class="tool-title">⚠️ Troubleshooting</span>
-                            </div>
-                            <div class="tool-description">
-                                If sync is failing repeatedly, try signing out and back in to refresh authentication tokens. This solves most authentication-related issues.
-                            </div>
-                            <div class="tool-actions">
-                                <a href="/logout" class="action-btn small warning">
-                                    🔄 Reset Authentication
-                                </a>
-                            </div>
-                        </div>
-                        
-                    </div>
                 </div>
             </div>
         </div>
@@ -609,42 +283,9 @@
 
     <script>
         let isOperationInProgress = false;
-        let authCheckInterval = null;
-
-        // Add this function to handle authentication errors better
-        function handleAuthError(response, operation = 'operation') {
-            if (response.status === 401) {
-                try {
-                    response.json().then(result => {
-                        if (result.redirect === '/logout') {
-                            showMessage('⚠️ Session expired. Redirecting to login...', 'warning', 3000);
-                            setTimeout(() => {
-                                window.location.href = '/logout';
-                            }, 3000);
-                        } else {
-                            showMessage('❌ Authentication error during ' + operation, 'error');
-                        }
-                    }).catch(() => {
-                        showMessage('❌ Authentication error during ' + operation, 'error');
-                        setTimeout(() => {
-                            window.location.href = '/logout';
-                        }, 2000);
-                    });
-                } catch (e) {
-                    showMessage('❌ Authentication error during ' + operation, 'error');
-                    setTimeout(() => {
-                        window.location.href = '/logout';
-                    }, 2000);
-                }
-                return true;
-            }
-            return false;
-        }
 
         function showMessage(text, type = 'info', duration = 5000) {
             const messagesArea = document.getElementById('messages-area');
-            
-            // Clear existing messages
             messagesArea.innerHTML = '';
             
             const message = document.createElement('div');
@@ -652,64 +293,14 @@
             message.textContent = text;
             
             messagesArea.appendChild(message);
-            
-            // Trigger animation
             setTimeout(() => message.classList.add('show'), 100);
             
-            // Auto-hide success messages
             if (type === 'success' && duration > 0) {
                 setTimeout(() => {
                     message.classList.remove('show');
                     setTimeout(() => message.remove(), 300);
                 }, duration);
             }
-        }
-
-        function showResults(title, data) {
-            const resultsArea = document.getElementById('results-area');
-            resultsArea.innerHTML = '';
-            
-            const card = document.createElement('div');
-            card.className = 'results-card';
-            
-            const header = document.createElement('h4');
-            header.textContent = title;
-            card.appendChild(header);
-            
-            if (data.grid) {
-                const grid = document.createElement('div');
-                grid.className = 'results-grid';
-                
-                data.grid.forEach(item => {
-                    const resultItem = document.createElement('div');
-                    resultItem.className = 'result-item';
-                    
-                    const number = document.createElement('div');
-                    number.className = 'result-number';
-                    number.textContent = item.value;
-                    
-                    const label = document.createElement('div');
-                    label.className = 'result-label';
-                    label.textContent = item.label;
-                    
-                    resultItem.appendChild(number);
-                    resultItem.appendChild(label);
-                    grid.appendChild(resultItem);
-                });
-                
-                card.appendChild(grid);
-            }
-            
-            if (data.details) {
-                const details = document.createElement('div');
-                details.innerHTML = data.details;
-                card.appendChild(details);
-            }
-            
-            resultsArea.appendChild(card);
-            
-            // Scroll to results
-            card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
 
         function setButtonState(buttonId, loading, label = '') {
@@ -742,8 +333,6 @@
         }
 
         function updateStatusDots(status) {
-            console.log('Status received:', status); // Debug log
-            
             // Update auth status
             const authDot = document.getElementById('auth-dot');
             const authText = document.getElementById('auth-text');
@@ -755,41 +344,25 @@
                 authText.textContent = 'Disconnected';
             }
 
-            // Update sync status - FIXED LOGIC
+            // Update sync status
             const syncDot = document.getElementById('sync-dot');
             const syncText = document.getElementById('sync-text');
             
             if (status.sync_in_progress) {
-                // Currently syncing
                 syncDot.className = 'status-dot warning';
                 syncText.textContent = 'Syncing...';
             } else if (status.last_sync_result && status.last_sync_result.success) {
-                // Last sync was successful
                 syncDot.className = 'status-dot success';
                 syncText.textContent = 'Ready';
-            } else if (status.last_sync_result && status.last_sync_result.message === "Not synced yet") {
-                // Never synced (initial state)
-                syncDot.className = 'status-dot warning';
-                syncText.textContent = 'Never Synced';
             } else if (status.last_sync_result && !status.last_sync_result.success) {
-                // Last sync failed (but has tried before)
                 syncDot.className = 'status-dot error';
                 syncText.textContent = 'Error';
             } else {
-                // Unknown state
                 syncDot.className = 'status-dot warning';
-                syncText.textContent = 'Unknown';
+                syncText.textContent = 'Never Synced';
             }
 
-            // Update scheduler status
-            const schedulerDot = document.getElementById('scheduler-dot');
-            if (status.scheduler_running) {
-                schedulerDot.className = 'status-dot success';
-            } else {
-                schedulerDot.className = 'status-dot warning';
-            }
-
-            // Update last sync time - IMPROVED
+            // Update last sync time
             const lastSyncElement = document.getElementById('last-sync-time');
             if (status.last_sync_time && status.last_sync_result && status.last_sync_result.success) {
                 try {
@@ -807,34 +380,10 @@
                         lastSyncElement.textContent = 'Never';
                     }
                 } catch (e) {
-                    console.error('Date parsing error:', e);
                     lastSyncElement.textContent = 'Never';
                 }
             } else {
                 lastSyncElement.textContent = 'Never';
-            }
-
-            // Update dry run mode indicator
-            const modeIndicator = document.getElementById('mode-indicator');
-            const dryRunBtn = document.getElementById('dry-run-btn');
-            const dryRunStatus = document.getElementById('dry-run-status');
-            
-            if (status.dry_run_mode) {
-                modeIndicator.style.display = 'block';
-                if (dryRunBtn) dryRunBtn.textContent = 'Disable Dry Run';
-                if (dryRunStatus) dryRunStatus.textContent = 'Currently: Dry Run Mode';
-            } else {
-                modeIndicator.style.display = 'none';
-                if (dryRunBtn) dryRunBtn.textContent = 'Enable Dry Run';
-                if (dryRunStatus) dryRunStatus.textContent = 'Currently: Live Mode';
-            }
-
-            // Handle authentication errors
-            if (!status.authenticated) {
-                showMessage('⚠️ Authentication lost. Please sign in again.', 'warning', 0);
-                setTimeout(() => {
-                    window.location.href = '/logout';
-                }, 3000);
             }
         }
 
@@ -851,295 +400,72 @@
                     credentials: 'same-origin'
                 });
                 
-                // Handle authentication errors
-                if (handleAuthError(response, 'sync')) {
-                    setButtonState('sync-btn', false);
-                    isOperationInProgress = false;
-                    return;
-                }
-                
                 const result = await response.json();
                 
-                if (result.success || (result.message && result.message !== "Not authenticated")) {
-                    setButtonState('sync-btn', true, 'Syncing...');
-                    showMessage('⏳ Sync in progress... This may take a minute.', 'warning', 0);
-                    
-                    // Monitor progress
-                    let checks = 0;
-                    const monitor = setInterval(async () => {
-                        checks++;
-                        try {
-                            const statusResponse = await fetch('/status', {
-                                credentials: 'same-origin'
-                            });
-                            
-                            // Handle auth errors in status check too
-                            if (handleAuthError(statusResponse, 'status check')) {
-                                clearInterval(monitor);
-                                setButtonState('sync-btn', false);
-                                isOperationInProgress = false;
-                                return;
-                            }
-                            
-                            const status = await statusResponse.json();
-                            updateStatusDots(status);
-                            
-                            if (!status.sync_in_progress || checks >= 30) {
-                                clearInterval(monitor);
-                                
-                                if (status.last_sync_result && status.last_sync_result.success) {
-                                    const msg = `✅ Sync completed! Added: ${status.last_sync_result.added || 0}, Updated: ${status.last_sync_result.updated || 0}, Deleted: ${status.last_sync_result.deleted || 0}`;
-                                    showMessage(msg, 'success');
-                                    
-                                    // Show results
-                                    showResults('📊 Sync Results', {
-                                        grid: [
-                                            { value: status.last_sync_result.added || 0, label: 'Events Added' },
-                                            { value: status.last_sync_result.updated || 0, label: 'Events Updated' },
-                                            { value: status.last_sync_result.deleted || 0, label: 'Events Deleted' },
-                                            { value: (status.last_sync_result.duration || 0).toFixed(1) + 's', label: 'Duration' }
-                                        ]
-                                    });
-                                } else if (status.last_sync_result) {
-                                    showMessage('⚠️ Sync completed with issues. Check logs for details.', 'warning');
-                                }
-                                
-                                setButtonState('sync-btn', false);
-                                isOperationInProgress = false;
-                            }
-                        } catch (error) {
-                            console.error('Status check failed:', error);
-                            // Don't break the monitoring for network errors
-                        }
-                    }, 3000);
-                    
+                if (result.success) {
+                    const msg = `✅ Sync completed! Added: ${result.added || 0}, Updated: ${result.updated || 0}, Deleted: ${result.deleted || 0}`;
+                    showMessage(msg, 'success');
                 } else {
-                    showMessage('❌ Failed to start sync: ' + (result.message || result.error), 'error');
-                    setButtonState('sync-btn', false);
-                    isOperationInProgress = false;
+                    showMessage('⚠️ Sync completed with issues: ' + (result.message || result.error), 'warning');
                 }
                 
             } catch (error) {
                 showMessage('❌ Network error: ' + error.message, 'error');
+            } finally {
                 setButtonState('sync-btn', false);
                 isOperationInProgress = false;
+                
+                // Refresh status
+                setTimeout(loadStatus, 1000);
             }
         }
 
-        async function showSystemInfo() {
+        async function showStatus() {
             if (isOperationInProgress) return;
             
             isOperationInProgress = true;
-            setButtonState('info-btn', true);
-            showMessage('📊 Getting system information...', 'info', 0);
+            setButtonState('status-btn', true);
             
             try {
-                const response = await fetch('/status', {
-                    credentials: 'same-origin'
-                });
-                
-                if (handleAuthError(response, 'system info')) {
-                    setButtonState('info-btn', false);
-                    isOperationInProgress = false;
-                    return;
-                }
-                
+                const response = await fetch('/status');
                 const status = await response.json();
                 
-                showResults('📊 System Information', {
-                    grid: [
-                        { value: status.authenticated ? 'Yes' : 'No', label: 'Connected' },
-                        { value: status.scheduler_running ? 'Active' : 'Stopped', label: 'Auto-sync' },
-                        { value: status.rate_limit_remaining || 0, label: 'Syncs Remaining' },
-                        { value: status.total_syncs || 0, label: 'Total Syncs' }
-                    ],
-                    details: `
-                        <p><strong>Version:</strong> ${status.version || 'Unknown'}</p>
-                        <p><strong>Environment:</strong> ${status.environment || 'Unknown'}</p>
-                        <p><strong>Circuit Breaker:</strong> ${status.circuit_breaker_state || 'Unknown'}</p>
-                        <p><strong>Protection Mode:</strong> ${status.master_calendar_protection ? 'Enabled' : 'Disabled'}</p>
-                    `
-                });
+                let statusMsg = `📊 System Status:\n`;
+                statusMsg += `• Authentication: ${status.authenticated ? '✅' : '❌'}\n`;
+                statusMsg += `• Scheduler: ${status.scheduler_running ? '✅ Running' : '❌ Stopped'}\n`;
+                statusMsg += `• Rate Limit: ${status.rate_limit_remaining || 0} syncs remaining\n`;
+                statusMsg += `• Total Syncs: ${status.total_syncs || 0}`;
                 
-                showMessage('✅ System information loaded', 'success', 3000);
+                showMessage(statusMsg, 'info', 8000);
                 
             } catch (error) {
-                showMessage('❌ Failed to get system info: ' + error.message, 'error');
+                showMessage('❌ Failed to get status: ' + error.message, 'error');
             } finally {
-                setButtonState('info-btn', false);
+                setButtonState('status-btn', false);
                 isOperationInProgress = false;
             }
         }
 
-        async function runDiagnostics() {
-            if (isOperationInProgress) return;
-            
-            isOperationInProgress = true;
-            setButtonState('diagnostics-btn', true);
-            showMessage('🔍 Running comprehensive diagnostics...', 'info', 0);
-            
+        async function loadStatus() {
             try {
-                const response = await fetch('/health/detailed', {
-                    credentials: 'same-origin'
-                });
-                
-                if (handleAuthError(response, 'diagnostics')) {
-                    setButtonState('diagnostics-btn', false);
-                    isOperationInProgress = false;
-                    return;
-                }
-                
-                const health = await response.json();
-                
-                const checks = health.checks || {};
-                const checkResults = Object.entries(checks).map(([key, value]) => ({
-                    value: value ? '✅' : '❌',
-                    label: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-                }));
-                
-                showResults('🔍 System Diagnostics', {
-                    grid: checkResults,
-                    details: `
-                        <p><strong>Overall Health:</strong> ${health.status === 'healthy' ? '✅ Healthy' : '❌ Issues Detected'}</p>
-                        <p><strong>Last Check:</strong> ${new Date().toLocaleString()}</p>
-                    `
-                });
-                
-                if (health.status === 'healthy') {
-                    showMessage('✅ All diagnostics passed! System is healthy.', 'success');
-                } else {
-                    showMessage('⚠️ Some diagnostic checks failed. Review results above.', 'warning');
-                }
-                
+                const response = await fetch('/status');
+                const status = await response.json();
+                updateStatusDots(status);
             } catch (error) {
-                showMessage('❌ Diagnostics failed: ' + error.message, 'error');
-            } finally {
-                setButtonState('diagnostics-btn', false);
-                isOperationInProgress = false;
-            }
-        }
-
-        async function validateSync() {
-            if (isOperationInProgress) return;
-            
-            isOperationInProgress = true;
-            setButtonState('validate-btn', true);
-            showMessage('✅ Validating calendar synchronization...', 'info', 0);
-            
-            try {
-                const response = await fetch('/validate-sync', {
-                    method: 'POST',
-                    credentials: 'same-origin'
-                });
-                
-                if (handleAuthError(response, 'validation')) {
-                    setButtonState('validate-btn', false);
-                    isOperationInProgress = false;
-                    return;
-                }
-                
-                const result = await response.json();
-                
-                const validationGrid = [
-                    { value: result.source_count || 0, label: 'Source Events' },
-                    { value: result.target_count || 0, label: 'Public Events' },
-                    { value: result.is_valid ? '✅' : '❌', label: 'Sync Status' }
-                ];
-                
-                if (result.validations) {
-                    const passedChecks = Object.values(result.validations).filter(v => v).length;
-                    const totalChecks = Object.keys(result.validations).length;
-                    validationGrid.push({ value: `${passedChecks}/${totalChecks}`, label: 'Checks Passed' });
-                }
-                
-                showResults('✅ Sync Validation Results', {
-                    grid: validationGrid,
-                    details: result.validations ? 
-                        Object.entries(result.validations).map(([check, passed]) => 
-                            `<p><strong>${check.replace(/_/g, ' ')}:</strong> ${passed ? '✅ Pass' : '❌ Fail'}</p>`
-                        ).join('') : ''
-                });
-                
-                if (result.is_valid) {
-                    showMessage('✅ Calendars are properly synchronized!', 'success');
-                } else {
-                    showMessage('⚠️ Sync validation found issues. Check results above.', 'warning');
-                }
-                
-            } catch (error) {
-                showMessage('❌ Validation failed: ' + error.message, 'error');
-            } finally {
-                setButtonState('validate-btn', false);
-                isOperationInProgress = false;
-            }
-        }
-
-        async function toggleDryRun() {
-            if (isOperationInProgress) return;
-            
-            try {
-                const statusResponse = await fetch('/status', { credentials: 'same-origin' });
-                const status = await statusResponse.json();
-                
-                const endpoint = status.dry_run_mode ? '/disable-dry-run' : '/enable-dry-run';
-                const response = await fetch(endpoint, { credentials: 'same-origin' });
-                
-                if (handleAuthError(response, 'dry run toggle')) {
-                    return;
-                }
-                
-                const result = await response.json();
-                showMessage(result.message, 'success', 3000);
-                
-                // Refresh status to update UI
-                setTimeout(() => {
-                    fetch('/status', { credentials: 'same-origin' })
-                        .then(r => r.json())
-                        .then(updateStatusDots);
-                }, 500);
-                
-            } catch (error) {
-                showMessage('❌ Failed to toggle dry run mode: ' + error.message, 'error');
-            }
-        }
-
-        function toggleDetails() {
-            const content = document.getElementById('details-content');
-            const toggle = document.querySelector('.details-toggle');
-            
-            if (content.classList.contains('show')) {
-                content.classList.remove('show');
-                toggle.textContent = '▶ Show Advanced Tools & Options';
-            } else {
-                content.classList.add('show');
-                toggle.textContent = '▼ Hide Advanced Tools & Options';
+                console.error('Status load failed:', error);
             }
         }
 
         // Initialize on page load
         window.addEventListener('load', () => {
-            fetch('/status', { credentials: 'same-origin' })
-                .then(response => response.json())
-                .then(updateStatusDots)
-                .catch(error => console.error('Initial status load failed:', error));
+            loadStatus();
             
-            // Start periodic status check
-            authCheckInterval = setInterval(() => {
-                // Only refresh if no operation in progress
+            // Refresh status every 60 seconds
+            setInterval(() => {
                 if (!isOperationInProgress) {
-                    fetch('/status', { credentials: 'same-origin' })
-                        .then(response => response.json())
-                        .then(updateStatusDots)
-                        .catch(error => console.error('Status refresh failed:', error));
+                    loadStatus();
                 }
-            }, 60000); // Every 60 seconds
-        });
-
-        // Clean up on page unload
-        window.addEventListener('beforeunload', () => {
-            if (authCheckInterval) {
-                clearInterval(authCheckInterval);
-            }
+            }, 60000);
         });
     </script>
 </body>
