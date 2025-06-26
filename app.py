@@ -168,7 +168,14 @@ def index():
         last_sync_time = None
         if sync_engine:
             status = sync_engine.get_status()
-            last_sync_time = status.get('last_sync_time')
+            last_sync_time_str = status.get('last_sync_time')
+            
+            # Convert ISO string back to datetime object for template
+            if last_sync_time_str:
+                try:
+                    last_sync_time = datetime.fromisoformat(last_sync_time_str.replace('Z', '+00:00'))
+                except:
+                    last_sync_time = None
         
         return render_template('index.html', 
                              last_sync_time=last_sync_time,
@@ -339,6 +346,25 @@ def disable_dry_run():
     """Disable dry run mode"""
     config.DRY_RUN_MODE = False
     return jsonify({"message": "Dry run mode disabled", "dry_run": False})
+
+@app.route('/restart-scheduler')
+def restart_scheduler():
+    """Restart the scheduler"""
+    global scheduler
+    try:
+        if scheduler:
+            scheduler.stop()
+        
+        if sync_engine:
+            from sync.scheduler import SyncScheduler
+            scheduler = SyncScheduler(sync_engine)
+            scheduler.start()
+            return jsonify({"message": "Scheduler restarted", "running": scheduler.is_running()})
+        else:
+            return jsonify({"error": "Sync engine not available"}), 500
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 def signal_handler(sig, frame):
     """Handle shutdown signals"""
