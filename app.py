@@ -599,6 +599,90 @@ def clean_dupes_page():
     </body></html>
     '''
 
+# Add this improved endpoint to your app.py
+
+@app.route('/debug/status')
+def debug_status():
+    """Debug the current state and show what's wrong"""
+    return '''
+    <html><body style="font-family: Arial; padding: 20px;">
+        <h1>🔧 Debug Status & Cleanup</h1>
+        
+        <button onclick="checkStatus()" style="background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 5px; margin: 5px;">
+            Check Status
+        </button>
+        
+        <button onclick="checkDuplicates()" style="background: #ffc107; color: black; padding: 10px 20px; border: none; border-radius: 5px; margin: 5px;">
+            Check Duplicates
+        </button>
+        
+        <button onclick="cleanDupes()" style="background: #dc3545; color: white; padding: 10px 20px; border: none; border-radius: 5px; margin: 5px;">
+            Clean Duplicates
+        </button>
+        
+        <div id="result" style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; max-height: 400px; overflow-y: auto;"></div>
+        
+        <script>
+        function log(message) {
+            const result = document.getElementById('result');
+            result.innerHTML += '<div style="margin: 5px 0; padding: 5px; background: white; border-left: 3px solid #007bff;">' + message + '</div>';
+            result.scrollTop = result.scrollHeight;
+        }
+        
+        async function checkStatus() {
+            log('🔍 Checking system status...');
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                log('<strong>✅ Status Response:</strong><br><pre>' + JSON.stringify(data, null, 2) + '</pre>');
+            } catch (error) {
+                log('❌ Status Error: ' + error.message);
+            }
+        }
+        
+        async function checkDuplicates() {
+            log('🔍 Checking for duplicates...');
+            try {
+                const response = await fetch('/debug/duplicates');
+                const data = await response.json();
+                log('<strong>📊 Duplicates Found:</strong><br><pre>' + JSON.stringify(data, null, 2) + '</pre>');
+            } catch (error) {
+                log('❌ Duplicates Check Error: ' + error.message);
+            }
+        }
+        
+        async function cleanDupes() {
+            log('🧹 Starting cleanup...');
+            try {
+                const response = await fetch('/debug/clean-duplicates', {method: 'POST'});
+                const data = await response.json();
+                
+                log('<strong>🗑️ Cleanup Response:</strong><br><pre>' + JSON.stringify(data, null, 2) + '</pre>');
+                
+                if (data.success) {
+                    log('<strong>✅ Cleanup Summary:</strong>');
+                    log('• Total events: ' + (data.total_events_found || 'unknown'));
+                    log('• Duplicates deleted: ' + (data.duplicates_deleted || 'unknown'));
+                    log('• Events kept: ' + (data.events_kept || 'unknown'));
+                    log('• Failed deletes: ' + (data.failed_deletes || 'unknown'));
+                } else {
+                    log('<strong>❌ Cleanup failed:</strong> ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                log('❌ Cleanup Error: ' + error.message);
+            }
+        }
+        
+        // Clear log
+        function clearLog() {
+            document.getElementById('result').innerHTML = '';
+        }
+        </script>
+        
+        <br><button onclick="clearLog()" style="background: #6c757d; color: white; padding: 5px 15px; border: none; border-radius: 3px;">Clear Log</button>
+    </body></html>
+    '''
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
