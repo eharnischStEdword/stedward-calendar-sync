@@ -480,62 +480,89 @@ class SyncEngine:
         
         return to_add, to_update, to_delete
     
-    def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
-        """Check if an event needs updating - INCLUDES CATEGORIES CHECK"""
-        # First check if modification times are available
-        source_modified = source_event.get('lastModifiedDateTime')
-        target_modified = target_event.get('lastModifiedDateTime')
-        
-        # If both have modification times and source isn't newer, skip update
-        if source_modified and target_modified:
-            if source_modified <= target_modified:
-                return False
-        
-        # Compare key fields
-        if source_event.get('subject') != target_event.get('subject'):
-            logger.debug(f"Subject changed: '{source_event.get('subject')}' != '{target_event.get('subject')}'")
+def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
+    """Check if an event needs updating - ENHANCED WITH DEBUG LOGGING"""
+    subject = source_event.get('subject', 'Unknown')
+    
+    # Get modification times
+    source_modified = source_event.get('lastModifiedDateTime')
+    target_modified = target_event.get('lastModifiedDateTime')
+    
+    logger.info(f"🔍 Checking if '{subject}' needs update:")
+    logger.info(f"  Source modified: {source_modified}")
+    logger.info(f"  Target modified: {target_modified}")
+    
+    # TEMPORARILY DISABLE modification time check to debug
+    # if source_modified and target_modified:
+    #     if source_modified <= target_modified:
+    #         logger.info(f"  ⏭️  Skipping update check - source not newer")
+    #         return False
+    
+    # Compare key fields with debug logging
+    if source_event.get('subject') != target_event.get('subject'):
+        logger.info(f"  📝 Subject changed: '{source_event.get('subject')}' != '{target_event.get('subject')}'")
+        return True
+    
+    if source_event.get('start') != target_event.get('start'):
+        logger.info(f"  🕐 Start time changed for '{subject}'")
+        return True
+    
+    if source_event.get('end') != target_event.get('end'):
+        logger.info(f"  🕐 End time changed for '{subject}'")
+        return True
+    
+    if source_event.get('isAllDay') != target_event.get('isAllDay'):
+        logger.info(f"  📅 All-day flag changed for '{subject}'")
+        return True
+    
+    # Compare categories with detailed logging
+    source_categories = set(source_event.get('categories', []))
+    target_categories = set(target_event.get('categories', []))
+    
+    logger.info(f"  📋 Categories comparison for '{subject}':")
+    logger.info(f"    Source categories: {source_categories}")
+    logger.info(f"    Target categories: {target_categories}")
+    
+    if source_categories != target_categories:
+        logger.info(f"  ✅ CATEGORIES CHANGED for '{subject}': {source_categories} != {target_categories}")
+        return True
+    
+    # Compare location with logging
+    source_location = source_event.get('location', {})
+    target_location = target_event.get('location', {})
+    
+    # Normalize location comparison (could be string or dict)
+    source_loc_str = source_location.get('displayName', '') if isinstance(source_location, dict) else str(source_location)
+    target_loc_str = target_location.get('displayName', '') if isinstance(target_location, dict) else str(target_location)
+    
+    logger.info(f"  📍 Location: '{source_loc_str}' vs '{target_loc_str}'")
+    
+    if source_loc_str != target_loc_str:
+        logger.info(f"  ✅ LOCATION CHANGED for '{subject}': '{source_loc_str}' != '{target_loc_str}'")
+        return True
+    
+    # Compare body content
+    source_body = source_event.get('body', {}).get('content', '') if isinstance(source_event.get('body'), dict) else ''
+    target_body = target_event.get('body', {}).get('content', '') if isinstance(target_event.get('body'), dict) else ''
+    
+    # Log first 100 chars of body for comparison
+    logger.info(f"  📄 Body content: '{source_body[:100]}...' vs '{target_body[:100]}...'")
+    
+    if source_body != target_body:
+        logger.info(f"  ✅ BODY CONTENT CHANGED for '{subject}'")
+        return True
+    
+    # For recurring events, check if recurrence pattern changed
+    if source_event.get('type') == 'seriesMaster':
+        source_recurrence = source_event.get('recurrence', {})
+        target_recurrence = target_event.get('recurrence', {})
+        if source_recurrence != target_recurrence:
+            logger.info(f"  ✅ RECURRENCE PATTERN CHANGED for '{subject}'")
             return True
-        
-        if source_event.get('start') != target_event.get('start'):
-            logger.debug(f"Start time changed for '{source_event.get('subject')}'")
-            return True
-        
-        if source_event.get('end') != target_event.get('end'):
-            logger.debug(f"End time changed for '{source_event.get('subject')}'")
-            return True
-        
-        if source_event.get('isAllDay') != target_event.get('isAllDay'):
-            logger.debug(f"All-day flag changed for '{source_event.get('subject')}'")
-            return True
-        
-        # Compare categories (THIS WAS MISSING!)
-        source_categories = set(source_event.get('categories', []))
-        target_categories = set(target_event.get('categories', []))
-        if source_categories != target_categories:
-            logger.info(f"📋 Categories changed for '{source_event.get('subject')}': {source_categories} != {target_categories}")
-            return True
-        
-        # Compare location
-        source_location = source_event.get('location', {})
-        target_location = target_event.get('location', {})
-        
-        # Normalize location comparison (could be string or dict)
-        source_loc_str = source_location.get('displayName', '') if isinstance(source_location, dict) else str(source_location)
-        target_loc_str = target_location.get('displayName', '') if isinstance(target_location, dict) else str(target_location)
-        
-        if source_loc_str != target_loc_str:
-            logger.debug(f"Location changed for '{source_event.get('subject')}': '{source_loc_str}' != '{target_loc_str}'")
-            return True
-        
-        # For recurring events, check if recurrence pattern changed
-        if source_event.get('type') == 'seriesMaster':
-            source_recurrence = source_event.get('recurrence', {})
-            target_recurrence = target_event.get('recurrence', {})
-            if source_recurrence != target_recurrence:
-                logger.debug(f"Recurrence pattern changed for '{source_event.get('subject')}'")
-                return True
-        
-        return False
+    
+    # No changes detected
+    logger.info(f"  ➡️  No changes detected for '{subject}'")
+    return False
     
     def _execute_sync_operations(
         self, 
