@@ -8,6 +8,7 @@ import secrets
 import traceback
 import signal
 import sys
+import config  # <-- ADDED THIS IMPORT
 from datetime import datetime
 from flask import Flask, render_template, jsonify, redirect, session, request
 
@@ -108,7 +109,7 @@ def get_status():
             "last_sync_time": None,
             "last_sync_result": {"success": False, "message": "Not synced yet"},
             "scheduler_running": scheduler.is_running() if scheduler else False,
-            "dry_run_mode": False,
+            "dry_run_mode": getattr(config, 'DRY_RUN_MODE', False),
             "circuit_breaker_state": "closed",
             "rate_limit_remaining": 20,
             "total_syncs": 0
@@ -238,7 +239,6 @@ def logout():
 def debug_info():
     """Debug information"""
     try:
-        import config
         debug_data = {
             "timestamp": datetime.now().isoformat(),
             "environment_vars": {
@@ -267,23 +267,6 @@ def debug_info():
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
-
-def signal_handler(sig, frame):
-    """Handle shutdown signals"""
-    logger.info("Received shutdown signal, cleaning up...")
-    if scheduler:
-        scheduler.stop()
-    sys.exit(0)
-
-# Register signal handlers
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-# Initialize on startup
-logger.info("🚀 Starting St. Edward Calendar Sync")
-initialize_components()
-
-# Add these debug endpoints to your app.py
 
 @app.route('/debug/signatures')
 def debug_signatures():
@@ -400,7 +383,6 @@ def debug_signatures():
         return jsonify(analysis)
         
     except Exception as e:
-        import traceback
         return jsonify({
             "error": str(e),
             "traceback": traceback.format_exc()
@@ -473,7 +455,6 @@ def debug_duplicates():
         })
         
     except Exception as e:
-        import traceback
         return jsonify({
             "error": str(e),
             "traceback": traceback.format_exc()
@@ -547,7 +528,6 @@ def clean_duplicates():
         })
         
     except Exception as e:
-        import traceback
         return jsonify({
             "error": str(e),
             "traceback": traceback.format_exc()
@@ -564,42 +544,6 @@ def disable_dry_run():
     """Disable dry run mode"""
     config.DRY_RUN_MODE = False
     return jsonify({"message": "Dry run mode disabled", "dry_run": False})
-
-@app.route('/clean-dupes')
-def clean_dupes_page():
-    """Simple page to trigger duplicate cleanup"""
-    return '''
-    <html><body style="font-family: Arial; padding: 20px;">
-        <h1>🧹 Clean Duplicates</h1>
-        <button onclick="cleanDupes()" style="background: #e74c3c; color: white; padding: 15px 30px; border: none; border-radius: 5px; font-size: 18px;">
-            Delete All Duplicates
-        </button>
-        <div id="result" style="margin-top: 20px; padding: 10px; background: #f8f9fa; border-radius: 5px;"></div>
-        
-        <script>
-        async function cleanDupes() {
-            document.getElementById('result').innerHTML = '🔄 Cleaning duplicates...';
-            
-            try {
-                const response = await fetch('/debug/clean-duplicates', {method: 'POST'});
-                const result = await response.json();
-                
-                document.getElementById('result').innerHTML = `
-                    <h3>✅ Cleanup Complete!</h3>
-                    <p><strong>Total events found:</strong> ${result.total_events_found}</p>
-                    <p><strong>Duplicates deleted:</strong> ${result.duplicates_deleted}</p>
-                    <p><strong>Events kept:</strong> ${result.events_kept}</p>
-                    <p><strong>Failed deletes:</strong> ${result.failed_deletes}</p>
-                `;
-            } catch (error) {
-                document.getElementById('result').innerHTML = `❌ Error: ${error.message}`;
-            }
-        }
-        </script>
-    </body></html>
-    '''
-
-# Add this improved endpoint to your app.py
 
 @app.route('/debug/status')
 def debug_status():
@@ -682,6 +626,21 @@ def debug_status():
         <br><button onclick="clearLog()" style="background: #6c757d; color: white; padding: 5px 15px; border: none; border-radius: 3px;">Clear Log</button>
     </body></html>
     '''
+
+def signal_handler(sig, frame):
+    """Handle shutdown signals"""
+    logger.info("Received shutdown signal, cleaning up...")
+    if scheduler:
+        scheduler.stop()
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# Initialize on startup
+logger.info("🚀 Starting St. Edward Calendar Sync")
+initialize_components()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
