@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 import config
 from utils.retry import retry_with_backoff
+from utils.timezone import get_central_time
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ class CalendarReader:
         # Check cache first
         if calendar_name in self._calendar_cache:
             expiry = self._cache_expiry.get(calendar_name)
-            if expiry and datetime.now() < expiry:
+            if expiry and get_central_time() < expiry:
                 logger.info(f"Using cached calendar ID for '{calendar_name}'")
                 return self._calendar_cache[calendar_name]
         
@@ -83,7 +84,7 @@ class CalendarReader:
                 
                 # Cache the result for 1 hour
                 self._calendar_cache[calendar_name] = calendar_id
-                self._cache_expiry[calendar_name] = datetime.now() + timedelta(hours=1)
+                self._cache_expiry[calendar_name] = get_central_time() + timedelta(hours=1)
                 
                 return calendar_id
         
@@ -173,8 +174,8 @@ class CalendarReader:
         }
         
         from datetime import datetime, timedelta
-        cutoff_date = datetime.now() - timedelta(days=config.SYNC_CUTOFF_DAYS)
-        future_cutoff = datetime.now() + timedelta(days=365)  # Don't sync events more than a year out
+        cutoff_date = get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
+        future_cutoff = get_central_time() + timedelta(days=365)  # Don't sync events more than a year out
         
         for event in all_events:
             # Check if public
