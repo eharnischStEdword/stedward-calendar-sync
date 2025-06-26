@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-St. Edward Calendar Sync - Main Application (Debug Version)
+St. Edward Calendar Sync - Main Application (Bypass Auth Debug)
 """
 import os
 import logging
@@ -21,139 +21,120 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app EARLY
 app = Flask(__name__)
-
-# Basic configuration
-try:
-    import config
-    app.secret_key = getattr(config, 'SECRET_KEY', None) or secrets.token_hex(32)
-    logger.info("✅ Config loaded successfully")
-except Exception as e:
-    logger.error(f"❌ Config import failed: {e}")
-    app.secret_key = secrets.token_hex(32)
+app.secret_key = secrets.token_hex(32)
 
 # Global state tracking
 INITIALIZATION_STATUS = {
     'completed': False,
     'error': None,
     'progress': 'Starting...',
-    'components': {}
+    'components': {},
+    'detailed_errors': []
 }
 
-# Initialize components with error handling
-auth_manager = None
-sync_engine = None
-scheduler = None
-audit_logger = None
-APP_VERSION_INFO = {"version": "2025.06.26", "full_version": "Calendar Sync v2025.06.26"}
+# Check environment first
+def check_environment():
+    """Check required environment variables"""
+    required_vars = ['CLIENT_SECRET', 'CLIENT_ID', 'TENANT_ID']
+    missing = []
+    present = []
+    
+    for var in required_vars:
+        if os.environ.get(var):
+            present.append(var)
+        else:
+            missing.append(var)
+    
+    INITIALIZATION_STATUS['env_check'] = {
+        'present': present,
+        'missing': missing,
+        'total_env_vars': len(os.environ)
+    }
+    
+    logger.info(f"Environment check - Present: {present}, Missing: {missing}")
+    return len(missing) == 0
 
-def safe_import_components():
-    """Import components with detailed error reporting"""
-    global auth_manager, sync_engine, scheduler, audit_logger, APP_VERSION_INFO, INITIALIZATION_STATUS
+def test_imports():
+    """Test each import individually"""
+    results = {}
+    
+    # Test config import
+    try:
+        import config
+        results['config'] = {'success': True, 'details': 'OK'}
+        logger.info("✅ Config import successful")
+        
+        # Check config attributes
+        config_attrs = []
+        for attr in ['CLIENT_SECRET', 'CLIENT_ID', 'TENANT_ID', 'SHARED_MAILBOX']:
+            if hasattr(config, attr):
+                value = getattr(config, attr)
+                config_attrs.append(f"{attr}: {'SET' if value else 'EMPTY'}")
+            else:
+                config_attrs.append(f"{attr}: MISSING")
+        
+        results['config']['attributes'] = config_attrs
+        
+    except Exception as e:
+        error_msg = f"Config import failed: {e}"
+        results['config'] = {'success': False, 'error': error_msg}
+        logger.error(f"❌ {error_msg}")
+        logger.error(traceback.format_exc())
+    
+    # Test auth module imports step by step
+    try:
+        # Test basic Python imports first
+        import requests
+        import urllib.parse
+        from datetime import datetime, timedelta
+        results['basic_imports'] = {'success': True}
+        logger.info("✅ Basic imports OK")
+    except Exception as e:
+        results['basic_imports'] = {'success': False, 'error': str(e)}
+        logger.error(f"❌ Basic imports failed: {e}")
     
     try:
-        INITIALIZATION_STATUS['progress'] = 'Loading authentication...'
-        logger.info("🔄 Loading authentication module...")
-        
+        # Test Azure imports
+        from azure.core.credentials import AccessToken
+        results['azure_core'] = {'success': True}
+        logger.info("✅ Azure core import OK")
+    except Exception as e:
+        results['azure_core'] = {'success': False, 'error': str(e)}
+        logger.error(f"❌ Azure core import failed: {e}")
+    
+    try:
+        # Test msgraph import
+        from msgraph import GraphServiceClient
+        results['msgraph'] = {'success': True}
+        logger.info("✅ MSGraph import OK")
+    except Exception as e:
+        results['msgraph'] = {'success': False, 'error': str(e)}
+        logger.error(f"❌ MSGraph import failed: {e}")
+    
+    try:
+        # Test threading import
+        from threading import Lock
+        results['threading'] = {'success': True}
+        logger.info("✅ Threading import OK")
+    except Exception as e:
+        results['threading'] = {'success': False, 'error': str(e)}
+        logger.error(f"❌ Threading import failed: {e}")
+    
+    # Now try the actual auth module
+    try:
         from auth.microsoft_auth import MicrosoftAuth
         auth_manager = MicrosoftAuth()
-        INITIALIZATION_STATUS['components']['auth'] = True
-        logger.info("✅ Auth manager initialized")
-        
+        results['auth_module'] = {'success': True}
+        logger.info("✅ Auth module import successful")
     except Exception as e:
-        error_msg = f"Auth manager failed: {e}"
+        error_msg = f"Auth module import failed: {e}"
+        results['auth_module'] = {'success': False, 'error': error_msg}
         logger.error(f"❌ {error_msg}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        INITIALIZATION_STATUS['components']['auth'] = False
-        INITIALIZATION_STATUS['error'] = error_msg
-        return False
+        logger.error(traceback.format_exc())
     
-    try:
-        INITIALIZATION_STATUS['progress'] = 'Loading sync engine...'
-        logger.info("🔄 Loading sync engine...")
-        
-        from sync.engine import SyncEngine
-        sync_engine = SyncEngine(auth_manager)
-        INITIALIZATION_STATUS['components']['sync'] = True
-        logger.info("✅ Sync engine initialized")
-        
-    except Exception as e:
-        error_msg = f"Sync engine failed: {e}"
-        logger.error(f"❌ {error_msg}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        INITIALIZATION_STATUS['components']['sync'] = False
-        INITIALIZATION_STATUS['error'] = error_msg
-        return False
-    
-    try:
-        INITIALIZATION_STATUS['progress'] = 'Loading scheduler...'
-        logger.info("🔄 Loading scheduler...")
-        
-        from sync.scheduler import SyncScheduler
-        scheduler = SyncScheduler(sync_engine)
-        INITIALIZATION_STATUS['components']['scheduler'] = True
-        logger.info("✅ Scheduler initialized")
-        
-    except Exception as e:
-        error_msg = f"Scheduler failed: {e}"
-        logger.error(f"❌ {error_msg}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        INITIALIZATION_STATUS['components']['scheduler'] = False
-        INITIALIZATION_STATUS['error'] = error_msg
-        return False
-    
-    try:
-        INITIALIZATION_STATUS['progress'] = 'Loading utilities...'
-        logger.info("🔄 Loading audit logger...")
-        
-        from utils.audit import AuditLogger
-        audit_logger = AuditLogger()
-        INITIALIZATION_STATUS['components']['audit'] = True
-        logger.info("✅ Audit logger initialized")
-        
-    except Exception as e:
-        logger.warning(f"⚠️ Audit logger failed: {e}")
-        INITIALIZATION_STATUS['components']['audit'] = False
-        
-    try:
-        logger.info("🔄 Loading version info...")
-        from utils.version import get_version_info
-        APP_VERSION_INFO = get_version_info()
-        INITIALIZATION_STATUS['components']['version'] = True
-        logger.info("✅ Version info loaded")
-        
-    except Exception as e:
-        logger.warning(f"⚠️ Version info failed: {e}")
-        INITIALIZATION_STATUS['components']['version'] = False
-    
-    INITIALIZATION_STATUS['progress'] = 'Completed'
-    INITIALIZATION_STATUS['completed'] = True
-    return True
+    return results
 
-# Log startup
-logger.info("🚀 Starting St. Edward Calendar Sync")
-logger.info(f"🐍 Python version: {sys.version}")
-logger.info(f"📦 Environment: {os.environ.get('RENDER', 'local')}")
-
-# Simple decorator for auth (fallback version)
-def requires_auth(f):
-    """Simple auth decorator with fallback"""
-    from functools import wraps
-    
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not INITIALIZATION_STATUS['completed']:
-            return jsonify({"error": "System still initializing"}), 503
-        
-        if not auth_manager:
-            return jsonify({"error": "Auth system not available"}), 503
-        
-        if not hasattr(auth_manager, 'access_token') or not auth_manager.access_token:
-            return jsonify({"error": "Not authenticated", "redirect": "/logout"}), 401
-        
-        return f(*args, **kwargs)
-    return decorated_function
-
-# ==================== BASIC ROUTES ====================
+# ==================== ROUTES ====================
 
 @app.route('/health')
 def health_check():
@@ -161,9 +142,24 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "service": "calendar-sync",
-        "initialization": INITIALIZATION_STATUS['completed']
+        "service": "calendar-sync"
     }), 200
+
+@app.route('/debug')
+def debug_info():
+    """Get detailed debug information"""
+    env_ok = check_environment()
+    import_results = test_imports()
+    
+    return jsonify({
+        'timestamp': datetime.now().isoformat(),
+        'environment_check': INITIALIZATION_STATUS.get('env_check', {}),
+        'environment_ok': env_ok,
+        'import_tests': import_results,
+        'python_version': sys.version,
+        'working_directory': os.getcwd(),
+        'python_path': sys.path[:3]  # First 3 entries
+    })
 
 @app.route('/init-status')
 def init_status():
@@ -172,192 +168,138 @@ def init_status():
 
 @app.route('/')
 def index():
-    """Main page with detailed error handling"""
+    """Main page with detailed diagnostics"""
     try:
-        if not INITIALIZATION_STATUS['completed']:
-            error_info = ""
-            if INITIALIZATION_STATUS['error']:
-                error_info = f"<p style='color: red; margin-top: 20px;'>Error: {INITIALIZATION_STATUS['error']}</p>"
-            
+        # Check environment first
+        env_ok = check_environment()
+        
+        if not env_ok:
+            missing_vars = INITIALIZATION_STATUS['env_check']['missing']
             return f'''
             <html>
             <head>
-                <title>St. Edward Calendar Sync - Initializing</title>
-                <meta http-equiv="refresh" content="3">
+                <title>St. Edward Calendar Sync - Configuration Error</title>
+                <meta http-equiv="refresh" content="10">
             </head>
-            <body style="font-family: Arial; text-align: center; margin-top: 100px;">
-                <h1>🔧 System Initializing</h1>
-                <p>Progress: {INITIALIZATION_STATUS['progress']}</p>
-                <p>Please wait while the system starts up...</p>
-                {error_info}
-                <div style="margin-top: 30px;">
-                    <h3>Component Status:</h3>
-                    <ul style="text-align: left; display: inline-block;">
-                        <li>Auth: {"✅" if INITIALIZATION_STATUS['components'].get('auth') else "⏳" if INITIALIZATION_STATUS['components'].get('auth') is None else "❌"}</li>
-                        <li>Sync: {"✅" if INITIALIZATION_STATUS['components'].get('sync') else "⏳" if INITIALIZATION_STATUS['components'].get('sync') is None else "❌"}</li>
-                        <li>Scheduler: {"✅" if INITIALIZATION_STATUS['components'].get('scheduler') else "⏳" if INITIALIZATION_STATUS['components'].get('scheduler') is None else "❌"}</li>
-                        <li>Audit: {"✅" if INITIALIZATION_STATUS['components'].get('audit') else "⏳" if INITIALIZATION_STATUS['components'].get('audit') is None else "❌"}</li>
-                    </ul>
-                </div>
-                <p><a href="/init-status">View Raw Status</a></p>
+            <body style="font-family: Arial; text-align: center; margin-top: 50px;">
+                <h1>⚠️ Configuration Error</h1>
+                <p>Missing required environment variables:</p>
+                <ul style="text-align: left; display: inline-block; color: red;">
+                    {"".join([f"<li>{var}</li>" for var in missing_vars])}
+                </ul>
+                <p><strong>Action Required:</strong></p>
+                <ol style="text-align: left; display: inline-block;">
+                    <li>Go to your Render dashboard</li>
+                    <li>Navigate to Environment Variables</li>
+                    <li>Add the missing variables listed above</li>
+                    <li>Redeploy the service</li>
+                </ol>
+                <p><a href="/debug">View Full Debug Info</a></p>
             </body>
             </html>
             '''
         
-        if not auth_manager:
-            return '<html><body><h1>❌ System Error</h1><p>Authentication system failed to load.</p></body></html>'
+        # Test imports
+        import_results = test_imports()
+        failed_imports = [name for name, result in import_results.items() if not result['success']]
         
-        if not auth_manager.is_authenticated():
-            state = secrets.token_urlsafe(16)
-            session['oauth_state'] = state
-            auth_url = auth_manager.get_auth_url(state)
-            
+        if failed_imports:
             return f'''
             <html>
             <head>
-                <title>St. Edward Calendar Sync - Sign In</title>
-                <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
+                <title>St. Edward Calendar Sync - Import Error</title>
+                <meta http-equiv="refresh" content="10">
             </head>
-            <body style="font-family: Arial; text-align: center; margin-top: 100px;">
-                <h1>🗓️ St. Edward Calendar Sync</h1>
-                <p>Sign in with your Microsoft account to access calendar sync.</p>
-                <a href="{auth_url}" style="background: #0078d4; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 18px;">
-                    Sign in with Microsoft
-                </a>
-                <p style="margin-top: 30px; font-size: 12px; color: #666;">
-                    System fully loaded and ready ✅
+            <body style="font-family: Arial; text-align: center; margin-top: 50px;">
+                <h1>⚠️ Import Error</h1>
+                <p>Failed to import required modules:</p>
+                <div style="text-align: left; display: inline-block; background: #f0f0f0; padding: 20px; border-radius: 5px;">
+                    {"".join([f"<p><strong>{name}:</strong> {import_results[name].get('error', 'Unknown error')}</p>" for name in failed_imports])}
+                </div>
+                <p><a href="/debug">View Full Debug Info</a></p>
+                <p style="font-size: 12px; margin-top: 30px;">
+                    This usually indicates a dependency issue or missing files.
                 </p>
             </body>
             </html>
             '''
         
-        # Try to render the full template
+        # If we get here, everything should work - try to load the auth module
         try:
-            status = sync_engine.get_status() if sync_engine else {}
-            return render_template('index.html', 
-                                 last_sync_time=None,
-                                 last_sync_result=status.get('last_sync_result'),
-                                 sync_in_progress=status.get('sync_in_progress', False))
+            from auth.microsoft_auth import MicrosoftAuth
+            auth_manager = MicrosoftAuth()
+            
+            if not auth_manager.is_authenticated():
+                state = secrets.token_urlsafe(16)
+                session['oauth_state'] = state
+                auth_url = auth_manager.get_auth_url(state)
+                
+                return f'''
+                <html>
+                <head>
+                    <title>St. Edward Calendar Sync - Sign In</title>
+                    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
+                </head>
+                <body style="font-family: Arial; text-align: center; margin-top: 100px;">
+                    <h1>🗓️ St. Edward Calendar Sync</h1>
+                    <p>System loaded successfully! Sign in to continue.</p>
+                    <a href="{auth_url}" style="background: #0078d4; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 18px;">
+                        Sign in with Microsoft
+                    </a>
+                    <p style="margin-top: 30px; font-size: 12px; color: #666;">
+                        All systems ready ✅
+                    </p>
+                </body>
+                </html>
+                '''
+            else:
+                return '''
+                <html><body style="font-family: Arial; text-align: center; margin-top: 100px;">
+                    <h1>📅 Calendar Sync Dashboard</h1>
+                    <p>Authentication successful! Dashboard loading...</p>
+                    <p><em>Full dashboard will be available once all components are loaded.</em></p>
+                </body></html>
+                '''
+                
         except Exception as e:
-            logger.error(f"Template render failed: {e}")
             return f'''
             <html><body style="font-family: Arial; text-align: center; margin-top: 100px;">
-                <h1>📅 Calendar Sync Dashboard</h1>
-                <p>Welcome! System is running but full dashboard is loading...</p>
-                <p><a href="/health">Health Check</a> | <a href="/status">Status</a></p>
-                <p style="color: red;">Template error: {e}</p>
+                <h1>⚠️ Runtime Error</h1>
+                <p>Error creating auth manager: {e}</p>
+                <p><a href="/debug">View Debug Info</a></p>
             </body></html>
             '''
             
     except Exception as e:
         logger.error(f"Index route failed: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(traceback.format_exc())
         return f'''
         <html><body style="font-family: Arial; text-align: center; margin-top: 100px;">
-            <h1>⚠️ System Error</h1>
+            <h1>⚠️ Critical Error</h1>
             <p>Error: {e}</p>
-            <p><a href="/init-status">Check System Status</a></p>
+            <p><a href="/debug">View Debug Info</a></p>
         </body></html>
         '''
 
-@app.route('/auth/callback')
-def auth_callback():
-    """Handle OAuth callback"""
+@app.route('/test-auth')
+def test_auth():
+    """Test authentication setup without full initialization"""
     try:
-        if not INITIALIZATION_STATUS['completed']:
-            return "System not ready", 503
-            
-        if not auth_manager:
-            return "Auth system not available", 503
-            
-        auth_code = request.args.get('code')
-        state = request.args.get('state')
-        
-        if state != session.get('oauth_state'):
-            return "Invalid state", 400
-        
-        if auth_code and auth_manager.exchange_code_for_token(auth_code):
-            session.pop('oauth_state', None)
-            if scheduler:
-                scheduler.start()
-            return redirect(url_for('index'))
-        else:
-            return "Authentication failed", 400
-    except Exception as e:
-        logger.error(f"Auth callback failed: {e}")
-        return f"Authentication error: {e}", 500
-
-@app.route('/status')
-def status():
-    """Get current status"""
-    try:
-        if not INITIALIZATION_STATUS['completed']:
-            return jsonify({
-                "authenticated": False,
-                "scheduler_running": False,
-                "sync_in_progress": False,
-                "system_status": "initializing",
-                "initialization": INITIALIZATION_STATUS
-            })
-        
-        if not sync_engine:
-            return jsonify({
-                "authenticated": False,
-                "scheduler_running": False,
-                "sync_in_progress": False,
-                "system_status": "degraded - sync engine not available"
-            })
-        
-        sync_status = sync_engine.get_status()
+        # Check if we can create the auth manager
+        from auth.microsoft_auth import MicrosoftAuth
+        auth = MicrosoftAuth()
         
         return jsonify({
-            **sync_status,
-            "authenticated": auth_manager.is_authenticated() if auth_manager else False,
-            "scheduler_running": scheduler.is_running() if scheduler else False,
-            "version": APP_VERSION_INFO.get("version", "unknown"),
-            "system_status": "ready",
-            "initialization": INITIALIZATION_STATUS
+            'success': True,
+            'message': 'Auth manager created successfully',
+            'has_tokens': hasattr(auth, 'access_token') and auth.access_token is not None
         })
     except Exception as e:
-        logger.error(f"Status failed: {e}")
         return jsonify({
-            "error": str(e),
-            "system_status": "error",
-            "initialization": INITIALIZATION_STATUS
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
         }), 500
-
-@app.route('/sync', methods=['POST'])
-@requires_auth
-def manual_sync():
-    """Trigger manual sync"""
-    if not sync_engine:
-        return jsonify({"error": "Sync engine not available"}), 503
-    
-    def sync_thread():
-        try:
-            result = sync_engine.sync_calendars()
-            logger.info(f"Sync result: {result}")
-        except Exception as e:
-            logger.error(f"Sync failed: {e}")
-    
-    thread = threading.Thread(target=sync_thread)
-    thread.start()
-    
-    return jsonify({"success": True, "message": "Sync started"})
-
-@app.route('/logout')
-def logout():
-    """Logout"""
-    try:
-        if auth_manager:
-            auth_manager.clear_tokens()
-        if scheduler:
-            scheduler.stop()
-        session.clear()
-    except Exception as e:
-        logger.error(f"Logout error: {e}")
-    
-    return redirect(url_for('index'))
 
 # ==================== ERROR HANDLERS ====================
 
@@ -368,43 +310,25 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     logger.error(f"Internal error: {error}")
-    logger.error(f"Traceback: {traceback.format_exc()}")
-    return jsonify({"error": "Internal server error", "details": str(error)}), 500
+    return jsonify({
+        "error": "Internal server error", 
+        "details": str(error),
+        "debug_url": "/debug"
+    }), 500
 
-# ==================== INITIALIZATION ====================
+# ==================== STARTUP ====================
 
-def initialize_app():
-    """Initialize app components in a thread"""
-    logger.info("🔄 Initializing components...")
-    
-    try:
-        success = safe_import_components()
-        
-        if success:
-            logger.info("✅ All components initialized successfully")
-            
-            # Try to restore auth
-            try:
-                if auth_manager and auth_manager.is_authenticated():
-                    if scheduler:
-                        scheduler.start()
-                    logger.info("🔐 Authentication restored")
-            except Exception as e:
-                logger.warning(f"Auth restoration failed: {e}")
-        else:
-            logger.error("❌ Component initialization failed")
-    except Exception as e:
-        error_msg = f"Critical initialization error: {e}"
-        logger.error(error_msg)
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        INITIALIZATION_STATUS['error'] = error_msg
-        INITIALIZATION_STATUS['progress'] = 'Failed'
+logger.info("🚀 Starting St. Edward Calendar Sync (Debug Mode)")
+logger.info(f"🐍 Python version: {sys.version}")
+logger.info(f"📂 Working directory: {os.getcwd()}")
+logger.info(f"📦 Environment: {os.environ.get('RENDER', 'local')}")
 
-# Start initialization in background (don't block app startup)
-init_thread = threading.Thread(target=initialize_app, daemon=True)
-init_thread.start()
+# Log some basic environment info
+logger.info(f"🔧 Total environment variables: {len(os.environ)}")
+logger.info(f"🔧 PORT: {os.environ.get('PORT', 'not set')}")
+logger.info(f"🔧 CLIENT_SECRET present: {'Yes' if os.environ.get('CLIENT_SECRET') else 'No'}")
 
-logger.info("🎉 Flask app ready - components initializing in background")
+logger.info("🎉 Flask app ready - visit /debug for detailed diagnostics")
 
 # ==================== MAIN ====================
 
