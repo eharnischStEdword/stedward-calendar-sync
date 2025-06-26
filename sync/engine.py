@@ -496,38 +496,71 @@ class SyncEngine:
         
         return to_add, to_update, to_delete
     
-    def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
-        """Check if an event needs updating"""
-        # First check if modification times are available
-        source_modified = source_event.get('lastModifiedDateTime')
-        target_modified = target_event.get('lastModifiedDateTime')
-        
-        # If both have modification times and source isn't newer, skip update
-        if source_modified and target_modified:
-            if source_modified <= target_modified:
-                return False
-        
-        # Compare key fields
-        if source_event.get('subject') != target_event.get('subject'):
+def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
+    """Check if an event needs updating"""
+    # First check if modification times are available
+    source_modified = source_event.get('lastModifiedDateTime')
+    target_modified = target_event.get('lastModifiedDateTime')
+    
+    # If both have modification times and source isn't newer, skip update
+    if source_modified and target_modified:
+        if source_modified <= target_modified:
+            return False
+    
+    # Compare key fields
+    if source_event.get('subject') != target_event.get('subject'):
+        logger.debug(f"Subject changed: '{source_event.get('subject')}' != '{target_event.get('subject')}'")
+        return True
+    
+    if source_event.get('start') != target_event.get('start'):
+        logger.debug(f"Start time changed for '{source_event.get('subject')}'")
+        return True
+    
+    if source_event.get('end') != target_event.get('end'):
+        logger.debug(f"End time changed for '{source_event.get('subject')}'")
+        return True
+    
+    if source_event.get('isAllDay') != target_event.get('isAllDay'):
+        logger.debug(f"All-day flag changed for '{source_event.get('subject')}'")
+        return True
+    
+    # Compare categories (THIS WAS MISSING!)
+    source_categories = set(source_event.get('categories', []))
+    target_categories = set(target_event.get('categories', []))
+    if source_categories != target_categories:
+        logger.debug(f"Categories changed for '{source_event.get('subject')}': {source_categories} != {target_categories}")
+        return True
+    
+    # Compare location
+    source_location = source_event.get('location', {})
+    target_location = target_event.get('location', {})
+    
+    # Normalize location comparison (could be string or dict)
+    source_loc_str = source_location.get('displayName', '') if isinstance(source_location, dict) else str(source_location)
+    target_loc_str = target_location.get('displayName', '') if isinstance(target_location, dict) else str(target_location)
+    
+    if source_loc_str != target_loc_str:
+        logger.debug(f"Location changed for '{source_event.get('subject')}': '{source_loc_str}' != '{target_loc_str}'")
+        return True
+    
+    # Compare body content
+    source_body = source_event.get('body', {}).get('content', '') if isinstance(source_event.get('body'), dict) else ''
+    target_body = target_event.get('body', {}).get('content', '') if isinstance(target_event.get('body'), dict) else ''
+    
+    if source_body != target_body:
+        logger.debug(f"Body content changed for '{source_event.get('subject')}'")
+        return True
+    
+    # For recurring events, check if recurrence pattern changed
+    if source_event.get('type') == 'seriesMaster':
+        source_recurrence = source_event.get('recurrence', {})
+        target_recurrence = target_event.get('recurrence', {})
+        if source_recurrence != target_recurrence:
+            logger.debug(f"Recurrence pattern changed for '{source_event.get('subject')}'")
             return True
-        
-        if source_event.get('start') != target_event.get('start'):
-            return True
-        
-        if source_event.get('end') != target_event.get('end'):
-            return True
-        
-        if source_event.get('isAllDay') != target_event.get('isAllDay'):
-            return True
-        
-        # For recurring events, check if recurrence pattern changed
-        if source_event.get('type') == 'seriesMaster':
-            source_recurrence = source_event.get('recurrence', {})
-            target_recurrence = target_event.get('recurrence', {})
-            if source_recurrence != target_recurrence:
-                return True
-        
-        return False
+    
+    # No changes detected
+    return False
     
     def _execute_sync_operations(
         self, 
