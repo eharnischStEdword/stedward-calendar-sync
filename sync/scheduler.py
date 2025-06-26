@@ -1,11 +1,12 @@
 """
-Background Scheduler for automatic sync - IMPROVED for Render Uptime
+Background Scheduler for automatic sync - IMPROVED for Render Uptime with Central Time
 """
 import logging
 import threading
 import time
 import schedule
 from threading import Lock
+from utils.timezone import get_central_time, format_central_time
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class SyncScheduler:
         """Start the scheduler"""
         with self.scheduler_lock:
             if self.scheduler_thread is None or not self.scheduler_thread.is_alive():
-                logger.info("Starting scheduler thread...")
+                logger.info(f"Starting scheduler thread at {format_central_time(get_central_time())}...")
                 self.scheduler_running = True
                 self.scheduler_thread = threading.Thread(target=self._run_scheduler, daemon=True)
                 self.scheduler_thread.start()
@@ -35,7 +36,7 @@ class SyncScheduler:
         with self.scheduler_lock:
             self.scheduler_running = False
         
-        logger.info("Stopping scheduler...")
+        logger.info(f"Stopping scheduler at {format_central_time(get_central_time())}...")
     
     def is_running(self):
         """Check if scheduler is running"""
@@ -47,7 +48,7 @@ class SyncScheduler:
         # Schedule sync to run every 15 minutes to keep Render awake and ensure frequent syncing
         schedule.every(15).minutes.do(self._scheduled_sync)
         
-        logger.info("Scheduler started - sync will run every 15 minutes")
+        logger.info(f"Scheduler started - sync will run every 15 minutes (CT) - started at {format_central_time(get_central_time())}")
         
         while True:
             with self.scheduler_lock:
@@ -57,27 +58,27 @@ class SyncScheduler:
             schedule.run_pending()
             time.sleep(60)  # Check every minute
         
-        logger.info("Scheduler stopped")
+        logger.info(f"Scheduler stopped at {format_central_time(get_central_time())}")
     
     def _scheduled_sync(self):
         """Function called by scheduler - IMPROVED with error handling"""
         try:
-            logger.info("Running scheduled sync (every 15 minutes)")
+            logger.info(f"Running scheduled sync (every 15 minutes) at {format_central_time(get_central_time())}")
             
             # Check if authenticated before trying to sync
             if not self.sync_engine.auth.is_authenticated():
-                logger.warning("⚠️ Scheduled sync skipped - not authenticated")
+                logger.warning(f"⚠️ Scheduled sync skipped - not authenticated at {format_central_time(get_central_time())}")
                 return
             
             result = self.sync_engine.sync_calendars()
             
             if result.get('needs_auth'):
-                logger.warning("⚠️ Scheduled sync indicates authentication needed")
+                logger.warning(f"⚠️ Scheduled sync indicates authentication needed at {format_central_time(get_central_time())}")
             elif result.get('success'):
-                logger.info(f"✅ Scheduled sync completed successfully")
+                logger.info(f"✅ Scheduled sync completed successfully at {format_central_time(get_central_time())}")
             else:
-                logger.warning(f"⚠️ Scheduled sync completed with issues: {result.get('message')}")
+                logger.warning(f"⚠️ Scheduled sync completed with issues at {format_central_time(get_central_time())}: {result.get('message')}")
                 
         except Exception as e:
             # Don't let sync errors crash the scheduler
-            logger.error(f"❌ Scheduled sync failed: {e}")
+            logger.error(f"❌ Scheduled sync failed at {format_central_time(get_central_time())}: {e}")
