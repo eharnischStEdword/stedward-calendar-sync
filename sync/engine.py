@@ -1,10 +1,12 @@
 """
-Sync Engine - Core calendar synchronization logic with enhancements
+Sync Engine - FIXED VERSION to prevent duplicates
 """
 import logging
 from datetime import datetime
 from typing import Dict, List, Tuple
 from threading import Lock
+import hashlib
+import json
 
 import config
 from cal_ops.reader import CalendarReader
@@ -19,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class SyncEngine:
-    """Core engine for calendar synchronization"""
+    """Core engine for calendar synchronization - FIXED for duplicates"""
     
     def __init__(self, auth_manager):
         self.auth = auth_manager
@@ -104,7 +106,13 @@ class SyncEngine:
             if source_events is None or target_events is None:
                 return {"error": "Failed to retrieve calendar events"}
             
-            # Build target map
+            logger.info(f"📊 Retrieved {len(source_events)} source events and {len(target_events)} target events")
+            
+            # ENHANCED DEBUGGING: Log event details for signature analysis
+            self._debug_event_signatures(source_events[:5], "SOURCE")
+            self._debug_event_signatures(target_events[:5], "TARGET")
+            
+            # Build target map with enhanced debugging
             target_map = self._build_event_map(target_events)
             logger.info(f"Built target map with {len(target_map)} unique events")
             
@@ -114,6 +122,19 @@ class SyncEngine:
             )
             
             logger.info(f"📋 SYNC PLAN: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
+            
+            # ENHANCED DEBUGGING: Log what we're planning to do
+            if to_add:
+                logger.info("📝 Events to ADD:")
+                for event in to_add[:3]:  # Log first 3
+                    sig = self._create_event_signature(event)
+                    logger.info(f"  - {event.get('subject')} | Signature: {sig}")
+            
+            if to_delete:
+                logger.info("🗑️ Events to DELETE:")
+                for event in to_delete[:3]:  # Log first 3
+                    sig = self._create_event_signature(event)
+                    logger.info(f"  - {event.get('subject')} | Signature: {sig}")
             
             # Check dry run mode
             if config.DRY_RUN_MODE:
@@ -141,7 +162,7 @@ class SyncEngine:
                             fresh_source, fresh_target
                         )
                         
-                        # Filter out ignored warnings - FIXED: use getattr instead of config.get()
+                        # Filter out ignored warnings
                         ignored_warnings = getattr(config, 'IGNORE_VALIDATION_WARNINGS', ['no_duplicates', 'event_integrity'])
                         failed_checks = [(check, passed) for check, passed in validations if not passed]
                         non_ignored_failures = [(check, passed) for check, passed in failed_checks 
@@ -233,6 +254,17 @@ class SyncEngine:
             with self.sync_lock:
                 self.sync_in_progress = False
     
+    def _debug_event_signatures(self, events: List[Dict], label: str):
+        """Debug helper to log event signatures"""
+        logger.info(f"🔍 {label} EVENT SIGNATURES:")
+        for event in events:
+            signature = self._create_event_signature(event)
+            start_time = event.get('start', {}).get('dateTime', 'No start time')
+            logger.info(f"  📅 '{event.get('subject', 'No subject')}' -> {signature}")
+            logger.info(f"      Start: {start_time}")
+            logger.info(f"      Type: {event.get('type', 'singleInstance')}")
+            logger.info(f"      ID: {event.get('id', 'No ID')}")
+    
     def _pre_flight_check(self) -> bool:
         """Verify system is ready for sync"""
         checks = []
@@ -289,87 +321,85 @@ class SyncEngine:
         """Normalize event subject for matching"""
         if not subject:
             return ""
-        return ' '.join(subject.strip().lower().split())
+        # More aggressive normalization to handle Microsoft Graph variations
+        normalized = ' '.join(subject.strip().lower().split())
+        # Remove common punctuation that might vary
+        normalized = normalized.replace('.', '').replace(',', '').replace(':', '').replace(';', '')
+        return normalized
     
     def _normalize_datetime(self, dt_str: str) -> str:
-        """Normalize datetime string for matching"""
+        """Normalize datetime string for matching - IMPROVED"""
         if not dt_str:
             return ""
         try:
-            if 'T' in dt_str:
-                date_part, time_part = dt_str.split('T', 1)
-                time_part = time_part.split('+')[0].split('Z')[0].split('-')[0]
+            # Remove timezone info and normalize to just date and time
+            clean_dt = dt_str.replace('Z', '').replace('+00:00', '')
+            if '+' in clean_dt:
+                clean_dt = clean_dt.split('+')[0]
+            if '-' in clean_dt and clean_dt.count('-') > 2:  # More than just date separators
+                clean_dt = clean_dt.rsplit('-', 1)[0]
+            
+            # Ensure consistent format
+            if 'T' in clean_dt:
+                date_part, time_part = clean_dt.split('T', 1)
+                # Normalize time to HH:MM format for consistency
+                time_part = time_part[:5]  # Take only HH:MM
                 return f"{date_part}T{time_part}"
-            return dt_str
-        except:
+            return clean_dt
+        except Exception as e:
+            logger.warning(f"Failed to normalize datetime '{dt_str}': {e}")
             return dt_str
     
     def _create_event_signature(self, event: Dict) -> str:
-        """Create unique signature for an event - IMPROVED to handle same-name events"""
+        """Create unique signature for an event - COMPLETELY REWRITTEN"""
         subject = self._normalize_subject(event.get('subject', ''))
         event_type = event.get('type', 'singleInstance')
         
-        # Log for debugging
-        logger.debug(f"Creating signature for event: {event.get('subject')} (type: {event_type})")
+        # Get normalized start time
+        start_raw = event.get('start', {}).get('dateTime', '')
+        start_normalized = self._normalize_datetime(start_raw)
         
-        # For recurring events, we need to be more careful
+        # For recurring events
         if event_type == 'seriesMaster':
-            # For recurring series masters, use subject + recurrence pattern + start time
-            # This ensures the same recurring event is recognized even if IDs differ
             recurrence = event.get('recurrence', {})
-            
-            # Create a stable signature from recurrence pattern
             pattern = recurrence.get('pattern', {})
-            pattern_type = pattern.get('type', 'unknown')
-            interval = pattern.get('interval', 1)
             
-            # Include key recurrence details in signature
-            recurrence_sig = f"{pattern_type}:{interval}"
+            # Create a stable hash of the recurrence pattern
+            pattern_data = {
+                'type': pattern.get('type', 'unknown'),
+                'interval': pattern.get('interval', 1),
+                'daysOfWeek': sorted(pattern.get('daysOfWeek', [])),
+                'dayOfMonth': pattern.get('dayOfMonth'),
+                'index': pattern.get('index')
+            }
             
-            # For weekly events, include days of week
-            if pattern_type == 'weekly':
-                days = pattern.get('daysOfWeek', [])
-                days_str = ','.join(sorted(days))
-                recurrence_sig += f":{days_str}"
+            # Create hash of pattern for consistency
+            pattern_str = json.dumps(pattern_data, sort_keys=True)
+            pattern_hash = hashlib.md5(pattern_str.encode()).hexdigest()[:8]
             
-            # For monthly events, include day of month or occurrence
-            elif pattern_type in ['absoluteMonthly', 'relativeMonthly']:
-                if 'dayOfMonth' in pattern:
-                    recurrence_sig += f":day{pattern['dayOfMonth']}"
-                elif 'daysOfWeek' in pattern:
-                    days_str = ','.join(sorted(pattern['daysOfWeek']))
-                    index = pattern.get('index', 'unknown')
-                    recurrence_sig += f":{index}:{days_str}"
-            
-            # IMPORTANT: Add start time to distinguish recurring events with same name
-            start = self._normalize_datetime(event.get('start', {}).get('dateTime', ''))
-            signature = f"recurring:{subject}:{recurrence_sig}:{start}"
-            logger.debug(f"Generated recurring signature: {signature}")
+            signature = f"recurring:{subject}:{pattern_hash}:{start_normalized}"
+            logger.debug(f"Recurring signature: {signature}")
             return signature
         
         elif event_type == 'occurrence':
             # Skip individual occurrences - we handle the series master
-            # This prevents duplicate handling
-            return f"skip:occurrence:{subject}"
+            return f"skip:occurrence:{subject}:{start_normalized}"
         
-        # For single events, use subject + date + time to distinguish same-name events
-        start = self._normalize_datetime(event.get('start', {}).get('dateTime', ''))
-        try:
-            if 'T' in start:
-                date_part = start.split('T')[0]
-                time_part = start.split('T')[1][:5]  # Include time to distinguish events
-                signature = f"single:{subject}:{date_part}:{time_part}"
-            else:
-                signature = f"single:{subject}:{start}"
-        except:
-            signature = f"single:{subject}:{start}"
+        # For single events - include time to distinguish events on same day
+        if 'T' in start_normalized:
+            date_part = start_normalized.split('T')[0]
+            time_part = start_normalized.split('T')[1] if 'T' in start_normalized else '00:00'
+            signature = f"single:{subject}:{date_part}:{time_part}"
+        else:
+            signature = f"single:{subject}:{start_normalized}"
         
-        logger.debug(f"Generated single event signature: {signature}")
+        logger.debug(f"Single event signature: {signature}")
         return signature
     
     def _build_event_map(self, events: List[Dict]) -> Dict[str, Dict]:
-        """Build a map of events by signature"""
+        """Build a map of events by signature with collision detection"""
         event_map = {}
+        collisions = []
         
         for event in events:
             signature = self._create_event_signature(event)
@@ -379,14 +409,38 @@ class SyncEngine:
                 continue
             
             if signature in event_map:
-                # Keep newer event if duplicate (this shouldn't happen now with improved signatures)
-                existing_created = event_map[signature].get('createdDateTime', '')
+                # Collision detected!
+                existing = event_map[signature]
+                collisions.append({
+                    'signature': signature,
+                    'existing': {
+                        'subject': existing.get('subject'),
+                        'id': existing.get('id'),
+                        'start': existing.get('start', {}).get('dateTime')
+                    },
+                    'new': {
+                        'subject': event.get('subject'),
+                        'id': event.get('id'),
+                        'start': event.get('start', {}).get('dateTime')
+                    }
+                })
+                
+                # Keep the newer event based on creation time
+                existing_created = existing.get('createdDateTime', '')
                 new_created = event.get('createdDateTime', '')
                 if new_created > existing_created:
-                    logger.warning(f"Found duplicate signature '{signature}', keeping newer event")
+                    logger.warning(f"Signature collision! Keeping newer event for '{signature}'")
                     event_map[signature] = event
+                else:
+                    logger.warning(f"Signature collision! Keeping existing event for '{signature}'")
             else:
                 event_map[signature] = event
+        
+        if collisions:
+            logger.error(f"🚨 FOUND {len(collisions)} SIGNATURE COLLISIONS!")
+            for collision in collisions:
+                logger.error(f"  Collision: {collision}")
+            logger.error("🚨 This might be causing duplicates! Check signature logic!")
         
         return event_map
     
@@ -396,18 +450,22 @@ class SyncEngine:
         target_events: List[Dict],
         target_map: Dict[str, Dict]
     ) -> Tuple[List[Dict], List[Tuple[Dict, Dict]], List[Dict]]:
-        """Determine what operations are needed"""
+        """Determine what operations are needed - ENHANCED LOGGING"""
         to_add = []
         to_update = []
         
         # Make a copy of target_map for tracking deletions
         remaining_targets = target_map.copy()
         
+        logger.info(f"🔍 Analyzing {len(source_events)} source events against {len(target_map)} target events")
+        
         for source_event in source_events:
             signature = self._create_event_signature(source_event)
+            subject = source_event.get('subject', 'No subject')
             
             # Skip individual occurrences of recurring events
             if signature.startswith("skip:occurrence:"):
+                logger.debug(f"Skipping occurrence: {subject}")
                 continue
             
             if signature in remaining_targets:
@@ -415,16 +473,26 @@ class SyncEngine:
                 target_event = remaining_targets[signature]
                 
                 if self._needs_update(source_event, target_event):
+                    logger.debug(f"📝 UPDATE needed: {subject}")
                     to_update.append((source_event, target_event))
+                else:
+                    logger.debug(f"✅ No change needed: {subject}")
                 
                 # Remove from remaining targets
                 del remaining_targets[signature]
             else:
                 # Event doesn't exist - add it
+                logger.debug(f"➕ ADD needed: {subject} (signature: {signature})")
                 to_add.append(source_event)
         
         # Remaining events in target should be deleted
         to_delete = list(remaining_targets.values())
+        
+        logger.info(f"📊 Operation summary:")
+        logger.info(f"  - {len(to_add)} events to ADD")
+        logger.info(f"  - {len(to_update)} events to UPDATE") 
+        logger.info(f"  - {len(to_delete)} events to DELETE")
+        logger.info(f"  - {len(remaining_targets)} unmatched target events")
         
         return to_add, to_update, to_delete
     
@@ -484,6 +552,7 @@ class SyncEngine:
         }
         
         # Add new events
+        logger.info(f"🎯 Adding {len(to_add)} new events...")
         for event in to_add:
             if self.writer.create_event(target_calendar_id, event):
                 successful += 1
@@ -493,6 +562,7 @@ class SyncEngine:
                 operation_details['add_failed'] += 1
         
         # Update existing events
+        logger.info(f"🔄 Updating {len(to_update)} existing events...")
         for source_event, target_event in to_update:
             event_id = target_event.get('id')
             if self.writer.update_event(target_calendar_id, event_id, source_event):
@@ -503,6 +573,7 @@ class SyncEngine:
                 operation_details['update_failed'] += 1
         
         # Delete removed events
+        logger.info(f"🗑️ Deleting {len(to_delete)} obsolete events...")
         for event in to_delete:
             event_id = event.get('id')
             if self.writer.delete_event(target_calendar_id, event_id):
