@@ -1356,6 +1356,430 @@ def realtime_sync_test():
             "traceback": traceback.format_exc()
         }), 500
 
+# Add these endpoints to app.py for fresh import testing
+
+@app.route('/debug/wipe-target-calendar', methods=['POST'])
+def wipe_target_calendar():
+    """DANGER: Completely wipe the target calendar - USE WITH CAUTION"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        # Get confirmation parameter
+        confirm = request.json.get('confirm_wipe', '') if request.is_json else request.form.get('confirm_wipe', '')
+        if confirm != 'YES_DELETE_ALL_EVENTS':
+            return jsonify({
+                "error": "Confirmation required",
+                "message": "Send POST with JSON: {'confirm_wipe': 'YES_DELETE_ALL_EVENTS'}"
+            }), 400
+        
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        # Safety check - make sure we're not wiping the source calendar
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if target_id == source_id:
+            return jsonify({"error": "SAFETY ABORT: Target and source calendars are the same!"}), 400
+        
+        logger.info(f"🧹 WIPING TARGET CALENDAR: {config.TARGET_CALENDAR} (ID: {target_id})")
+        logger.info("🚨 This will delete ALL events in the target calendar!")
+        
+        # Get all events in target calendar
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        if not target_events:
+            return jsonify({
+                "success": True,
+                "message": "Target calendar is already empty",
+                "events_deleted": 0
+            })
+        
+        logger.info(f"Found {len(target_events)} events to delete")
+        
+        # Delete all events
+        deleted_count = 0
+        failed_deletes = []
+        
+        for event in target_events:
+            event_id = event.get('id')
+            subject = event.get('subject', 'Unknown')
+            
+            try:
+                if sync_engine.writer.delete_event(target_id, event_id, suppress_notifications=True):
+                    deleted_count += 1
+                    logger.info(f"🗑️ Deleted: {subject} (ID: {event_id[:8]}...)")
+                else:
+                    failed_deletes.append({
+                        'id': event_id,
+                        'subject': subject,
+                        'error': 'Delete operation failed'
+                    })
+            except Exception as e:
+                failed_deletes.append({
+                    'id': event_id,
+                    'subject': subject,
+                    'error': str(e)
+                })
+        
+        # Verify calendar is empty
+        remaining_events = sync_engine.reader.get_calendar_events(target_id)
+        remaining_count = len(remaining_events) if remaining_events else 0
+        
+        logger.info(f"✅ Wipe complete: {deleted_count} deleted, {len(failed_deletes)} failed, {remaining_count} remaining")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Target calendar wiped: {deleted_count} events deleted",
+            "events_found": len(target_events),
+            "events_deleted": deleted_count,
+            "failed_deletes": len(failed_deletes),
+            "remaining_events": remaining_count,
+            "failed_delete_details": failed_deletes,
+            "target_calendar": config.TARGET_CALENDAR,
+            "target_id": target_id
+        })
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"💥 Wipe failed: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/debug/fresh-import', methods=['POST'])
+def fresh_import():
+    """Do a fresh import from source to target (assumes target is empty)"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        logger.info("🚀 STARTING FRESH IMPORT")
+        
+        # Get calendar IDs
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        
+        if not source_id or not target_id:
+            return jsonify({"error": "Required calendars not found"}), 404
+        
+        # Safety check
+        if source_id == target_id:
+            return jsonify({"error": "SAFETY ABORT: Source and target calendars are identical"}), 400
+        
+        logger.info(f"📖 Source: {config.SOURCE_CALENDAR} (ID: {source_id})")
+        logger.info(f"📝 Target: {config.TARGET_CALENDAR} (ID: {target_id})")
+        
+        # Check target is empty (or nearly empty)
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        target_count = len(target_events) if target_events else 0
+        
+        if target_count > 5:
+            return jsonify({
+                "error": f"Target calendar has {target_count} events. Wipe it first for a true fresh import.",
+                "suggestion": "Use /debug/wipe-target-calendar first"
+            }), 400
+        
+        # Get source events
+        source_events = sync_engine.reader.get_public_events(source_id)
+        if not source_events:
+            return jsonify({"error": "No public events found in source calendar"}), 404
+        
+        logger.info(f"📊 Found {len(source_events)} public events in source")
+        
+        # Log what we're about to import
+        logger.info("📋 EVENTS TO IMPORT:")
+        for i, event in enumerate(source_events[:10]):  # Log first 10
+            subject = event.get('subject', 'No subject')
+            start = event.get('start', {}).get('dateTime', 'No start')
+            event_type = event.get('type', 'singleInstance')
+            signature = sync_engine._create_event_signature(event)
+            logger.info(f"  {i+1}. '{subject}' | {event_type} | Start: {start} | Signature: {signature}")
+        
+        if len(source_events) > 10:
+            logger.info(f"  ... and {len(source_events) - 10} more events")
+        
+        # Import events one by one (for detailed tracking)
+        created_count = 0
+        failed_creates = []
+        created_signatures = []
+        
+        for i, event in enumerate(source_events):
+            subject = event.get('subject', 'Unknown')
+            signature = sync_engine._create_event_signature(event)
+            
+            # Skip individual occurrences
+            if signature.startswith("skip:occurrence:"):
+                logger.debug(f"Skipping occurrence: {subject}")
+                continue
+            
+            try:
+                logger.info(f"Creating event {i+1}/{len(source_events)}: '{subject}'")
+                
+                if sync_engine.writer.create_event(target_id, event):
+                    created_count += 1
+                    created_signatures.append(signature)
+                    logger.info(f"✅ Created: {subject}")
+                else:
+                    failed_creates.append({
+                        'subject': subject,
+                        'signature': signature,
+                        'error': 'Create operation failed'
+                    })
+                    logger.error(f"❌ Failed to create: {subject}")
+                    
+            except Exception as e:
+                failed_creates.append({
+                    'subject': subject,
+                    'signature': signature,
+                    'error': str(e)
+                })
+                logger.error(f"❌ Exception creating {subject}: {e}")
+        
+        # Check for signature duplicates in what we created
+        signature_counts = {}
+        for sig in created_signatures:
+            signature_counts[sig] = signature_counts.get(sig, 0) + 1
+        
+        duplicate_signatures = {sig: count for sig, count in signature_counts.items() if count > 1}
+        
+        # Verify final state
+        final_target_events = sync_engine.reader.get_calendar_events(target_id)
+        final_count = len(final_target_events) if final_target_events else 0
+        
+        # Check for visual duplicates in final state
+        visual_duplicates = {}
+        if final_target_events:
+            visual_groups = {}
+            for event in final_target_events:
+                subject = event.get('subject', '').strip()
+                start_time = event.get('start', {}).get('dateTime', '')
+                
+                if 'T' in start_time:
+                    date_part = start_time.split('T')[0]
+                    time_part = start_time.split('T')[1][:5]
+                    visual_key = f"{subject}|{date_part}|{time_part}"
+                else:
+                    visual_key = f"{subject}|{start_time}"
+                
+                if visual_key not in visual_groups:
+                    visual_groups[visual_key] = []
+                visual_groups[visual_key].append({
+                    'id': event.get('id'),
+                    'subject': subject,
+                    'start': start_time,
+                    'type': event.get('type')
+                })
+            
+            visual_duplicates = {k: v for k, v in visual_groups.items() if len(v) > 1}
+        
+        logger.info(f"🎉 FRESH IMPORT COMPLETE:")
+        logger.info(f"  - Source events: {len(source_events)}")
+        logger.info(f"  - Events created: {created_count}")
+        logger.info(f"  - Failed creates: {len(failed_creates)}")
+        logger.info(f"  - Final target count: {final_count}")
+        logger.info(f"  - Signature duplicates: {len(duplicate_signatures)}")
+        logger.info(f"  - Visual duplicates: {len(visual_duplicates)}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Fresh import complete: {created_count} events created",
+            "source_events": len(source_events),
+            "events_created": created_count,
+            "failed_creates": len(failed_creates),
+            "final_target_count": final_count,
+            "analysis": {
+                "signature_duplicates": duplicate_signatures,
+                "visual_duplicates": visual_duplicates,
+                "import_efficiency": f"{created_count}/{len(source_events)} events created"
+            },
+            "failed_create_details": failed_creates,
+            "created_signatures": created_signatures[:20]  # First 20 for inspection
+        })
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"💥 Fresh import failed: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/debug/fresh-import-wizard')
+def fresh_import_wizard():
+    """HTML wizard to guide through fresh import process"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Fresh Import Wizard</title>
+        <style>
+            body { font-family: Arial; padding: 20px; background: #f5f5f5; }
+            .card { background: white; padding: 20px; border-radius: 10px; margin: 10px 0; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+            .warning { background: #fff3cd; border-left: 4px solid #ffc107; }
+            .danger { background: #f8d7da; border-left: 4px solid #dc3545; }
+            .success { background: #d4edda; border-left: 4px solid #28a745; }
+            button { padding: 10px 20px; margin: 5px; border: none; border-radius: 5px; cursor: pointer; }
+            .btn-danger { background: #dc3545; color: white; }
+            .btn-warning { background: #ffc107; color: black; }
+            .btn-success { background: #28a745; color: white; }
+            .btn-primary { background: #007bff; color: white; }
+            #result { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; max-height: 400px; overflow-y: auto; }
+            .step { margin: 15px 0; padding: 15px; border-radius: 5px; }
+            .step h3 { margin-top: 0; }
+        </style>
+    </head>
+    <body>
+        <h1>🧪 Fresh Import Wizard</h1>
+        <p>This wizard will help you completely reset the public calendar and import fresh from the source.</p>
+        
+        <div class="card danger">
+            <h3>⚠️ DANGER ZONE</h3>
+            <p><strong>This will delete ALL events in the public calendar!</strong></p>
+            <p>Only proceed if you're sure you want to start fresh.</p>
+        </div>
+        
+        <div class="step">
+            <h3>Step 1: Check Current State</h3>
+            <p>First, let's see what's currently in both calendars.</p>
+            <button class="btn-primary" onclick="checkState()">Check Current State</button>
+        </div>
+        
+        <div class="step">
+            <h3>Step 2: Wipe Target Calendar</h3>
+            <p><strong>⚠️ This will delete ALL events in the public calendar!</strong></p>
+            <button class="btn-danger" onclick="wipeCalendar()">WIPE PUBLIC CALENDAR</button>
+        </div>
+        
+        <div class="step">
+            <h3>Step 3: Fresh Import</h3>
+            <p>Import all public events from source to the now-empty target calendar.</p>
+            <button class="btn-success" onclick="freshImport()">DO FRESH IMPORT</button>
+        </div>
+        
+        <div class="step">
+            <h3>Step 4: Verify Results</h3>
+            <p>Check for any duplicates or issues after the fresh import.</p>
+            <button class="btn-primary" onclick="verifyResults()">VERIFY RESULTS</button>
+        </div>
+        
+        <div id="result"></div>
+        
+        <script>
+            function log(message, type = 'info') {
+                const result = document.getElementById('result');
+                const className = type === 'error' ? 'danger' : type === 'warning' ? 'warning' : type === 'success' ? 'success' : '';
+                result.innerHTML += `<div class="card ${className}"><strong>[${new Date().toLocaleTimeString()}]</strong> ${message}</div>`;
+                result.scrollTop = result.scrollHeight;
+            }
+            
+            async function checkState() {
+                log('🔍 Checking current calendar state...', 'info');
+                try {
+                    const response = await fetch('/status');
+                    const data = await response.json();
+                    log(`📊 System Status: Authenticated: ${data.authenticated}`, 'info');
+                    
+                    // Could add more detailed checks here
+                    log('✅ Current state checked. Ready for next step.', 'success');
+                } catch (error) {
+                    log('❌ Error checking state: ' + error.message, 'error');
+                }
+            }
+            
+            async function wipeCalendar() {
+                if (!confirm('🚨 Are you ABSOLUTELY SURE you want to delete ALL events in the public calendar?\\n\\nThis action CANNOT be undone!')) {
+                    return;
+                }
+                
+                log('🧹 Wiping target calendar... This may take a minute.', 'warning');
+                try {
+                    const response = await fetch('/debug/wipe-target-calendar', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ confirm_wipe: 'YES_DELETE_ALL_EVENTS' })
+                    });
+                    
+                    const data = await response.json();
+                    if (data.success) {
+                        log(`✅ Calendar wiped successfully! Deleted ${data.events_deleted} events.`, 'success');
+                        if (data.failed_deletes > 0) {
+                            log(`⚠️ ${data.failed_deletes} events failed to delete.`, 'warning');
+                        }
+                    } else {
+                        log('❌ Wipe failed: ' + (data.error || 'Unknown error'), 'error');
+                    }
+                } catch (error) {
+                    log('❌ Wipe error: ' + error.message, 'error');
+                }
+            }
+            
+            async function freshImport() {
+                log('🚀 Starting fresh import... This may take a few minutes.', 'info');
+                try {
+                    const response = await fetch('/debug/fresh-import', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    const data = await response.json();
+                    if (data.success) {
+                        log(`✅ Fresh import complete! Created ${data.events_created} events.`, 'success');
+                        log(`📊 Analysis: ${data.events_created}/${data.source_events} events imported`, 'info');
+                        
+                        if (Object.keys(data.analysis.signature_duplicates).length > 0) {
+                            log(`⚠️ Found signature duplicates: ${JSON.stringify(data.analysis.signature_duplicates)}`, 'warning');
+                        }
+                        
+                        if (Object.keys(data.analysis.visual_duplicates).length > 0) {
+                            log(`⚠️ Found visual duplicates: ${Object.keys(data.analysis.visual_duplicates).length} groups`, 'warning');
+                        } else {
+                            log(`✅ No visual duplicates found!`, 'success');
+                        }
+                        
+                        if (data.failed_creates > 0) {
+                            log(`⚠️ ${data.failed_creates} events failed to create.`, 'warning');
+                        }
+                    } else {
+                        log('❌ Import failed: ' + (data.error || 'Unknown error'), 'error');
+                    }
+                } catch (error) {
+                    log('❌ Import error: ' + error.message, 'error');
+                }
+            }
+            
+            async function verifyResults() {
+                log('🔍 Verifying import results...', 'info');
+                try {
+                    const response = await fetch('/debug/comprehensive-duplicates');
+                    const data = await response.json();
+                    
+                    let totalDuplicates = 0;
+                    for (const range in data.calendar_view_analysis) {
+                        const analysis = data.calendar_view_analysis[range];
+                        if (analysis.duplicate_groups) {
+                            totalDuplicates += analysis.duplicate_groups;
+                            log(`📅 ${range}: Found ${analysis.duplicate_groups} duplicate groups`, 'warning');
+                        } else {
+                            log(`📅 ${range}: No duplicates found`, 'success');
+                        }
+                    }
+                    
+                    if (totalDuplicates === 0) {
+                        log('🎉 SUCCESS! No duplicates found in any date range!', 'success');
+                    } else {
+                        log(`⚠️ Found ${totalDuplicates} duplicate groups total. May need cleanup.`, 'warning');
+                    }
+                    
+                } catch (error) {
+                    log('❌ Verification error: ' + error.message, 'error');
+                }
+            }
+        </script>
+    </body>
+    </html>
+    '''
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
