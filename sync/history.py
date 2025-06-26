@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from collections import defaultdict
 import statistics
+from utils.timezone import get_central_time
 
 
 class SyncHistory:
@@ -17,7 +18,7 @@ class SyncHistory:
     def add_entry(self, sync_result: Dict):
         """Add a sync result to history"""
         entry = {
-            'timestamp': datetime.now(),
+            'timestamp': get_central_time(),
             'result': sync_result,
             'duration': sync_result.get('duration', 0),
             'success': sync_result.get('success', False),
@@ -40,7 +41,7 @@ class SyncHistory:
     
     def get_statistics(self, hours: int = 24) -> Dict:
         """Calculate statistics for the given time period"""
-        cutoff_time = datetime.now() - timedelta(hours=hours)
+        cutoff_time = get_central_time() - timedelta(hours=hours)
         recent_entries = [
             entry for entry in self.history 
             if entry['timestamp'] > cutoff_time
@@ -130,7 +131,7 @@ class SyncHistory:
     
     def get_hourly_breakdown(self, hours: int = 24) -> Dict[int, Dict]:
         """Get sync statistics broken down by hour"""
-        cutoff_time = datetime.now() - timedelta(hours=hours)
+        cutoff_time = get_central_time() - timedelta(hours=hours)
         hourly_stats = defaultdict(lambda: {
             'total': 0,
             'successful': 0,
@@ -172,7 +173,7 @@ class SyncHistory:
         trends = []
         
         for i in range(days):
-            date = datetime.now().date() - timedelta(days=i)
+            date = get_central_time().date() - timedelta(days=i)
             day_entries = [
                 e for e in self.history
                 if e['timestamp'].date() == date and e['success']
