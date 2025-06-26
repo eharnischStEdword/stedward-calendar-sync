@@ -1,5 +1,5 @@
 """
-Microsoft OAuth and Token Management - IMPROVED
+Microsoft OAuth and Token Management - IMPROVED for Render Uptime
 """
 import os
 import time
@@ -127,27 +127,37 @@ class MicrosoftAuth:
             return False
     
     def ensure_valid_token(self):
-        """Ensure we have a valid access token - IMPROVED"""
+        """Ensure we have a valid access token - MORE FORGIVING"""
         with self.token_lock:
-            # If no access token, can't proceed
+            # If no access token, try to get one with refresh token
+            if not self.access_token and self.refresh_token:
+                logger.info("No access token but have refresh token, attempting refresh...")
+                if self.refresh_access_token():
+                    return True
+                else:
+                    logger.warning("Refresh failed, tokens may be invalid")
+                    return False
+            
+            # If no access token at all, can't proceed
             if not self.access_token:
                 logger.warning("No access token available")
                 return False
             
-            # If no expiration time set, assume token is valid
+            # If no expiration time set, assume token is valid (more forgiving)
             if not self.token_expires_at:
                 logger.debug("No expiration time set, assuming token is valid")
                 return True
             
-            # Check if token is expired or about to expire (within 5 minutes)
+            # Check if token is expired or about to expire (within 10 minutes)
             now = datetime.utcnow()
-            if now >= self.token_expires_at:
-                logger.info(f"Access token expired at {self.token_expires_at}, refreshing...")
-                if not self.refresh_access_token():
+            if now >= (self.token_expires_at - timedelta(minutes=10)):
+                logger.info(f"Access token expires soon ({self.token_expires_at}), refreshing...")
+                if self.refresh_access_token():
+                    logger.info("Token refresh successful")
+                    return True
+                else:
                     logger.error("Failed to refresh token")
                     return False
-                logger.info("Token refresh successful")
-                return True
             else:
                 # Token is still valid
                 time_until_expiry = self.token_expires_at - now
@@ -187,7 +197,7 @@ class MicrosoftAuth:
             return headers
     
     def is_authenticated(self):
-        """Check if user is authenticated - IMPROVED"""
+        """Check if user is authenticated - MORE FORGIVING"""
         with self.token_lock:
             has_tokens = self.access_token is not None and self.refresh_token is not None
             
@@ -223,35 +233,56 @@ class MicrosoftAuth:
             self.token_expires_at = None
     
     def load_tokens_from_env(self):
-        """Load tokens from environment variables"""
+        """Load tokens from environment variables - IMPROVED"""
+        stored_access = os.environ.get('ACCESS_TOKEN')
         stored_refresh = os.environ.get('REFRESH_TOKEN')
         stored_expires = os.environ.get('TOKEN_EXPIRES_AT')
         
-        if stored_refresh and stored_expires:
+        if stored_refresh:
             try:
-                expires_datetime = datetime.fromisoformat(stored_expires)
-                
-                # If the stored expiration is more than 1 hour in the future, restore tokens
-                if expires_datetime > datetime.utcnow() + timedelta(hours=1):
-                    with self.token_lock:
-                        self.refresh_token = stored_refresh
-                        self.token_expires_at = expires_datetime
+                with self.token_lock:
+                    self.refresh_token = stored_refresh
                     
+                    # If we have an access token and expiry, use them
+                    if stored_access and stored_expires:
+                        try:
+                            expires_datetime = datetime.fromisoformat(stored_expires)
+                            self.access_token = stored_access
+                            self.token_expires_at = expires_datetime
+                            logger.info("Restored tokens from environment")
+                        except Exception as e:
+                            logger.warning(f"Could not parse stored expiry: {e}")
+                    
+                    # Try to refresh regardless to get fresh tokens
                     if self.refresh_access_token():
-                        logger.info("Successfully restored authentication from environment")
+                        logger.info("Successfully refreshed authentication from environment")
                         return True
-                else:
-                    logger.info("Stored tokens too old, requiring fresh authentication")
+                    else:
+                        logger.warning("Refresh token is invalid, need fresh authentication")
+                        
             except Exception as e:
                 logger.error(f"Error loading tokens: {e}")
         
         return False
     
     def _save_tokens_to_env(self):
-        """Log tokens for manual environment variable update"""
-        logger.info("SAVE THESE TO YOUR RENDER ENVIRONMENT VARIABLES:")
-        logger.info(f"REFRESH_TOKEN={self.refresh_token}")
-        logger.info(f"TOKEN_EXPIRES_AT={self.token_expires_at.isoformat()}")
+        """Enhanced token saving with better logging"""
+        logger.info("=" * 50)
+        logger.info("🔑 UPDATE YOUR RENDER ENVIRONMENT VARIABLES:")
+        logger.info("=" * 50)
+        
+        if self.access_token:
+            logger.info(f"ACCESS_TOKEN={self.access_token}")
+        
+        if self.refresh_token:
+            logger.info(f"REFRESH_TOKEN={self.refresh_token}")
+            
+        if self.token_expires_at:
+            logger.info(f"TOKEN_EXPIRES_AT={self.token_expires_at.isoformat()}")
+        
+        logger.info("=" * 50)
+        logger.info("⚠️  After updating these in Render, redeploy the service")
+        logger.info("=" * 50)
     
     def get_token_status(self):
         """Get current token status"""
