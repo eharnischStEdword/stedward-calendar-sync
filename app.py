@@ -283,6 +283,288 @@ signal.signal(signal.SIGTERM, signal_handler)
 logger.info("🚀 Starting St. Edward Calendar Sync")
 initialize_components()
 
+# Add these debug endpoints to your app.py
+
+@app.route('/debug/signatures')
+def debug_signatures():
+    """Debug endpoint to analyze event signatures"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated or sync engine not available"}), 401
+        
+        # Get calendar IDs
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        
+        if not source_id or not target_id:
+            return jsonify({"error": "Could not find required calendars"}), 404
+        
+        # Get events
+        source_events = sync_engine.reader.get_public_events(source_id)
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        
+        if not source_events or not target_events:
+            return jsonify({"error": "Could not retrieve calendar events"}), 500
+        
+        # Analyze signatures
+        analysis = {
+            "source_events": len(source_events),
+            "target_events": len(target_events),
+            "source_signatures": {},
+            "target_signatures": {},
+            "signature_analysis": {
+                "source_duplicates": [],
+                "target_duplicates": [],
+                "missing_in_target": [],
+                "extra_in_target": [],
+                "signature_collisions": []
+            }
+        }
+        
+        # Analyze source events
+        source_sig_count = {}
+        for event in source_events:
+            sig = sync_engine._create_event_signature(event)
+            if sig.startswith("skip:"):
+                continue
+                
+            analysis["source_signatures"][sig] = {
+                "subject": event.get('subject'),
+                "start": event.get('start', {}).get('dateTime'),
+                "type": event.get('type'),
+                "id": event.get('id')
+            }
+            
+            source_sig_count[sig] = source_sig_count.get(sig, 0) + 1
+            if source_sig_count[sig] > 1:
+                analysis["signature_analysis"]["source_duplicates"].append({
+                    "signature": sig,
+                    "count": source_sig_count[sig],
+                    "subject": event.get('subject')
+                })
+        
+        # Analyze target events
+        target_sig_count = {}
+        for event in target_events:
+            sig = sync_engine._create_event_signature(event)
+            if sig.startswith("skip:"):
+                continue
+                
+            analysis["target_signatures"][sig] = {
+                "subject": event.get('subject'),
+                "start": event.get('start', {}).get('dateTime'),
+                "type": event.get('type'),
+                "id": event.get('id')
+            }
+            
+            target_sig_count[sig] = target_sig_count.get(sig, 0) + 1
+            if target_sig_count[sig] > 1:
+                analysis["signature_analysis"]["target_duplicates"].append({
+                    "signature": sig,
+                    "count": target_sig_count[sig],
+                    "subject": event.get('subject')
+                })
+        
+        # Find missing and extra events
+        source_sigs = set(analysis["source_signatures"].keys())
+        target_sigs = set(analysis["target_signatures"].keys())
+        
+        missing_sigs = source_sigs - target_sigs
+        extra_sigs = target_sigs - source_sigs
+        
+        for sig in missing_sigs:
+            analysis["signature_analysis"]["missing_in_target"].append({
+                "signature": sig,
+                "subject": analysis["source_signatures"][sig]["subject"]
+            })
+        
+        for sig in extra_sigs:
+            analysis["signature_analysis"]["extra_in_target"].append({
+                "signature": sig,
+                "subject": analysis["target_signatures"][sig]["subject"]
+            })
+        
+        # Check for signature collisions (same signature, different events)
+        for sig in source_sigs & target_sigs:
+            source_event = analysis["source_signatures"][sig]
+            target_event = analysis["target_signatures"][sig]
+            
+            if (source_event["subject"] != target_event["subject"] or 
+                source_event["start"] != target_event["start"]):
+                analysis["signature_analysis"]["signature_collisions"].append({
+                    "signature": sig,
+                    "source": source_event,
+                    "target": target_event
+                })
+        
+        return jsonify(analysis)
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/debug/duplicates')
+def debug_duplicates():
+    """Find and analyze duplicate events in target calendar"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        if not target_events:
+            return jsonify({"error": "Could not retrieve target events"}), 500
+        
+        # Group events by subject and start time
+        duplicates = {}
+        subject_groups = {}
+        
+        for event in target_events:
+            subject = event.get('subject', '').lower().strip()
+            start = event.get('start', {}).get('dateTime', '')
+            
+            # Group by subject
+            if subject not in subject_groups:
+                subject_groups[subject] = []
+            subject_groups[subject].append({
+                'id': event.get('id'),
+                'subject': event.get('subject'),
+                'start': start,
+                'created': event.get('createdDateTime'),
+                'modified': event.get('lastModifiedDateTime'),
+                'signature': sync_engine._create_event_signature(event)
+            })
+        
+        # Find duplicates
+        for subject, events in subject_groups.items():
+            if len(events) > 1:
+                # Group by start time within same subject
+                time_groups = {}
+                for event in events:
+                    start_key = event['start'][:16] if event['start'] else 'no-time'  # Group by date+hour+minute
+                    if start_key not in time_groups:
+                        time_groups[start_key] = []
+                    time_groups[start_key].append(event)
+                
+                # Find time groups with multiple events
+                for start_time, time_events in time_groups.items():
+                    if len(time_events) > 1:
+                        duplicates[f"{subject}_{start_time}"] = {
+                            'subject': subject,
+                            'start_time': start_time,
+                            'count': len(time_events),
+                            'events': time_events
+                        }
+        
+        return jsonify({
+            "total_events": len(target_events),
+            "duplicate_groups": len(duplicates),
+            "duplicates": duplicates,
+            "summary": {
+                "total_duplicate_events": sum(dup['count'] for dup in duplicates.values()),
+                "subjects_with_duplicates": list(duplicates.keys())
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/debug/clean-duplicates', methods=['POST'])
+def clean_duplicates():
+    """Remove duplicate events from target calendar"""
+    try:
+        if not sync_engine or not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        # Get target calendar
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        if not target_events:
+            return jsonify({"error": "Could not retrieve target events"}), 500
+        
+        # Group events by signature
+        signature_groups = {}
+        for event in target_events:
+            sig = sync_engine._create_event_signature(event)
+            if sig.startswith("skip:"):
+                continue
+                
+            if sig not in signature_groups:
+                signature_groups[sig] = []
+            signature_groups[sig].append(event)
+        
+        # Find duplicates and keep only the newest
+        to_delete = []
+        kept_count = 0
+        
+        for sig, events in signature_groups.items():
+            if len(events) > 1:
+                # Sort by creation time, keep the newest
+                events.sort(key=lambda x: x.get('createdDateTime', ''), reverse=True)
+                kept_event = events[0]
+                duplicates = events[1:]
+                
+                kept_count += 1
+                to_delete.extend(duplicates)
+                
+                logger.info(f"Found {len(duplicates)} duplicates for '{kept_event.get('subject')}', keeping newest")
+        
+        # Delete duplicates
+        deleted_count = 0
+        failed_deletes = []
+        
+        for event in to_delete:
+            event_id = event.get('id')
+            if sync_engine.writer.delete_event(target_id, event_id):
+                deleted_count += 1
+                logger.info(f"Deleted duplicate: {event.get('subject')} (ID: {event_id[:8]}...)")
+            else:
+                failed_deletes.append(event_id)
+                logger.error(f"Failed to delete: {event.get('subject')} (ID: {event_id[:8]}...)")
+        
+        return jsonify({
+            "success": True,
+            "total_events_found": len(target_events),
+            "duplicate_groups": len([g for g in signature_groups.values() if len(g) > 1]),
+            "duplicates_found": len(to_delete),
+            "duplicates_deleted": deleted_count,
+            "failed_deletes": len(failed_deletes),
+            "events_kept": kept_count + len([g for g in signature_groups.values() if len(g) == 1]),
+            "failed_delete_ids": failed_deletes
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/dry-run/enable')
+def enable_dry_run():
+    """Enable dry run mode"""
+    config.DRY_RUN_MODE = True
+    return jsonify({"message": "Dry run mode enabled", "dry_run": True})
+
+@app.route('/dry-run/disable') 
+def disable_dry_run():
+    """Disable dry run mode"""
+    config.DRY_RUN_MODE = False
+    return jsonify({"message": "Dry run mode disabled", "dry_run": False})
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
