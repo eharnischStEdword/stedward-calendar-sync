@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-St. Edward Calendar Sync - Production Version
+St. Edward Calendar Sync - Production Version with Central Time Support
 """
 import os
 import logging
@@ -11,6 +11,9 @@ import sys
 import config
 from datetime import datetime
 from flask import Flask, render_template, jsonify, redirect, session, request
+
+# Import timezone utilities
+from utils.timezone import get_central_time, format_central_time, utc_to_central
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -64,8 +67,9 @@ def health_check():
     """Health check for Render"""
     return jsonify({
         "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "service": "st-edward-calendar-sync"
+        "timestamp": get_central_time().isoformat(),
+        "service": "st-edward-calendar-sync",
+        "timezone": "America/Chicago"
     }), 200
 
 @app.route('/health/detailed')
@@ -92,7 +96,8 @@ def detailed_health():
     
     return jsonify({
         "status": status,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": get_central_time().isoformat(),
+        "timezone": "America/Chicago",
         "checks": checks
     })
 
@@ -107,17 +112,28 @@ def get_status():
             "authenticated": auth_manager.is_authenticated() if auth_manager else False,
             "sync_in_progress": False,
             "last_sync_time": None,
+            "last_sync_time_display": "Never",
             "last_sync_result": {"success": False, "message": "Not synced yet"},
             "scheduler_running": scheduler.is_running() if scheduler else False,
             "dry_run_mode": getattr(config, 'DRY_RUN_MODE', False),
             "circuit_breaker_state": "closed",
             "rate_limit_remaining": 20,
-            "total_syncs": 0
+            "total_syncs": 0,
+            "timezone": "America/Chicago",
+            "current_time": get_central_time().isoformat()
         }
         
         if sync_engine:
             engine_status = sync_engine.get_status()
             status.update(engine_status)
+            
+            # Format the last sync time for display
+            if engine_status.get('last_sync_time'):
+                try:
+                    last_sync_dt = datetime.fromisoformat(engine_status['last_sync_time'].replace('Z', '+00:00'))
+                    status['last_sync_time_display'] = format_central_time(last_sync_dt)
+                except:
+                    status['last_sync_time_display'] = "Unknown"
         
         return jsonify(status)
         
@@ -157,7 +173,7 @@ def index():
                         Sign in with Microsoft
                     </a>
                     <p style="margin-top: 30px; font-size: 12px; color: #999;">
-                        St. Edward Church & School
+                        St. Edward Church & School • Nashville, TN
                     </p>
                 </div>
             </body>
@@ -166,19 +182,25 @@ def index():
         
         # User is authenticated - show dashboard
         last_sync_time = None
+        last_sync_time_display = "Never"
+        
         if sync_engine:
             status = sync_engine.get_status()
             last_sync_time_str = status.get('last_sync_time')
             
-            # Convert ISO string back to datetime object for template
+            # Convert ISO string back to datetime object and format for display
             if last_sync_time_str:
                 try:
-                    last_sync_time = datetime.fromisoformat(last_sync_time_str.replace('Z', '+00:00'))
+                    last_sync_dt = datetime.fromisoformat(last_sync_time_str.replace('Z', '+00:00'))
+                    last_sync_time = last_sync_dt  # Keep original for template
+                    last_sync_time_display = format_central_time(last_sync_dt)
                 except:
                     last_sync_time = None
+                    last_sync_time_display = "Never"
         
         return render_template('index.html', 
                              last_sync_time=last_sync_time,
+                             last_sync_time_display=last_sync_time_display,
                              authenticated=True)
         
     except Exception as e:
@@ -202,6 +224,11 @@ def trigger_sync():
             return jsonify({"error": "Not authenticated", "redirect": "/"}), 401
         
         result = sync_engine.sync_calendars()
+        
+        # Add formatted time to result
+        if result.get('success') and sync_engine.last_sync_time:
+            result['last_sync_time_display'] = format_central_time(sync_engine.last_sync_time)
+        
         return jsonify(result)
         
     except Exception as e:
@@ -247,7 +274,9 @@ def debug_info():
     """Basic debug information"""
     try:
         debug_data = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": get_central_time().isoformat(),
+            "timezone": "America/Chicago",
+            "current_time_display": format_central_time(get_central_time()),
             "environment_vars": {
                 "CLIENT_ID": bool(os.environ.get('CLIENT_ID')),
                 "CLIENT_SECRET": bool(os.environ.get('CLIENT_SECRET')),
@@ -283,6 +312,11 @@ def get_metrics():
             return jsonify({"error": "Sync engine not initialized"}), 500
         
         metrics = sync_engine.metrics.get_metrics_summary()
+        
+        # Add timezone info
+        metrics['timezone'] = 'America/Chicago'
+        metrics['report_time'] = format_central_time(get_central_time())
+        
         return jsonify(metrics)
         
     except Exception as e:
@@ -296,6 +330,22 @@ def get_history():
             return jsonify({"error": "Sync engine not initialized"}), 500
         
         stats = sync_engine.history.get_statistics()
+        
+        # Format times in history
+        if stats.get('last_sync'):
+            try:
+                dt = datetime.fromisoformat(stats['last_sync'])
+                stats['last_sync_display'] = format_central_time(dt)
+            except:
+                pass
+        
+        if stats.get('last_successful_sync'):
+            try:
+                dt = datetime.fromisoformat(stats['last_successful_sync'])
+                stats['last_successful_sync_display'] = format_central_time(dt)
+            except:
+                pass
+        
         return jsonify(stats)
         
     except Exception as e:
@@ -326,6 +376,9 @@ def validate_sync():
         validation_report = sync_engine.validator.generate_validation_report(
             source_events, target_events, {"success": True}
         )
+        
+        # Add formatted timestamp
+        validation_report['report_time_display'] = format_central_time(get_central_time())
         
         return jsonify(validation_report)
         
@@ -365,23 +418,6 @@ def restart_scheduler():
             
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-def signal_handler(sig, frame):
-    """Handle shutdown signals"""
-    logger.info("Received shutdown signal, cleaning up...")
-    if scheduler:
-        scheduler.stop()
-    sys.exit(0)
-
-# Register signal handlers
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-# Initialize on startup
-logger.info("🚀 Starting St. Edward Calendar Sync")
-initialize_components()
-
-# Add this route to your app.py file
 
 @app.route('/debug/calendars')
 def debug_calendars():
@@ -423,6 +459,8 @@ def debug_calendars():
                 "target_calendar_id": target_id,
                 "shared_mailbox": config.SHARED_MAILBOX
             },
+            "timezone": "America/Chicago",
+            "current_time": format_central_time(get_central_time()),
             "web_calendar_url": "https://outlook.office365.com/owa/calendar/fbd704b50f2540068cb048469a830830@stedward.org/e399b41349f3441ca9b092248fc807f56673636587944979855/calendar.html"
         })
         
@@ -431,6 +469,23 @@ def debug_calendars():
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+
+def signal_handler(sig, frame):
+    """Handle shutdown signals"""
+    logger.info("Received shutdown signal, cleaning up...")
+    if scheduler:
+        scheduler.stop()
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# Initialize on startup
+logger.info("🚀 Starting St. Edward Calendar Sync")
+logger.info(f"🕐 Server timezone: America/Chicago")
+logger.info(f"🕐 Current time: {format_central_time(get_central_time())}")
+initialize_components()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
