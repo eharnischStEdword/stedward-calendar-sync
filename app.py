@@ -487,6 +487,34 @@ logger.info(f"🕐 Server timezone: America/Chicago")
 logger.info(f"🕐 Current time: {format_central_time(get_central_time())}")
 initialize_components()
 
+@app.route('/apple-touch-icon.png')
+@app.route('/apple-touch-icon-precomposed.png')
+@app.route('/apple-touch-icon-120x120.png')
+@app.route('/apple-touch-icon-120x120-precomposed.png')
+@app.route('/apple-touch-icon-152x152.png')
+@app.route('/apple-touch-icon-167x167.png')
+@app.route('/apple-touch-icon-180x180.png')
+def apple_touch_icon():
+    """Serve apple touch icon"""
+    import base64
+    
+    # Calendar emoji SVG as apple touch icon
+    svg_content = '''<svg width="180" height="180" xmlns="http://www.w3.org/2000/svg">
+      <rect width="180" height="180" fill="#f8f8f8" rx="36"/>
+      <text x="50%" y="55%" font-family="Apple Color Emoji,Segoe UI Emoji,Noto Color Emoji" font-size="120" text-anchor="middle">📅</text>
+    </svg>'''
+    
+    # Return SVG with proper headers
+    return svg_content, 200, {
+        'Content-Type': 'image/svg+xml',
+        'Cache-Control': 'public, max-age=31536000'
+    }
+
+@app.route('/favicon.ico')
+def favicon():
+    """Serve favicon"""
+    return redirect("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📅%3C/text%3E%3C/svg%3E")
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
