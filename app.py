@@ -726,13 +726,16 @@ def bulletin_events():
 
 @app.route('/event-list/<preset>')
 def event_list_preset(preset):
-    """Get events for various preset time ranges"""
+    """Get events for various preset time ranges with optional search"""
     try:
         if not auth_manager or not auth_manager.is_authenticated():
             return redirect('/')
         
         if not sync_engine:
             return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get search term from query parameters
+        search_term = request.args.get('search', '').lower().strip()
         
         # Get the public calendar ID
         public_calendar_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
@@ -774,6 +777,10 @@ def event_list_preset(preset):
             end_date = today + timedelta(days=30)
             title = "Next 30 Days"
         
+        # Add search term to title if provided
+        if search_term:
+            title += f" - '{search_term}'"
+        
         # Create datetime objects
         start_datetime = central_tz.localize(datetime.combine(start_date, datetime.min.time()))
         end_datetime = central_tz.localize(datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
@@ -802,6 +809,12 @@ def event_list_preset(preset):
         # Process events for display
         event_list = []
         for event in events:
+            event_subject = event.get('subject', '').lower()
+            
+            # Filter by search term if provided
+            if search_term and search_term not in event_subject:
+                continue
+            
             event_start_str = event.get('start', {}).get('dateTime', '')
             if event_start_str:
                 event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
@@ -843,6 +856,32 @@ def event_list_preset(preset):
                     color: #005921; 
                     border-bottom: 2px solid #005921;
                     padding-bottom: 10px;
+                }}
+                .search-box {{
+                    background: #f8f9fa;
+                    padding: 15px;
+                    border-radius: 5px;
+                    margin: 20px 0;
+                }}
+                .search-input {{
+                    width: 70%;
+                    padding: 8px 12px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    font-size: 16px;
+                }}
+                .search-btn {{
+                    padding: 8px 20px;
+                    background: #005921;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 16px;
+                    margin-left: 10px;
+                }}
+                .search-btn:hover {{
+                    background: #004a1e;
                 }}
                 .summary {{
                     background: #f0f7f4;
@@ -895,7 +934,7 @@ def event_list_preset(preset):
                     background: #5a6268;
                 }}
                 @media print {{
-                    .back-link, .copy-btn {{ display: none; }}
+                    .back-link, .copy-btn, .search-box {{ display: none; }}
                     body {{ background: white; }}
                     .container {{ box-shadow: none; }}
                 }}
@@ -905,8 +944,21 @@ def event_list_preset(preset):
             <div class="container">
                 <h1>📅 {title}</h1>
                 <button class="copy-btn" onclick="copyList()">📋 Copy List</button>
+                
+                <div class="search-box">
+                    <form action="/event-list/{preset}" method="get">
+                        <input type="text" 
+                               name="search" 
+                               class="search-input" 
+                               placeholder="Search events (e.g., boy scouts, council, PTO)..." 
+                               value="{search_term}">
+                        <button type="submit" class="search-btn">🔍 Search</button>
+                    </form>
+                </div>
+                
                 <div class="summary">
-                    <strong>{len(event_list)} events</strong> from {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}
+                    <strong>{len(event_list)} events found</strong> from {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}
+                    {f'<br>Filtered by: "<strong>{search_term}</strong>"' if search_term else ''}
                 </div>
                 <div id="event-list">
         '''
@@ -920,7 +972,10 @@ def event_list_preset(preset):
                     </div>
                 '''
         else:
-            html += '<p>No events found in this time range.</p>'
+            if search_term:
+                html += f'<p>No events found containing "{search_term}" in this time range.</p>'
+            else:
+                html += '<p>No events found in this time range.</p>'
         
         html += f'''
                 </div>
@@ -930,6 +985,8 @@ def event_list_preset(preset):
             <textarea id="plaintext" style="position: absolute; left: -9999px;">'''
         
         # Add plain text version for copying
+        if search_term:
+            html += f"Events containing '{search_term}':\n\n"
         for event in event_list:
             html += f"{event['date']}\n{event['time']} - {event['subject']}\n\n"
         
