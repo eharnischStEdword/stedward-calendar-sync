@@ -535,6 +535,7 @@ def bulletin_events():
         # Calculate date range
         from datetime import timedelta
         import pytz
+        import re
         
         central_tz = pytz.timezone('America/Chicago')
         today = get_central_time().date()
@@ -563,7 +564,7 @@ def bulletin_events():
         # Filter events in date range
         bulletin_events = []
         for event in all_events:
-            # Skip recurring instances, we'll show the series master
+            # Skip recurring instances, we'll expand the series master instead
             if event.get('type') == 'occurrence':
                 continue
             
@@ -603,12 +604,181 @@ def bulletin_events():
                     
                     bulletin_events.append(event_data)
                     
-                # For recurring events, check if any occurrences fall in our range
+                # For recurring events, expand occurrences in our date range
                 elif event.get('type') == 'seriesMaster' and event.get('recurrence'):
-                    # This is a recurring event - we need to calculate occurrences
-                    # For simplicity, we'll just note it's recurring
-                    # In a full implementation, you'd calculate actual occurrences
-                    pass
+                    # Get recurrence pattern
+                    recurrence = event.get('recurrence', {})
+                    pattern = recurrence.get('pattern', {})
+                    recur_range = recurrence.get('range', {})
+                    
+                    # Get event times
+                    event_start_str = event.get('start', {}).get('dateTime', '')
+                    event_end_str = event.get('end', {}).get('dateTime', '')
+                    
+                    if not event_start_str:
+                        continue
+                    
+                    try:
+                        # Parse the series start time
+                        series_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
+                        series_start_central = utc_to_central(series_start)
+                        
+                        series_end = None
+                        if event_end_str:
+                            series_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
+                            series_end_central = utc_to_central(series_end)
+                            event_duration = series_end - series_start
+                        else:
+                            event_duration = timedelta(hours=1)  # Default duration
+                        
+                        # Extract time from the series start
+                        event_time = series_start_central.time()
+                        
+                        # Get recurrence end date if specified
+                        recur_end_str = recur_range.get('endDate')
+                        if recur_end_str:
+                            recur_end_date = datetime.strptime(recur_end_str, '%Y-%m-%d').date()
+                        else:
+                            # No end date specified, use our bulletin end date
+                            recur_end_date = end_date
+                        
+                        # Process different recurrence patterns
+                        pattern_type = pattern.get('type', '').lower()
+                        
+                        if pattern_type == 'daily':
+                            # Daily recurrence
+                            interval = pattern.get('interval', 1)
+                            current_date = start_date
+                            
+                            # Find the first occurrence on or after start_date
+                            series_start_date = series_start_central.date()
+                            if series_start_date > current_date:
+                                current_date = series_start_date
+                            
+                            while current_date <= min(end_date, recur_end_date):
+                                # Check if this date should have an occurrence
+                                days_since_start = (current_date - series_start_date).days
+                                if days_since_start >= 0 and days_since_start % interval == 0:
+                                    # Create occurrence for this date
+                                    occurrence_start = central_tz.localize(
+                                        datetime.combine(current_date, event_time)
+                                    )
+                                    occurrence_end = occurrence_start + event_duration
+                                    
+                                    if start_datetime <= occurrence_start < end_datetime:
+                                        event_data = {
+                                            'subject': event.get('subject', 'No Title'),
+                                            'start': occurrence_start,
+                                            'end': occurrence_end,
+                                            'location': '',
+                                            'is_all_day': event.get('isAllDay', False)
+                                        }
+                                        
+                                        # Extract location
+                                        body_content = event.get('body', {}).get('content', '')
+                                        if body_content and 'Location:' in body_content:
+                                            location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
+                                            if location_match:
+                                                event_data['location'] = location_match.group(1).strip()
+                                        
+                                        bulletin_events.append(event_data)
+                                
+                                current_date += timedelta(days=1)
+                        
+                        elif pattern_type == 'weekly':
+                            # Weekly recurrence
+                            interval = pattern.get('interval', 1)
+                            days_of_week = pattern.get('daysOfWeek', [])
+                            
+                            # Map day names to weekday numbers (Monday=0, Sunday=6)
+                            day_map = {
+                                'monday': 0, 'tuesday': 1, 'wednesday': 2,
+                                'thursday': 3, 'friday': 4, 'saturday': 5, 'sunday': 6
+                            }
+                            
+                            current_date = start_date
+                            series_start_date = series_start_central.date()
+                            
+                            while current_date <= min(end_date, recur_end_date):
+                                # Check if this is a valid day of week
+                                current_weekday = current_date.weekday()
+                                day_name = list(day_map.keys())[current_weekday]
+                                
+                                if day_name in [d.lower() for d in days_of_week]:
+                                    # Check if this week should have an occurrence
+                                    if current_date >= series_start_date:
+                                        weeks_since_start = (current_date - series_start_date).days // 7
+                                        if weeks_since_start % interval == 0:
+                                            # Create occurrence
+                                            occurrence_start = central_tz.localize(
+                                                datetime.combine(current_date, event_time)
+                                            )
+                                            occurrence_end = occurrence_start + event_duration
+                                            
+                                            if start_datetime <= occurrence_start < end_datetime:
+                                                event_data = {
+                                                    'subject': event.get('subject', 'No Title'),
+                                                    'start': occurrence_start,
+                                                    'end': occurrence_end,
+                                                    'location': '',
+                                                    'is_all_day': event.get('isAllDay', False)
+                                                }
+                                                
+                                                # Extract location
+                                                body_content = event.get('body', {}).get('content', '')
+                                                if body_content and 'Location:' in body_content:
+                                                    location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
+                                                    if location_match:
+                                                        event_data['location'] = location_match.group(1).strip()
+                                                
+                                                bulletin_events.append(event_data)
+                                
+                                current_date += timedelta(days=1)
+                        
+                        elif pattern_type == 'absolutemonthly':
+                            # Monthly on specific date
+                            day_of_month = pattern.get('dayOfMonth', 1)
+                            interval = pattern.get('interval', 1)
+                            
+                            current_date = start_date
+                            series_start_date = series_start_central.date()
+                            
+                            while current_date <= min(end_date, recur_end_date):
+                                if current_date.day == day_of_month and current_date >= series_start_date:
+                                    # Check if this month should have an occurrence
+                                    months_diff = (current_date.year - series_start_date.year) * 12 + \
+                                                 (current_date.month - series_start_date.month)
+                                    
+                                    if months_diff >= 0 and months_diff % interval == 0:
+                                        # Create occurrence
+                                        occurrence_start = central_tz.localize(
+                                            datetime.combine(current_date, event_time)
+                                        )
+                                        occurrence_end = occurrence_start + event_duration
+                                        
+                                        if start_datetime <= occurrence_start < end_datetime:
+                                            event_data = {
+                                                'subject': event.get('subject', 'No Title'),
+                                                'start': occurrence_start,
+                                                'end': occurrence_end,
+                                                'location': '',
+                                                'is_all_day': event.get('isAllDay', False)
+                                            }
+                                            
+                                            # Extract location
+                                            body_content = event.get('body', {}).get('content', '')
+                                            if body_content and 'Location:' in body_content:
+                                                location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
+                                                if location_match:
+                                                    event_data['location'] = location_match.group(1).strip()
+                                            
+                                            bulletin_events.append(event_data)
+                                
+                                current_date += timedelta(days=1)
+                        
+                    except Exception as e:
+                        logger.warning(f"Error processing recurring event {event.get('subject')}: {e}")
+                        continue
                     
             except Exception as e:
                 logger.warning(f"Error processing event: {e}")
