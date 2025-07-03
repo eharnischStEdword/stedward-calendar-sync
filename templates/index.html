@@ -489,9 +489,22 @@
                     <a href="/debug" class="action-btn secondary">
                         🔍 Debug Info
                     </a>
-                    <a href="/bulletin-events" class="action-btn secondary">
-                        📋 Weekly Bulletin
-                    </a>
+                <div class="action-btn secondary" style="position: relative; padding: 0;">
+                    <button onclick="toggleBulletinMenu()" style="background: none; border: none; color: inherit; padding: 1rem 1.5rem; width: 100%; height: 100%; cursor: pointer; font-size: 1rem; font-weight: 600;">
+                        📋 Weekly Bulletin ▼
+                    </button>
+                    <div id="bulletin-menu" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #6c757d; border-radius: 0 0 8px 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 10;">
+                        <a href="/bulletin-events?week=current" target="_blank" class="bulletin-option" style="display: block; padding: 1rem; color: white; text-decoration: none; border-bottom: 1px solid rgba(255,255,255,0.1); transition: background 0.2s;">
+                            📅 Current Week
+                        </a>
+                        <a href="/bulletin-events?week=upcoming" target="_blank" class="bulletin-option" style="display: block; padding: 1rem; color: white; text-decoration: none; border-bottom: 1px solid rgba(255,255,255,0.1); transition: background 0.2s;">
+                            📆 Upcoming Week
+                        </a>
+                        <a href="/bulletin-events?week=following" target="_blank" class="bulletin-option" style="display: block; padding: 1rem; color: white; text-decoration: none; transition: background 0.2s;">
+                            📋 Following Week
+                        </a>
+                    </div>
+                </div>
                     <a href="/logout" class="action-btn warning">
                         🚪 Sign Out
                     </a>
@@ -803,6 +816,32 @@
                 }
             }, 60000);
         });
+    </script>
+    <script>
+    function toggleBulletinMenu() {
+        const menu = document.getElementById('bulletin-menu');
+        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    }
+    
+    // Close menu when clicking outside
+    document.addEventListener('click', function(event) {
+        const menu = document.getElementById('bulletin-menu');
+        const button = event.target.closest('.action-btn');
+        
+        if (!button || !button.contains(menu)) {
+            menu.style.display = 'none';
+        }
+    });
+    
+    // Add hover effect to menu items
+    document.querySelectorAll('.bulletin-option').forEach(option => {
+        option.addEventListener('mouseenter', function() {
+            this.style.background = 'rgba(0,0,0,0.2)';
+        });
+        option.addEventListener('mouseleave', function() {
+            this.style.background = 'none';
+        });
+    });
     </script>
 </body>
 </html>
