@@ -884,6 +884,32 @@
                 eventPresetsMenu.style.display = 'none';
             }
         });
+        function searchEvents() {
+    const searchTerm = document.getElementById('event-search-term').value.trim();
+    const selectedRange = document.querySelector('input[name="date-range"]:checked').value;
+    
+    let url = '/event-search?';
+    if (searchTerm) {
+        url += `search=${encodeURIComponent(searchTerm)}&`;
+    }
+    url += `range=${selectedRange}`;
+    
+    // Open in new tab
+    window.open(url, '_blank');
+}
+
+// Allow Enter key in search field
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('event-search-term');
+    if (searchInput) {
+        searchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchEvents();
+            }
+        });
+    }
+});
     </script>
+    
 </body>
 </html>
