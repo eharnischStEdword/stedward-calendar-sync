@@ -724,6 +724,242 @@ def bulletin_events():
             "traceback": traceback.format_exc()
         }), 500
 
+    @app.route('/event-list/<preset>')
+def event_list_preset(preset):
+    """Get events for various preset time ranges"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return redirect('/')
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get the public calendar ID
+        public_calendar_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not public_calendar_id:
+            return jsonify({"error": "Public calendar not found"}), 404
+        
+        # Calculate date range based on preset
+        from datetime import timedelta
+        import pytz
+        import requests
+        
+        central_tz = pytz.timezone('America/Chicago')
+        today = get_central_time().date()
+        start_date = today
+        
+        # Determine end date based on preset
+        if preset == 'next30':
+            end_date = today + timedelta(days=30)
+            title = "Next 30 Days"
+        elif preset == 'endofmonth':
+            # Last day of current month
+            if today.month == 12:
+                end_date = datetime(today.year + 1, 1, 1).date() - timedelta(days=1)
+            else:
+                end_date = datetime(today.year, today.month + 1, 1).date() - timedelta(days=1)
+            title = f"Until End of {today.strftime('%B')}"
+        elif preset == 'june30':
+            # June 30 of current or next year
+            june30 = datetime(today.year, 6, 30).date()
+            if today > june30:
+                june30 = datetime(today.year + 1, 6, 30).date()
+            end_date = june30
+            title = f"Until June 30, {june30.year}"
+        elif preset == 'next60':
+            end_date = today + timedelta(days=60)
+            title = "Next 60 Days"
+        else:
+            # Default to next 30 days
+            end_date = today + timedelta(days=30)
+            title = "Next 30 Days"
+        
+        # Create datetime objects
+        start_datetime = central_tz.localize(datetime.combine(start_date, datetime.min.time()))
+        end_datetime = central_tz.localize(datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
+        
+        # Get events from API
+        headers = sync_engine.auth.get_headers()
+        if not headers:
+            return jsonify({"error": "No auth headers"}), 401
+        
+        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{public_calendar_id}/calendarView"
+        
+        params = {
+            'startDateTime': start_datetime.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'endDateTime': end_datetime.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,body',
+            '$orderby': 'start/dateTime',
+            '$top': 500
+        }
+        
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        
+        events = []
+        if response.status_code == 200:
+            events = response.json().get('value', [])
+        
+        # Process events for display
+        event_list = []
+        for event in events:
+            event_start_str = event.get('start', {}).get('dateTime', '')
+            if event_start_str:
+                event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
+                event_start_central = utc_to_central(event_start)
+                
+                event_list.append({
+                    'date': event_start_central.strftime('%A, %B %d, %Y'),
+                    'time': event_start_central.strftime('%-I:%M %p') if not event.get('isAllDay') else 'All Day',
+                    'subject': event.get('subject', 'No Title'),
+                    'datetime_obj': event_start_central
+                })
+        
+        # Sort by datetime
+        event_list.sort(key=lambda x: x['datetime_obj'])
+        
+        # Generate simple HTML response
+        html = f'''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>{title} - Event List</title>
+            <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
+            <style>
+                body {{ 
+                    font-family: Arial, sans-serif; 
+                    margin: 20px; 
+                    background: #f5f5f5; 
+                    line-height: 1.6;
+                }}
+                .container {{ 
+                    max-width: 800px; 
+                    margin: 0 auto; 
+                    background: white; 
+                    padding: 30px; 
+                    border-radius: 10px; 
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+                }}
+                h1 {{ 
+                    color: #005921; 
+                    border-bottom: 2px solid #005921;
+                    padding-bottom: 10px;
+                }}
+                .summary {{
+                    background: #f0f7f4;
+                    padding: 15px;
+                    border-radius: 5px;
+                    margin: 20px 0;
+                }}
+                .event {{ 
+                    margin: 20px 0; 
+                    padding: 15px; 
+                    background: #f8f9fa; 
+                    border-left: 4px solid #005921;
+                    border-radius: 4px;
+                }}
+                .date {{ 
+                    font-weight: bold; 
+                    color: #005921;
+                    font-size: 1.1em;
+                }}
+                .time {{
+                    color: #666;
+                    font-weight: bold;
+                }}
+                .subject {{
+                    margin-top: 5px;
+                    font-size: 1.05em;
+                }}
+                .back-link {{ 
+                    display: inline-block; 
+                    margin-top: 20px; 
+                    padding: 10px 20px;
+                    background: #005921;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 5px;
+                }}
+                .back-link:hover {{ 
+                    background: #004a1e;
+                }}
+                .copy-btn {{
+                    float: right;
+                    padding: 10px 20px;
+                    background: #6c757d;
+                    color: white;
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                }}
+                .copy-btn:hover {{
+                    background: #5a6268;
+                }}
+                @media print {{
+                    .back-link, .copy-btn {{ display: none; }}
+                    body {{ background: white; }}
+                    .container {{ box-shadow: none; }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>📅 {title}</h1>
+                <button class="copy-btn" onclick="copyList()">📋 Copy List</button>
+                <div class="summary">
+                    <strong>{len(event_list)} events</strong> from {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}
+                </div>
+                <div id="event-list">
+        '''
+        
+        if event_list:
+            for event in event_list:
+                html += f'''
+                    <div class="event">
+                        <div class="date">{event['date']}</div>
+                        <div><span class="time">{event['time']}</span> - <span class="subject">{event['subject']}</span></div>
+                    </div>
+                '''
+        else:
+            html += '<p>No events found in this time range.</p>'
+        
+        html += f'''
+                </div>
+                <a href="/" class="back-link">← Back to Dashboard</a>
+            </div>
+            
+            <textarea id="plaintext" style="position: absolute; left: -9999px;">'''
+        
+        # Add plain text version for copying
+        for event in event_list:
+            html += f"{event['date']}\n{event['time']} - {event['subject']}\n\n"
+        
+        html += '''</textarea>
+            
+            <script>
+                function copyList() {
+                    const textarea = document.getElementById('plaintext');
+                    textarea.select();
+                    document.execCommand('copy');
+                    
+                    // Show feedback
+                    const btn = document.querySelector('.copy-btn');
+                    const originalText = btn.textContent;
+                    btn.textContent = '✅ Copied!';
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                    }, 2000);
+                }
+            </script>
+        </body>
+        </html>
+        '''
+        
+        return html
+        
+    except Exception as e:
+        logger.error(f"Event list error: {e}")
+        return f"Error: {str(e)}", 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
