@@ -504,6 +504,25 @@
                                     📋 Following Week
                                 </a>
                             </div>
+                        <div style="position: relative;">
+                            <button class="action-btn secondary" onclick="toggleEventPresets(event)" style="position: relative;">
+                                📋 Event Lists ▼
+                            </button>
+                            <div id="event-presets-menu" style="display: none; position: absolute; bottom: 100%; margin-bottom: 5px; left: 0; min-width: 200px; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; border: 1px solid #ddd;">
+                                <a href="/event-list/next30" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                                    📅 Next 30 Days
+                                </a>
+                                <a href="/event-list/next60" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                                    📆 Next 60 Days
+                                </a>
+                                <a href="/event-list/endofmonth" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                                    🗓️ Until End of Month
+                                </a>
+                                <a href="/event-list/june30" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                                    📊 Until June 30
+                                </a>
+                            </div>
+                        </div>                            
                         </div>
                 </div>
                     <a href="/logout" class="action-btn warning">
@@ -832,15 +851,29 @@
             // Toggle this menu
             menu.style.display = isOpen ? 'none' : 'block';
         }
-        
+        function toggleEventPresets(event) {
+            event.stopPropagation();
+            const menu = document.getElementById('event-presets-menu');
+            const isOpen = menu.style.display === 'block';
+            
+            // Close any other open menus
+            document.querySelectorAll('[id$="-menu"]').forEach(m => {
+                m.style.display = 'none';
+            });
+            
+            // Toggle this menu
+            menu.style.display = isOpen ? 'none' : 'block';
+        }
         // Close menu when clicking anywhere else
         document.addEventListener('click', function(event) {
-            const menu = document.getElementById('bulletin-menu');
+            const bulletinMenu = document.getElementById('bulletin-menu');
+            const eventPresetsMenu = document.getElementById('event-presets-menu');
             const button = event.target.closest('button');
             
-            // If clicking outside the menu and button, close it
-            if (!event.target.closest('#bulletin-menu') && (!button || !button.textContent.includes('Weekly Bulletin'))) {
-                menu.style.display = 'none';
+            // Close all menus if clicking outside
+            if (!event.target.closest('#bulletin-menu') && !event.target.closest('#event-presets-menu')) {
+                bulletinMenu.style.display = 'none';
+                eventPresetsMenu.style.display = 'none';
             }
         });
     </script>
