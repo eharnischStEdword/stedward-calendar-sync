@@ -36,3 +36,5 @@ GRAPH_SCOPES = [
     'User.Read',
     'offline_access'
 ]
+# Flask secret key for sessions (set this in Render environment)
+SECRET_KEY = os.environ.get('SECRET_KEY', secrets.token_hex(32))
