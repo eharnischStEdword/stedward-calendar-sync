@@ -519,7 +519,7 @@ def favicon():
 
 @app.route('/bulletin-events')
 def bulletin_events():
-    """Get events for the weekly bulletin"""
+    """Get events for the weekly bulletin using calendarView to expand recurring events"""
     try:
         if not auth_manager or not auth_manager.is_authenticated():
             return redirect('/')
@@ -536,6 +536,7 @@ def bulletin_events():
         from datetime import timedelta
         import pytz
         import re
+        import requests
         
         central_tz = pytz.timezone('America/Chicago')
         today = get_central_time().date()
@@ -543,10 +544,8 @@ def bulletin_events():
         # Find the upcoming Saturday
         days_until_saturday = (5 - today.weekday()) % 7
         if days_until_saturday == 0:  # Today is Saturday
-            # If running on Saturday, get this Saturday
             start_date = today
         else:
-            # Get next Saturday
             start_date = today + timedelta(days=days_until_saturday)
         
         # End date is the Sunday after (9 days total)
@@ -556,18 +555,63 @@ def bulletin_events():
         start_datetime = central_tz.localize(datetime.combine(start_date, datetime.min.time()))
         end_datetime = central_tz.localize(datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
         
-        # Get all events from the public calendar
-        all_events = sync_engine.reader.get_calendar_events(public_calendar_id)
-        if not all_events:
+        # Get auth headers
+        headers = sync_engine.auth.get_headers()
+        if not headers:
+            return jsonify({"error": "No auth headers"}), 401
+        
+        # Use Microsoft Graph calendarView API to get events with expanded recurrence
+        # This automatically expands recurring events into individual occurrences
+        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{public_calendar_id}/calendarView"
+        
+        # Format dates for API (must be in UTC)
+        start_str = start_datetime.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+        end_str = end_datetime.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+        
+        params = {
+            'startDateTime': start_str,
+            'endDateTime': end_str,
+            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,body',
+            '$orderby': 'start/dateTime',
+            '$top': 250  # Should be enough for a week
+        }
+        
+        all_events = []
+        
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            
+            if response.status_code == 401:
+                # Try refreshing token
+                if sync_engine.auth.refresh_access_token():
+                    headers = sync_engine.auth.get_headers()
+                    response = requests.get(url, headers=headers, params=params, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                all_events = data.get('value', [])
+                
+                # Handle pagination if needed
+                next_link = data.get('@odata.nextLink')
+                while next_link:
+                    next_response = requests.get(next_link, headers=headers, timeout=30)
+                    if next_response.status_code == 200:
+                        next_data = next_response.json()
+                        all_events.extend(next_data.get('value', []))
+                        next_link = next_data.get('@odata.nextLink')
+                    else:
+                        break
+            else:
+                logger.error(f"Failed to get calendar view: {response.status_code} - {response.text}")
+                all_events = []
+                
+        except Exception as e:
+            logger.error(f"Error fetching calendar view: {e}")
             all_events = []
         
-        # Filter events in date range
+        # Process events for bulletin
         bulletin_events = []
         for event in all_events:
-            # Skip recurring instances, we'll expand the series master instead
-            if event.get('type') == 'occurrence':
-                continue
-            
             # Get event start time
             event_start_str = event.get('start', {}).get('dateTime', '')
             if not event_start_str:
@@ -577,209 +621,30 @@ def bulletin_events():
                 event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
                 event_start_central = utc_to_central(event_start)
                 
-                # Check if event is in our date range
-                if start_datetime <= event_start_central < end_datetime:
-                    # Get event details
-                    event_data = {
-                        'subject': event.get('subject', 'No Title'),
-                        'start': event_start_central,
-                        'end': None,
-                        'location': '',
-                        'is_all_day': event.get('isAllDay', False)
-                    }
-                    
-                    # Get end time
-                    event_end_str = event.get('end', {}).get('dateTime', '')
-                    if event_end_str:
-                        event_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
-                        event_data['end'] = utc_to_central(event_end)
-                    
-                    # Extract location from body (where we store it in public calendar)
-                    body_content = event.get('body', {}).get('content', '')
-                    if body_content and 'Location:' in body_content:
-                        import re
-                        location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
-                        if location_match:
-                            event_data['location'] = location_match.group(1).strip()
-                    
-                    bulletin_events.append(event_data)
-                    
-                # For recurring events, expand occurrences in our date range
-                elif event.get('type') == 'seriesMaster' and event.get('recurrence'):
-                    # Get recurrence pattern
-                    recurrence = event.get('recurrence', {})
-                    pattern = recurrence.get('pattern', {})
-                    recur_range = recurrence.get('range', {})
-                    
-                    # Get event times
-                    event_start_str = event.get('start', {}).get('dateTime', '')
-                    event_end_str = event.get('end', {}).get('dateTime', '')
-                    
-                    if not event_start_str:
-                        continue
-                    
-                    try:
-                        # Parse the series start time
-                        series_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
-                        series_start_central = utc_to_central(series_start)
-                        
-                        series_end = None
-                        if event_end_str:
-                            series_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
-                            series_end_central = utc_to_central(series_end)
-                            event_duration = series_end - series_start
-                        else:
-                            event_duration = timedelta(hours=1)  # Default duration
-                        
-                        # Extract time from the series start
-                        event_time = series_start_central.time()
-                        
-                        # Get recurrence end date if specified
-                        recur_end_str = recur_range.get('endDate')
-                        if recur_end_str:
-                            recur_end_date = datetime.strptime(recur_end_str, '%Y-%m-%d').date()
-                        else:
-                            # No end date specified, use our bulletin end date
-                            recur_end_date = end_date
-                        
-                        # Process different recurrence patterns
-                        pattern_type = pattern.get('type', '').lower()
-                        
-                        if pattern_type == 'daily':
-                            # Daily recurrence
-                            interval = pattern.get('interval', 1)
-                            current_date = start_date
-                            
-                            # Find the first occurrence on or after start_date
-                            series_start_date = series_start_central.date()
-                            if series_start_date > current_date:
-                                current_date = series_start_date
-                            
-                            while current_date <= min(end_date, recur_end_date):
-                                # Check if this date should have an occurrence
-                                days_since_start = (current_date - series_start_date).days
-                                if days_since_start >= 0 and days_since_start % interval == 0:
-                                    # Create occurrence for this date
-                                    occurrence_start = central_tz.localize(
-                                        datetime.combine(current_date, event_time)
-                                    )
-                                    occurrence_end = occurrence_start + event_duration
-                                    
-                                    if start_datetime <= occurrence_start < end_datetime:
-                                        event_data = {
-                                            'subject': event.get('subject', 'No Title'),
-                                            'start': occurrence_start,
-                                            'end': occurrence_end,
-                                            'location': '',
-                                            'is_all_day': event.get('isAllDay', False)
-                                        }
-                                        
-                                        # Extract location
-                                        body_content = event.get('body', {}).get('content', '')
-                                        if body_content and 'Location:' in body_content:
-                                            location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
-                                            if location_match:
-                                                event_data['location'] = location_match.group(1).strip()
-                                        
-                                        bulletin_events.append(event_data)
-                                
-                                current_date += timedelta(days=1)
-                        
-                        elif pattern_type == 'weekly':
-                            # Weekly recurrence
-                            interval = pattern.get('interval', 1)
-                            days_of_week = pattern.get('daysOfWeek', [])
-                            
-                            # Map day names to weekday numbers (Monday=0, Sunday=6)
-                            day_map = {
-                                'monday': 0, 'tuesday': 1, 'wednesday': 2,
-                                'thursday': 3, 'friday': 4, 'saturday': 5, 'sunday': 6
-                            }
-                            
-                            current_date = start_date
-                            series_start_date = series_start_central.date()
-                            
-                            while current_date <= min(end_date, recur_end_date):
-                                # Check if this is a valid day of week
-                                current_weekday = current_date.weekday()
-                                day_name = list(day_map.keys())[current_weekday]
-                                
-                                if day_name in [d.lower() for d in days_of_week]:
-                                    # Check if this week should have an occurrence
-                                    if current_date >= series_start_date:
-                                        weeks_since_start = (current_date - series_start_date).days // 7
-                                        if weeks_since_start % interval == 0:
-                                            # Create occurrence
-                                            occurrence_start = central_tz.localize(
-                                                datetime.combine(current_date, event_time)
-                                            )
-                                            occurrence_end = occurrence_start + event_duration
-                                            
-                                            if start_datetime <= occurrence_start < end_datetime:
-                                                event_data = {
-                                                    'subject': event.get('subject', 'No Title'),
-                                                    'start': occurrence_start,
-                                                    'end': occurrence_end,
-                                                    'location': '',
-                                                    'is_all_day': event.get('isAllDay', False)
-                                                }
-                                                
-                                                # Extract location
-                                                body_content = event.get('body', {}).get('content', '')
-                                                if body_content and 'Location:' in body_content:
-                                                    location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
-                                                    if location_match:
-                                                        event_data['location'] = location_match.group(1).strip()
-                                                
-                                                bulletin_events.append(event_data)
-                                
-                                current_date += timedelta(days=1)
-                        
-                        elif pattern_type == 'absolutemonthly':
-                            # Monthly on specific date
-                            day_of_month = pattern.get('dayOfMonth', 1)
-                            interval = pattern.get('interval', 1)
-                            
-                            current_date = start_date
-                            series_start_date = series_start_central.date()
-                            
-                            while current_date <= min(end_date, recur_end_date):
-                                if current_date.day == day_of_month and current_date >= series_start_date:
-                                    # Check if this month should have an occurrence
-                                    months_diff = (current_date.year - series_start_date.year) * 12 + \
-                                                 (current_date.month - series_start_date.month)
-                                    
-                                    if months_diff >= 0 and months_diff % interval == 0:
-                                        # Create occurrence
-                                        occurrence_start = central_tz.localize(
-                                            datetime.combine(current_date, event_time)
-                                        )
-                                        occurrence_end = occurrence_start + event_duration
-                                        
-                                        if start_datetime <= occurrence_start < end_datetime:
-                                            event_data = {
-                                                'subject': event.get('subject', 'No Title'),
-                                                'start': occurrence_start,
-                                                'end': occurrence_end,
-                                                'location': '',
-                                                'is_all_day': event.get('isAllDay', False)
-                                            }
-                                            
-                                            # Extract location
-                                            body_content = event.get('body', {}).get('content', '')
-                                            if body_content and 'Location:' in body_content:
-                                                location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
-                                                if location_match:
-                                                    event_data['location'] = location_match.group(1).strip()
-                                            
-                                            bulletin_events.append(event_data)
-                                
-                                current_date += timedelta(days=1)
-                        
-                    except Exception as e:
-                        logger.warning(f"Error processing recurring event {event.get('subject')}: {e}")
-                        continue
-                    
+                # Get event details
+                event_data = {
+                    'subject': event.get('subject', 'No Title'),
+                    'start': event_start_central,
+                    'end': None,
+                    'location': '',
+                    'is_all_day': event.get('isAllDay', False)
+                }
+                
+                # Get end time
+                event_end_str = event.get('end', {}).get('dateTime', '')
+                if event_end_str:
+                    event_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
+                    event_data['end'] = utc_to_central(event_end)
+                
+                # Extract location from body (where we store it in public calendar)
+                body_content = event.get('body', {}).get('content', '')
+                if body_content and 'Location:' in body_content:
+                    location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
+                    if location_match:
+                        event_data['location'] = location_match.group(1).strip()
+                
+                bulletin_events.append(event_data)
+                
             except Exception as e:
                 logger.warning(f"Error processing event: {e}")
                 continue
