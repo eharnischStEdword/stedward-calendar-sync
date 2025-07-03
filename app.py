@@ -519,7 +519,7 @@ def favicon():
 
 @app.route('/bulletin-events')
 def bulletin_events():
-    """Get events for the weekly bulletin using calendarView to expand recurring events"""
+    """Get events for the weekly bulletin with week selection"""
     try:
         if not auth_manager or not auth_manager.is_authenticated():
             return redirect('/')
@@ -527,12 +527,15 @@ def bulletin_events():
         if not sync_engine:
             return jsonify({"error": "Sync engine not initialized"}), 500
         
+        # Get the week parameter
+        week_param = request.args.get('week', 'upcoming')
+        
         # Get the public calendar ID
         public_calendar_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
         if not public_calendar_id:
             return jsonify({"error": "Public calendar not found"}), 404
         
-        # Calculate date range
+        # Calculate date range based on week parameter
         from datetime import timedelta
         import pytz
         import re
@@ -541,15 +544,42 @@ def bulletin_events():
         central_tz = pytz.timezone('America/Chicago')
         today = get_central_time().date()
         
-        # Find the upcoming Saturday
-        days_until_saturday = (5 - today.weekday()) % 7
-        if days_until_saturday == 0:  # Today is Saturday
-            start_date = today
-        else:
-            start_date = today + timedelta(days=days_until_saturday)
+        if week_param == 'current':
+            # Current week (Sunday to Saturday)
+            days_since_sunday = today.weekday() + 1 if today.weekday() != 6 else 0
+            start_date = today - timedelta(days=days_since_sunday)
+            end_date = start_date + timedelta(days=6)
+            week_label = "Current Week"
         
-        # End date is the Sunday after (9 days total)
-        end_date = start_date + timedelta(days=8)
+        elif week_param == 'upcoming':
+            # Upcoming Saturday to following Sunday (9 days)
+            days_until_saturday = (5 - today.weekday()) % 7
+            if days_until_saturday == 0:  # Today is Saturday
+                start_date = today
+            else:
+                start_date = today + timedelta(days=days_until_saturday)
+            end_date = start_date + timedelta(days=8)
+            week_label = "Upcoming Week"
+        
+        elif week_param == 'following':
+            # Week after upcoming (starts 9 days after upcoming Saturday)
+            days_until_saturday = (5 - today.weekday()) % 7
+            if days_until_saturday == 0:  # Today is Saturday
+                start_date = today + timedelta(days=7)
+            else:
+                start_date = today + timedelta(days=days_until_saturday + 7)
+            end_date = start_date + timedelta(days=8)
+            week_label = "Following Week"
+        
+        else:
+            # Default to upcoming
+            days_until_saturday = (5 - today.weekday()) % 7
+            if days_until_saturday == 0:
+                start_date = today
+            else:
+                start_date = today + timedelta(days=days_until_saturday)
+            end_date = start_date + timedelta(days=8)
+            week_label = "Upcoming Week"
         
         # Create datetime objects at midnight in Central Time
         start_datetime = central_tz.localize(datetime.combine(start_date, datetime.min.time()))
@@ -560,8 +590,7 @@ def bulletin_events():
         if not headers:
             return jsonify({"error": "No auth headers"}), 401
         
-        # Use Microsoft Graph calendarView API to get events with expanded recurrence
-        # This automatically expands recurring events into individual occurrences
+        # Use Microsoft Graph calendarView API
         url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{public_calendar_id}/calendarView"
         
         # Format dates for API (must be in UTC)
@@ -573,7 +602,7 @@ def bulletin_events():
             'endDateTime': end_str,
             '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,body',
             '$orderby': 'start/dateTime',
-            '$top': 250  # Should be enough for a week
+            '$top': 250
         }
         
         all_events = []
@@ -636,7 +665,7 @@ def bulletin_events():
                     event_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
                     event_data['end'] = utc_to_central(event_end)
                 
-                # Extract location from body (where we store it in public calendar)
+                # Extract location from body
                 body_content = event.get('body', {}).get('content', '')
                 if body_content and 'Location:' in body_content:
                     location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
@@ -681,6 +710,8 @@ def bulletin_events():
                              start_date=start_date.strftime('%B %d'),
                              end_date=end_date.strftime('%B %d, %Y'),
                              days=formatted_days,
+                             week_label=week_label,
+                             week_param=week_param,
                              generated_time=format_central_time(get_central_time()))
         
     except Exception as e:
