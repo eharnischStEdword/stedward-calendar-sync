@@ -504,32 +504,41 @@
                                     📋 Following Week
                                 </a>
                             </div>
-                        <div style="position: relative;">
-    <button class="action-btn secondary" onclick="toggleEventPresets(event)" style="position: relative;">
-        📋 Event Lists ▼
-    </button>
-    <div id="event-presets-menu" style="display: none; position: absolute; bottom: 100%; margin-bottom: 5px; left: 0; min-width: 250px; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; border: 1px solid #ddd;">
-        <a href="/event-list/next30" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
-            📅 Next 30 Days
-        </a>
-        <a href="/event-list/next60" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
-            📆 Next 60 Days
-        </a>
-        <a href="/event-list/endofmonth" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
-            🗓️ Until End of Month
-        </a>
-        <a href="/event-list/june30" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
-            📊 Until June 30
-        </a>
-        <div style="padding: 12px 16px; border-top: 2px solid #eee;">
-            <div style="font-weight: bold; margin-bottom: 8px; color: #005921;">Quick Search:</div>
-            <a href="/event-list/june30?search=scout" target="_blank" style="display: inline-block; margin: 2px; padding: 4px 8px; background: #e8f4ed; color: #005921; text-decoration: none; border-radius: 4px; font-size: 0.85rem;" onmouseover="this.style.background='#d4e8db'" onmouseout="this.style.background='#e8f4ed'">Scout</a>
-            <a href="/event-list/june30?search=council" target="_blank" style="display: inline-block; margin: 2px; padding: 4px 8px; background: #e8f4ed; color: #005921; text-decoration: none; border-radius: 4px; font-size: 0.85rem;" onmouseover="this.style.background='#d4e8db'" onmouseout="this.style.background='#e8f4ed'">Council</a>
-            <a href="/event-list/june30?search=pto" target="_blank" style="display: inline-block; margin: 2px; padding: 4px 8px; background: #e8f4ed; color: #005921; text-decoration: none; border-radius: 4px; font-size: 0.85rem;" onmouseover="this.style.background='#d4e8db'" onmouseout="this.style.background='#e8f4ed'">PTO</a>
-            <a href="/event-list/june30?search=mass" target="_blank" style="display: inline-block; margin: 2px; padding: 4px 8px; background: #e8f4ed; color: #005921; text-decoration: none; border-radius: 4px; font-size: 0.85rem;" onmouseover="this.style.background='#d4e8db'" onmouseout="this.style.background='#e8f4ed'">Mass</a>
-        </div>
-    </div>
-</div>
+                            <!-- Event Search -->
+                            <div style="grid-column: 1 / -1; background: #f8f9fa; padding: 1.5rem; border-radius: 8px; border: 1px solid #e9ecef;">
+                                <h3 style="margin: 0 0 1rem 0; color: #005921; font-size: 1.1rem;">🔍 Search Events</h3>
+                                
+                                <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+                                    <div style="flex: 1; min-width: 200px;">
+                                        <label style="display: block; margin-bottom: 0.5rem; color: #666; font-size: 0.9rem;">Search term (optional):</label>
+                                        <input type="text" id="event-search-term" placeholder="e.g., scout, council, mass..." 
+                                               style="width: 100%; padding: 0.75rem; border: 1px solid #ced4da; border-radius: 4px; font-size: 1rem;">
+                                    </div>
+                                    
+                                    <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
+                                        <label style="display: flex; align-items: center; cursor: pointer;">
+                                            <input type="radio" name="date-range" value="week" style="margin-right: 0.5rem;">
+                                            <span>Next 7 days</span>
+                                        </label>
+                                        <label style="display: flex; align-items: center; cursor: pointer;">
+                                            <input type="radio" name="date-range" value="month" checked style="margin-right: 0.5rem;">
+                                            <span>Next 30 days</span>
+                                        </label>
+                                        <label style="display: flex; align-items: center; cursor: pointer;">
+                                            <input type="radio" name="date-range" value="quarter" style="margin-right: 0.5rem;">
+                                            <span>Next 90 days</span>
+                                        </label>
+                                        <label style="display: flex; align-items: center; cursor: pointer;">
+                                            <input type="radio" name="date-range" value="june" style="margin-right: 0.5rem;">
+                                            <span>Until June 30</span>
+                                        </label>
+                                    </div>
+                                    
+                                    <button class="action-btn" onclick="searchEvents()" style="min-width: 120px; margin: 0;">
+                                        🔍 Search
+                                    </button>
+                                </div>
+                            </div>
                         </div>                            
                         </div>
                 </div>
