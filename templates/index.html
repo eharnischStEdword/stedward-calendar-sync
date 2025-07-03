@@ -489,21 +489,22 @@
                     <a href="/debug" class="action-btn secondary">
                         🔍 Debug Info
                     </a>
-                <div style="position: relative; display: inline-block;">
-                    <button class="action-btn secondary" onclick="toggleBulletinMenu(event)" style="position: relative;">
-                        📋 Weekly Bulletin ▼
-                    </button>
-                    <div id="bulletin-menu" style="display: none; position: absolute; top: 100%; left: 0; right: 0; min-width: 200px; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; border: 1px solid #ddd;">
-                        <a href="/bulletin-events?week=current" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
-                            📅 Current Week
-                        </a>
-                        <a href="/bulletin-events?week=upcoming" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
-                            📆 Upcoming Week
-                        </a>
-                        <a href="/bulletin-events?week=following" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
-                            📋 Following Week
-                        </a>
-                    </div>
+                        <div style="position: relative;">
+                            <button class="action-btn secondary" onclick="toggleBulletinMenu(event)" style="position: relative;">
+                                📋 Weekly Bulletin ▼
+                            </button>
+                            <div id="bulletin-menu" style="display: none; position: absolute; bottom: 100%; margin-bottom: 5px; left: 0; min-width: 200px; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; border: 1px solid #ddd;">
+                                <a href="/bulletin-events?week=current" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                                    📅 Current Week
+                                </a>
+                                <a href="/bulletin-events?week=upcoming" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                                    📆 Upcoming Week
+                                </a>
+                                <a href="/bulletin-events?week=following" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                                    📋 Following Week
+                                </a>
+                            </div>
+                        </div>
                 </div>
                     <a href="/logout" class="action-btn warning">
                         🚪 Sign Out
