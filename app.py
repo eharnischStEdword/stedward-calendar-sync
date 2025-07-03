@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 # Initialize Flask
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # Global components - will be initialized after first successful load
 sync_engine = None
