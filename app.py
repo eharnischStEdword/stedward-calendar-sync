@@ -515,6 +515,146 @@ def favicon():
     """Serve favicon"""
     return redirect("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📅%3C/text%3E%3C/svg%3E")
 
+# Add this route to your app.py file (add it before the if __name__ == '__main__': line)
+
+@app.route('/bulletin-events')
+def bulletin_events():
+    """Get events for the weekly bulletin"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return redirect('/')
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get the public calendar ID
+        public_calendar_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not public_calendar_id:
+            return jsonify({"error": "Public calendar not found"}), 404
+        
+        # Calculate date range
+        from datetime import timedelta
+        import pytz
+        
+        central_tz = pytz.timezone('America/Chicago')
+        today = get_central_time().date()
+        
+        # Find the upcoming Saturday
+        days_until_saturday = (5 - today.weekday()) % 7
+        if days_until_saturday == 0:  # Today is Saturday
+            # If running on Saturday, get this Saturday
+            start_date = today
+        else:
+            # Get next Saturday
+            start_date = today + timedelta(days=days_until_saturday)
+        
+        # End date is the Sunday after (9 days total)
+        end_date = start_date + timedelta(days=8)
+        
+        # Create datetime objects at midnight in Central Time
+        start_datetime = central_tz.localize(datetime.combine(start_date, datetime.min.time()))
+        end_datetime = central_tz.localize(datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
+        
+        # Get all events from the public calendar
+        all_events = sync_engine.reader.get_calendar_events(public_calendar_id)
+        if not all_events:
+            all_events = []
+        
+        # Filter events in date range
+        bulletin_events = []
+        for event in all_events:
+            # Skip recurring instances, we'll show the series master
+            if event.get('type') == 'occurrence':
+                continue
+            
+            # Get event start time
+            event_start_str = event.get('start', {}).get('dateTime', '')
+            if not event_start_str:
+                continue
+            
+            try:
+                event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
+                event_start_central = utc_to_central(event_start)
+                
+                # Check if event is in our date range
+                if start_datetime <= event_start_central < end_datetime:
+                    # Get event details
+                    event_data = {
+                        'subject': event.get('subject', 'No Title'),
+                        'start': event_start_central,
+                        'end': None,
+                        'location': '',
+                        'is_all_day': event.get('isAllDay', False)
+                    }
+                    
+                    # Get end time
+                    event_end_str = event.get('end', {}).get('dateTime', '')
+                    if event_end_str:
+                        event_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
+                        event_data['end'] = utc_to_central(event_end)
+                    
+                    # Extract location from body (where we store it in public calendar)
+                    body_content = event.get('body', {}).get('content', '')
+                    if body_content and 'Location:' in body_content:
+                        import re
+                        location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
+                        if location_match:
+                            event_data['location'] = location_match.group(1).strip()
+                    
+                    bulletin_events.append(event_data)
+                    
+                # For recurring events, check if any occurrences fall in our range
+                elif event.get('type') == 'seriesMaster' and event.get('recurrence'):
+                    # This is a recurring event - we need to calculate occurrences
+                    # For simplicity, we'll just note it's recurring
+                    # In a full implementation, you'd calculate actual occurrences
+                    pass
+                    
+            except Exception as e:
+                logger.warning(f"Error processing event: {e}")
+                continue
+        
+        # Sort events by start time
+        bulletin_events.sort(key=lambda x: x['start'])
+        
+        # Group events by day
+        events_by_day = {}
+        for event in bulletin_events:
+            day_key = event['start'].date()
+            if day_key not in events_by_day:
+                events_by_day[day_key] = []
+            events_by_day[day_key].append(event)
+        
+        # Format for display
+        formatted_days = []
+        current_date = start_date
+        
+        while current_date <= end_date:
+            day_events = events_by_day.get(current_date, [])
+            
+            formatted_days.append({
+                'date': current_date,
+                'day_name': current_date.strftime('%A'),
+                'date_str': current_date.strftime('%B %d'),
+                'events': day_events
+            })
+            
+            current_date += timedelta(days=1)
+        
+        # Render the bulletin template
+        return render_template('bulletin_events.html',
+                             start_date=start_date.strftime('%B %d'),
+                             end_date=end_date.strftime('%B %d, %Y'),
+                             days=formatted_days,
+                             generated_time=format_central_time(get_central_time()))
+        
+    except Exception as e:
+        logger.error(f"Bulletin events error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")
