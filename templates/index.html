@@ -489,18 +489,18 @@
                     <a href="/debug" class="action-btn secondary">
                         🔍 Debug Info
                     </a>
-                <div class="action-btn secondary" style="position: relative; padding: 0;">
-                    <button onclick="toggleBulletinMenu()" style="background: none; border: none; color: inherit; padding: 1rem 1.5rem; width: 100%; height: 100%; cursor: pointer; font-size: 1rem; font-weight: 600;">
+                <div style="position: relative; display: inline-block;">
+                    <button class="action-btn secondary" onclick="toggleBulletinMenu(event)" style="position: relative;">
                         📋 Weekly Bulletin ▼
                     </button>
-                    <div id="bulletin-menu" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: #6c757d; border-radius: 0 0 8px 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 10;">
-                        <a href="/bulletin-events?week=current" target="_blank" class="bulletin-option" style="display: block; padding: 1rem; color: white; text-decoration: none; border-bottom: 1px solid rgba(255,255,255,0.1); transition: background 0.2s;">
+                    <div id="bulletin-menu" style="display: none; position: absolute; top: 100%; left: 0; right: 0; min-width: 200px; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; border: 1px solid #ddd;">
+                        <a href="/bulletin-events?week=current" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
                             📅 Current Week
                         </a>
-                        <a href="/bulletin-events?week=upcoming" target="_blank" class="bulletin-option" style="display: block; padding: 1rem; color: white; text-decoration: none; border-bottom: 1px solid rgba(255,255,255,0.1); transition: background 0.2s;">
+                        <a href="/bulletin-events?week=upcoming" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
                             📆 Upcoming Week
                         </a>
-                        <a href="/bulletin-events?week=following" target="_blank" class="bulletin-option" style="display: block; padding: 1rem; color: white; text-decoration: none; transition: background 0.2s;">
+                        <a href="/bulletin-events?week=following" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
                             📋 Following Week
                         </a>
                     </div>
@@ -818,30 +818,30 @@
         });
     </script>
     <script>
-    function toggleBulletinMenu() {
-        const menu = document.getElementById('bulletin-menu');
-        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-    }
-    
-    // Close menu when clicking outside
-    document.addEventListener('click', function(event) {
-        const menu = document.getElementById('bulletin-menu');
-        const button = event.target.closest('.action-btn');
-        
-        if (!button || !button.contains(menu)) {
-            menu.style.display = 'none';
+        function toggleBulletinMenu(event) {
+            event.stopPropagation();
+            const menu = document.getElementById('bulletin-menu');
+            const isOpen = menu.style.display === 'block';
+            
+            // Close any other open menus
+            document.querySelectorAll('[id$="-menu"]').forEach(m => {
+                m.style.display = 'none';
+            });
+            
+            // Toggle this menu
+            menu.style.display = isOpen ? 'none' : 'block';
         }
-    });
-    
-    // Add hover effect to menu items
-    document.querySelectorAll('.bulletin-option').forEach(option => {
-        option.addEventListener('mouseenter', function() {
-            this.style.background = 'rgba(0,0,0,0.2)';
+        
+        // Close menu when clicking anywhere else
+        document.addEventListener('click', function(event) {
+            const menu = document.getElementById('bulletin-menu');
+            const button = event.target.closest('button');
+            
+            // If clicking outside the menu and button, close it
+            if (!event.target.closest('#bulletin-menu') && (!button || !button.textContent.includes('Weekly Bulletin'))) {
+                menu.style.display = 'none';
+            }
         });
-        option.addEventListener('mouseleave', function() {
-            this.style.background = 'none';
-        });
-    });
     </script>
 </body>
 </html>
