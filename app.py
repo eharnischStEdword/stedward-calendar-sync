@@ -724,9 +724,9 @@ def bulletin_events():
             "traceback": traceback.format_exc()
         }), 500
 
-@app.route('/event-list/<preset>')
-def event_list_preset(preset):
-    """Get events for various preset time ranges with optional search"""
+@app.route('/event-search')
+def event_search():
+    """Search events with custom parameters"""
     try:
         if not auth_manager or not auth_manager.is_authenticated():
             return redirect('/')
@@ -734,15 +734,16 @@ def event_list_preset(preset):
         if not sync_engine:
             return jsonify({"error": "Sync engine not initialized"}), 500
         
-        # Get search term from query parameters
+        # Get search parameters
         search_term = request.args.get('search', '').lower().strip()
+        date_range = request.args.get('range', '30')  # Default 30 days
         
         # Get the public calendar ID
         public_calendar_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
         if not public_calendar_id:
             return jsonify({"error": "Public calendar not found"}), 404
         
-        # Calculate date range based on preset
+        # Calculate date range
         from datetime import timedelta
         import pytz
         import requests
@@ -751,35 +752,32 @@ def event_list_preset(preset):
         today = get_central_time().date()
         start_date = today
         
-        # Determine end date based on preset
-        if preset == 'next30':
+        # Determine end date based on range
+        if date_range == 'week':
+            end_date = today + timedelta(days=7)
+            range_text = "Next 7 Days"
+        elif date_range == 'month':
             end_date = today + timedelta(days=30)
-            title = "Next 30 Days"
-        elif preset == 'endofmonth':
-            # Last day of current month
-            if today.month == 12:
-                end_date = datetime(today.year + 1, 1, 1).date() - timedelta(days=1)
-            else:
-                end_date = datetime(today.year, today.month + 1, 1).date() - timedelta(days=1)
-            title = f"Until End of {today.strftime('%B')}"
-        elif preset == 'june30':
-            # June 30 of current or next year
+            range_text = "Next 30 Days"
+        elif date_range == 'quarter':
+            end_date = today + timedelta(days=90)
+            range_text = "Next 90 Days"
+        elif date_range == 'june':
             june30 = datetime(today.year, 6, 30).date()
             if today > june30:
                 june30 = datetime(today.year + 1, 6, 30).date()
             end_date = june30
-            title = f"Until June 30, {june30.year}"
-        elif preset == 'next60':
-            end_date = today + timedelta(days=60)
-            title = "Next 60 Days"
+            range_text = f"Until June 30, {june30.year}"
         else:
-            # Default to next 30 days
+            # Default to 30 days
             end_date = today + timedelta(days=30)
-            title = "Next 30 Days"
+            range_text = "Next 30 Days"
         
-        # Add search term to title if provided
+        # Build title
         if search_term:
-            title += f" - '{search_term}'"
+            title = f"Events containing '{search_term}' - {range_text}"
+        else:
+            title = f"All Events - {range_text}"
         
         # Create datetime objects
         start_datetime = central_tz.localize(datetime.combine(start_date, datetime.min.time()))
@@ -835,7 +833,7 @@ def event_list_preset(preset):
         <!DOCTYPE html>
         <html>
         <head>
-            <title>{title} - Event List</title>
+            <title>{title}</title>
             <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
             <style>
                 body {{ 
@@ -856,32 +854,6 @@ def event_list_preset(preset):
                     color: #005921; 
                     border-bottom: 2px solid #005921;
                     padding-bottom: 10px;
-                }}
-                .search-box {{
-                    background: #f8f9fa;
-                    padding: 15px;
-                    border-radius: 5px;
-                    margin: 20px 0;
-                }}
-                .search-input {{
-                    width: 70%;
-                    padding: 8px 12px;
-                    border: 1px solid #ddd;
-                    border-radius: 4px;
-                    font-size: 16px;
-                }}
-                .search-btn {{
-                    padding: 8px 20px;
-                    background: #005921;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-size: 16px;
-                    margin-left: 10px;
-                }}
-                .search-btn:hover {{
-                    background: #004a1e;
                 }}
                 .summary {{
                     background: #f0f7f4;
@@ -934,7 +906,7 @@ def event_list_preset(preset):
                     background: #5a6268;
                 }}
                 @media print {{
-                    .back-link, .copy-btn, .search-box {{ display: none; }}
+                    .back-link, .copy-btn {{ display: none; }}
                     body {{ background: white; }}
                     .container {{ box-shadow: none; }}
                 }}
@@ -945,20 +917,9 @@ def event_list_preset(preset):
                 <h1>📅 {title}</h1>
                 <button class="copy-btn" onclick="copyList()">📋 Copy List</button>
                 
-                <div class="search-box">
-                    <form action="/event-list/{preset}" method="get">
-                        <input type="text" 
-                               name="search" 
-                               class="search-input" 
-                               placeholder="Search events (e.g., boy scouts, council, PTO)..." 
-                               value="{search_term}">
-                        <button type="submit" class="search-btn">🔍 Search</button>
-                    </form>
-                </div>
-                
                 <div class="summary">
-                    <strong>{len(event_list)} events found</strong> from {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}
-                    {f'<br>Filtered by: "<strong>{search_term}</strong>"' if search_term else ''}
+                    <strong>{len(event_list)} events found</strong><br>
+                    Date range: {start_date.strftime('%B %d, %Y')} to {end_date.strftime('%B %d, %Y')}
                 </div>
                 <div id="event-list">
         '''
@@ -973,9 +934,9 @@ def event_list_preset(preset):
                 '''
         else:
             if search_term:
-                html += f'<p>No events found containing "{search_term}" in this time range.</p>'
+                html += f'<p>No events found containing "{search_term}" in this date range.</p>'
             else:
-                html += '<p>No events found in this time range.</p>'
+                html += '<p>No events found in this date range.</p>'
         
         html += f'''
                 </div>
@@ -1014,7 +975,7 @@ def event_list_preset(preset):
         return html
         
     except Exception as e:
-        logger.error(f"Event list error: {e}")
+        logger.error(f"Event search error: {e}")
         return f"Error: {str(e)}", 500
 
 if __name__ == '__main__':
