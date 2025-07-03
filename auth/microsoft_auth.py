@@ -1,35 +1,20 @@
 """
-Microsoft OAuth - Complete Fast-Loading Version with Token Refresh and Central Time
+Microsoft OAuth - Session-based Authentication (not shared)
 """
 import os
 import requests
 import urllib.parse
 from datetime import datetime, timedelta
 import logging
+from flask import session
 from utils.timezone import get_central_time, format_central_time
 
 logger = logging.getLogger(__name__)
 
 class MicrosoftAuth:
     def __init__(self):
-        self.access_token = os.environ.get('ACCESS_TOKEN')
-        self.refresh_token = os.environ.get('REFRESH_TOKEN') 
-        self.token_expires_at = None
-        
-        # Parse expiry if available
-        expires_str = os.environ.get('TOKEN_EXPIRES_AT')
-        if expires_str:
-            try:
-                self.token_expires_at = datetime.fromisoformat(expires_str)
-            except:
-                pass
-        
-        logger.info("Auth manager initialized quickly")
-        
-        # If we have refresh token but no access token, try to refresh
-        if self.refresh_token and not self.access_token:
-            logger.info("Have refresh token but no access token, attempting refresh...")
-            self.refresh_access_token()
+        # Don't load tokens from environment - each user authenticates
+        logger.info("Auth manager initialized (session-based)")
     
     def get_auth_url(self, state):
         import config
@@ -43,35 +28,38 @@ class MicrosoftAuth:
         return f"https://login.microsoftonline.com/{config.TENANT_ID}/oauth2/v2.0/authorize?" + urllib.parse.urlencode(params)
     
     def is_authenticated(self):
-        return bool(self.refresh_token)
+        """Check if current session is authenticated"""
+        return bool(session.get('refresh_token'))
     
     def ensure_valid_token(self):
-        """Ensure we have a valid access token"""
-        # If no access token, try to get one with refresh token
-        if not self.access_token and self.refresh_token:
-            logger.info("No access token but have refresh token, attempting refresh...")
-            return self.refresh_access_token()
+        """Ensure we have a valid access token for this session"""
+        # Get tokens from session
+        access_token = session.get('access_token')
+        refresh_token = session.get('refresh_token')
+        token_expires_at = session.get('token_expires_at')
         
-        # If no access token at all, can't proceed
-        if not self.access_token:
-            logger.warning("No access token available")
+        # If no refresh token, not authenticated
+        if not refresh_token:
+            logger.warning("No refresh token in session")
             return False
         
-        # If no expiration time set, assume token is valid (more forgiving)
-        if not self.token_expires_at:
-            logger.debug("No expiration time set, assuming token is valid")
-            return True
-        
-        # Check if token is expired or about to expire (within 5 minutes)
-        now = get_central_time()
-        if now >= (self.token_expires_at - timedelta(minutes=5)):
-            logger.info(f"Access token expires soon ({format_central_time(self.token_expires_at)}), refreshing...")
+        # If no access token, try to get one with refresh token
+        if not access_token:
+            logger.info("No access token in session, attempting refresh...")
             return self.refresh_access_token()
-        else:
-            # Token is still valid
-            time_until_expiry = self.token_expires_at - now
-            logger.debug(f"Token valid for {time_until_expiry}")
-            return True
+        
+        # Check if token is expired
+        if token_expires_at:
+            try:
+                expires_at = datetime.fromisoformat(token_expires_at)
+                now = get_central_time()
+                if now >= (expires_at - timedelta(minutes=5)):
+                    logger.info(f"Access token expires soon, refreshing...")
+                    return self.refresh_access_token()
+            except:
+                pass
+        
+        return True
     
     def get_headers(self):
         """Get authorization headers for API calls"""
@@ -79,9 +67,10 @@ class MicrosoftAuth:
             logger.error("Cannot get headers - no valid token")
             return None
         
-        if self.access_token:
+        access_token = session.get('access_token')
+        if access_token:
             headers = {
-                'Authorization': f'Bearer {self.access_token}',
+                'Authorization': f'Bearer {access_token}',
                 'Content-Type': 'application/json'
             }
             logger.debug("Returning valid authorization headers")
@@ -91,9 +80,10 @@ class MicrosoftAuth:
         return None
     
     def refresh_access_token(self):
-        """Refresh the access token using refresh token"""
-        if not self.refresh_token:
-            logger.warning("No refresh token available")
+        """Refresh the access token using refresh token from session"""
+        refresh_token = session.get('refresh_token')
+        if not refresh_token:
+            logger.warning("No refresh token available in session")
             return False
         
         logger.info(f"Refreshing access token at {format_central_time(get_central_time())}...")
@@ -103,7 +93,7 @@ class MicrosoftAuth:
         data = {
             'client_id': config.CLIENT_ID,
             'client_secret': config.CLIENT_SECRET,
-            'refresh_token': self.refresh_token,
+            'refresh_token': refresh_token,
             'grant_type': 'refresh_token',
             'scope': ' '.join(config.GRAPH_SCOPES)
         }
@@ -113,31 +103,22 @@ class MicrosoftAuth:
             if response.status_code == 200:
                 tokens = response.json()
                 
-                self.access_token = tokens.get('access_token')
+                # Store in session
+                session['access_token'] = tokens.get('access_token')
                 new_refresh = tokens.get('refresh_token')
                 if new_refresh:
-                    self.refresh_token = new_refresh
+                    session['refresh_token'] = new_refresh
                 
                 expires_in = tokens.get('expires_in', 3600)
-                # Add 5 minute buffer before expiration
-                self.token_expires_at = get_central_time() + timedelta(seconds=expires_in - 300)
+                expires_at = get_central_time() + timedelta(seconds=expires_in - 300)
+                session['token_expires_at'] = expires_at.isoformat()
                 
-                logger.info(f"Token refreshed successfully. New expiration: {format_central_time(self.token_expires_at)}")
-                
-                # Log tokens for manual environment variable update
-                logger.info("=" * 40)
-                logger.info("🔑 UPDATE RENDER ENVIRONMENT VARIABLES:")
-                logger.info(f"ACCESS_TOKEN={self.access_token}")
-                logger.info(f"REFRESH_TOKEN={self.refresh_token}")
-                logger.info(f"TOKEN_EXPIRES_AT={self.token_expires_at.isoformat()}")
-                logger.info("=" * 40)
-                
+                logger.info(f"Token refreshed successfully. Expires: {format_central_time(expires_at)}")
                 return True
             else:
                 logger.error(f"Token refresh failed: {response.status_code} - {response.text}")
-                # Only clear tokens if it's a permanent failure
                 if response.status_code in [400, 401]:
-                    logger.error("Refresh token invalid, clearing all tokens")
+                    logger.error("Refresh token invalid, clearing session")
                     self.clear_tokens()
                 return False
         except Exception as e:
@@ -162,19 +143,15 @@ class MicrosoftAuth:
             response = requests.post(token_url, data=data, timeout=30)
             if response.status_code == 200:
                 tokens = response.json()
-                self.access_token = tokens.get('access_token')
-                self.refresh_token = tokens.get('refresh_token')
+                
+                # Store in session
+                session['access_token'] = tokens.get('access_token')
+                session['refresh_token'] = tokens.get('refresh_token')
                 expires_in = tokens.get('expires_in', 3600)
-                self.token_expires_at = get_central_time() + timedelta(seconds=expires_in - 300)
+                expires_at = get_central_time() + timedelta(seconds=expires_in - 300)
+                session['token_expires_at'] = expires_at.isoformat()
                 
-                # Log tokens for manual environment variable update
-                logger.info("=" * 50)
-                logger.info("🔑 UPDATE RENDER ENVIRONMENT VARIABLES:")
-                logger.info(f"ACCESS_TOKEN={self.access_token}")
-                logger.info(f"REFRESH_TOKEN={self.refresh_token}")
-                logger.info(f"TOKEN_EXPIRES_AT={self.token_expires_at.isoformat()}")
-                logger.info("=" * 50)
-                
+                logger.info("Authentication successful for this session")
                 return True
             return False
         except Exception as e:
@@ -182,8 +159,8 @@ class MicrosoftAuth:
             return False
     
     def clear_tokens(self):
-        """Clear all tokens"""
-        logger.info("Clearing all authentication tokens")
-        self.access_token = None
-        self.refresh_token = None
-        self.token_expires_at = None
+        """Clear all tokens from session"""
+        logger.info("Clearing authentication tokens from session")
+        session.pop('access_token', None)
+        session.pop('refresh_token', None)
+        session.pop('token_expires_at', None)
