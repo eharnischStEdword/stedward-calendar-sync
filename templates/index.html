@@ -868,32 +868,7 @@
             // Toggle this menu
             menu.style.display = isOpen ? 'none' : 'block';
         }
-        function toggleEventPresets(event) {
-            event.stopPropagation();
-            const menu = document.getElementById('event-presets-menu');
-            const isOpen = menu.style.display === 'block';
-            
-            // Close any other open menus
-            document.querySelectorAll('[id$="-menu"]').forEach(m => {
-                m.style.display = 'none';
-            });
-            
-            // Toggle this menu
-            menu.style.display = isOpen ? 'none' : 'block';
-        }
-        // Close menu when clicking anywhere else
-        document.addEventListener('click', function(event) {
-            const bulletinMenu = document.getElementById('bulletin-menu');
-            const eventPresetsMenu = document.getElementById('event-presets-menu');
-            const button = event.target.closest('button');
-            
-            // Close all menus if clicking outside
-            if (!event.target.closest('#bulletin-menu') && !event.target.closest('#event-presets-menu')) {
-                bulletinMenu.style.display = 'none';
-                eventPresetsMenu.style.display = 'none';
-            }
-        });
-        function searchEvents() {
+function searchEvents() {
     const searchTerm = document.getElementById('event-search-term').value.trim();
     const selectedRange = document.querySelector('input[name="date-range"]:checked').value;
     
