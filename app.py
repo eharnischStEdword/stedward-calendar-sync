@@ -724,7 +724,7 @@ def bulletin_events():
             "traceback": traceback.format_exc()
         }), 500
 
-    @app.route('/event-list/<preset>')
+@app.route('/event-list/<preset>')
 def event_list_preset(preset):
     """Get events for various preset time ranges"""
     try:
