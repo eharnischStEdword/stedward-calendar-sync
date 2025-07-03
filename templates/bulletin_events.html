@@ -183,7 +183,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📅 Weekly Bulletin Events</h1>
+            <h1>📅 {{ week_label }} Bulletin Events</h1>
             <div class="date-range">{{ start_date }} - {{ end_date }}</div>
         </div>
 
@@ -223,7 +223,7 @@
 
 <div class="actions">
     <a href="/" class="action-link">← Back to Dashboard</a>
-    <a href="/bulletin-events" class="action-link">🔄 Refresh</a>
+    <a href="/bulletin-events?week={{ week_param }}" class="action-link">🔄 Refresh</a>
 </div>
 
         <div class="generated-info">
