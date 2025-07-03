@@ -2,6 +2,7 @@
 Configuration settings for St. Edward Calendar Sync
 """
 import os
+import secrets
 
 # Shared Mailbox Configuration
 SHARED_MAILBOX = "calendar@stedward.org"
