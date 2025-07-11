@@ -269,3 +269,13 @@ For questions or issues with these enhancements:
 4. Use debug endpoints for investigation
 
 Remember: These improvements are designed to make the system more reliable and easier to operate. Take advantage of the new observability features to understand system behavior better.
+
+## Ownership & Licensing
+
+This project was developed by **Harnisch LLC**.
+
+All source code and related assets are © 2024–2025 Harnisch LLC. All rights reserved.
+
+**Exclusive usage rights have been granted to St. Edward Church & School (Nashville, TN)**. This software may not be used, copied, modified, distributed, or deployed outside of that context without explicit written permission from Harnisch LLC.
+
+If you are interested in licensing this tool for your organization, contact: eric@ericharnisch.com
