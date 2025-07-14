@@ -273,7 +273,6 @@ class CalendarReader:
             'cancelled': 0
         }
         
-        from datetime import datetime, timedelta
         cutoff_date = get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
         future_cutoff = get_central_time() + timedelta(days=365)  # Don't sync events more than a year out
         
