@@ -161,9 +161,104 @@ class CalendarReader:
         logger.info(f"Retrieved total of {len(all_events)} events from calendar {calendar_id}")
         return all_events
     
-    def get_public_events(self, calendar_id: str) -> Optional[List[Dict]]:
+    @retry_with_backoff(max_retries=3, base_delay=1)
+    def get_calendar_instances(self, calendar_id: str, start_date: str, end_date: str) -> Optional[List[Dict]]:
+        """
+        Get calendar event instances including exceptions
+        Uses calendarView endpoint to get expanded occurrences
+        
+        Args:
+            calendar_id: ID of the calendar
+            start_date: ISO 8601 formatted start date
+            end_date: ISO 8601 formatted end date
+            
+        Returns:
+            List of event instances including exceptions
+        """
+        headers = self.auth.get_headers()
+        if not headers:
+            return None
+        
+        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/calendarView"
+        
+        params = {
+            'startDateTime': start_date,
+            'endDateTime': end_date,
+            '$select': 'id,subject,start,end,categories,location,isAllDay,showAs,type,seriesMasterId,isCancelled,originalStart,body,lastModifiedDateTime',
+            '$top': 250
+        }
+        
+        all_instances = []
+        
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            
+            if response.status_code == 401:
+                # Try refreshing token
+                if self.auth.refresh_access_token():
+                    headers = self.auth.get_headers()
+                    response = requests.get(url, headers=headers, params=params, timeout=30)
+                else:
+                    logger.error("Authentication failed during instance retrieval")
+                    return None
+            
+            if response.status_code == 200:
+                data = response.json()
+                instances = data.get('value', [])
+                all_instances.extend(instances)
+                
+                # Handle pagination if needed
+                next_link = data.get('@odata.nextLink')
+                while next_link:
+                    next_response = requests.get(next_link, headers=headers, timeout=30)
+                    if next_response.status_code == 200:
+                        next_data = next_response.json()
+                        all_instances.extend(next_data.get('value', []))
+                        next_link = next_data.get('@odata.nextLink')
+                    else:
+                        logger.warning(f"Failed to get next page of instances: {next_response.status_code}")
+                        break
+                
+                logger.info(f"Retrieved {len(all_instances)} instances from calendar {calendar_id}")
+                
+                # Log cancelled instances for debugging
+                cancelled_count = sum(1 for i in all_instances if i.get('isCancelled', False))
+                if cancelled_count > 0:
+                    logger.info(f"Found {cancelled_count} cancelled instances")
+                
+                return all_instances
+            else:
+                logger.error(f"Failed to get calendar instances: {response.status_code}")
+                logger.error(f"Response: {response.text}")
+                return None
+                
+        except requests.exceptions.Timeout:
+            logger.error("Request timeout while getting instances")
+            raise
+        except requests.exceptions.ConnectionError:
+            logger.error("Connection error while getting instances")
+            raise
+        except Exception as e:
+            logger.error(f"Error getting instances: {e}")
+            raise
+    
+    def get_public_events(self, calendar_id: str, include_instances: bool = False) -> Optional[List[Dict]]:
         """Get only public events from a calendar"""
-        all_events = self.get_calendar_events(calendar_id)
+        if include_instances and config.SYNC_OCCURRENCE_EXCEPTIONS:
+            # Use calendar instances for date range
+            import pytz
+            start_date = get_central_time()
+            end_date = start_date + timedelta(days=config.OCCURRENCE_SYNC_DAYS)
+            
+            # Convert to UTC for API
+            start_str = start_date.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+            end_str = end_date.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+            
+            logger.info(f"Getting calendar instances from {start_str} to {end_str}")
+            all_events = self.get_calendar_instances(calendar_id, start_str, end_str)
+        else:
+            all_events = self.get_calendar_events(calendar_id)
+            
         if not all_events:
             return None
         
@@ -174,7 +269,8 @@ class CalendarReader:
             'tentative': 0,
             'recurring_instances': 0,
             'past_events': 0,
-            'future_events': 0
+            'future_events': 0,
+            'cancelled': 0
         }
         
         from datetime import datetime, timedelta
@@ -182,6 +278,14 @@ class CalendarReader:
         future_cutoff = get_central_time() + timedelta(days=365)  # Don't sync events more than a year out
         
         for event in all_events:
+            # Check if cancelled (for instances)
+            if event.get('isCancelled', False):
+                stats['cancelled'] += 1
+                # Include cancelled events so we can delete them from target
+                if include_instances:
+                    public_events.append(event)
+                continue
+            
             # Check if public
             categories = event.get('categories', [])
             if 'Public' not in categories:
@@ -195,11 +299,12 @@ class CalendarReader:
                 logger.debug(f"Skipping tentative event: {event.get('subject')} (showAs: {show_as})")
                 continue
             
-            # Skip recurring instances (we handle series masters)
-            event_type = event.get('type', 'singleInstance')
-            if event_type == 'occurrence':
-                stats['recurring_instances'] += 1
-                continue
+            # For non-instance mode, skip recurring instances
+            if not include_instances:
+                event_type = event.get('type', 'singleInstance')
+                if event_type == 'occurrence':
+                    stats['recurring_instances'] += 1
+                    continue
             
             # Check event date
             try:
