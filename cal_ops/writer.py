@@ -166,6 +166,137 @@ class CalendarWriter:
             logger.error(f"❌ Error deleting event: {e}")
             raise
     
+    @retry_with_backoff(max_retries=3, base_delay=1)
+    def delete_occurrence(self, calendar_id: str, event_id: str, occurrence_date: str) -> bool:
+        """
+        Delete a specific occurrence of a recurring event
+        
+        Args:
+            calendar_id: ID of the calendar
+            event_id: ID of the recurring event series
+            occurrence_date: ISO 8601 date of the occurrence to delete
+            
+        Returns:
+            True if deletion successful, False otherwise
+        """
+        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
+            logger.error("PROTECTION: Attempted to delete occurrence from source calendar!")
+            return False
+        
+        headers = self.auth.get_headers()
+        if not headers:
+            return False
+        
+        # Add header to suppress notifications
+        headers['Prefer'] = 'outlook.timezone="UTC", outlook.send-notifications="false"'
+        
+        # For occurrences, we need to use the specific instance endpoint
+        # Format the occurrence date properly (remove timezone info if present)
+        clean_date = occurrence_date.replace('Z', '').replace('+00:00', '')
+        if 'T' in clean_date:
+            # Keep only the date and time part
+            clean_date = clean_date.split('.')[0]  # Remove milliseconds if present
+        
+        # The occurrence is identified by the original start datetime
+        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{event_id}/instances/{clean_date}"
+        
+        try:
+            response = requests.delete(url, headers=headers, timeout=30)
+            
+            if response.status_code == 401:
+                # Try refreshing token
+                if self.auth.refresh_access_token():
+                    headers = self.auth.get_headers()
+                    headers['Prefer'] = 'outlook.timezone="UTC", outlook.send-notifications="false"'
+                    response = requests.delete(url, headers=headers, timeout=30)
+                else:
+                    logger.error("Authentication failed during occurrence deletion")
+                    return False
+            
+            if response.status_code in [200, 204]:
+                logger.info(f"✅ Deleted occurrence on {occurrence_date} for event ID: {event_id[:8]}...")
+                return True
+            elif response.status_code == 404:
+                logger.warning(f"Occurrence not found for deletion: {event_id[:8]}... on {occurrence_date}")
+                return True  # Consider already deleted as success
+            else:
+                logger.error(f"❌ Failed to delete occurrence: {response.status_code}")
+                logger.error(f"Response: {response.text}")
+                return False
+        
+        except requests.exceptions.Timeout:
+            logger.error("Request timeout while deleting occurrence")
+            raise
+        except requests.exceptions.ConnectionError:
+            logger.error("Connection error while deleting occurrence")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error deleting occurrence: {e}")
+            raise
+    
+    @retry_with_backoff(max_retries=3, base_delay=1)
+    def update_occurrence(self, calendar_id: str, event_id: str, occurrence_date: str, update_data: Dict) -> bool:
+        """
+        Update a specific occurrence of a recurring event
+        
+        Args:
+            calendar_id: ID of the calendar
+            event_id: ID of the recurring event series
+            occurrence_date: ISO 8601 date of the occurrence to update
+            update_data: Event data to update with
+            
+        Returns:
+            True if update successful, False otherwise
+        """
+        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
+            logger.error("PROTECTION: Attempted to update occurrence in source calendar!")
+            return False
+        
+        headers = self.auth.get_headers()
+        if not headers:
+            return False
+        
+        # Format the occurrence date properly
+        clean_date = occurrence_date.replace('Z', '').replace('+00:00', '')
+        if 'T' in clean_date:
+            clean_date = clean_date.split('.')[0]  # Remove milliseconds if present
+        
+        # The occurrence is identified by the original start datetime
+        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{event_id}/instances/{clean_date}"
+        
+        # Prepare update data
+        prepared_data = self._prepare_event_data(update_data)
+        
+        try:
+            response = requests.patch(url, headers=headers, json=prepared_data, timeout=30)
+            
+            if response.status_code == 401:
+                # Try refreshing token
+                if self.auth.refresh_access_token():
+                    headers = self.auth.get_headers()
+                    response = requests.patch(url, headers=headers, json=prepared_data, timeout=30)
+                else:
+                    logger.error("Authentication failed during occurrence update")
+                    return False
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Updated occurrence on {occurrence_date} for event: {update_data.get('subject')}")
+                return True
+            else:
+                logger.error(f"❌ Failed to update occurrence: {response.status_code}")
+                logger.error(f"Response: {response.text}")
+                return False
+        
+        except requests.exceptions.Timeout:
+            logger.error("Request timeout while updating occurrence")
+            raise
+        except requests.exceptions.ConnectionError:
+            logger.error("Connection error while updating occurrence")
+            raise
+        except Exception as e:
+            logger.error(f"❌ Error updating occurrence: {e}")
+            raise
+    
     def _prepare_event_data(self, source_event: Dict) -> Dict:
         """Prepare event data for creation/update"""
         # Extract location for body content
