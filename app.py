@@ -477,6 +477,47 @@ def debug_calendars():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/events/<calendar_name>')
+def debug_events(calendar_name):
+    """Debug: Show events and signatures for a specific calendar"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get calendar ID
+        calendar_id = sync_engine.reader.find_calendar_id(calendar_name)
+        if not calendar_id:
+            return jsonify({"error": f"Calendar '{calendar_name}' not found"}), 404
+        
+        # Get all events (not just public)
+        all_events = sync_engine.reader.get_calendar_events(calendar_id)
+        
+        # Create debug info for each event
+        event_debug = []
+        for event in all_events:
+            signature = sync_engine._create_event_signature(event)
+            event_debug.append({
+                "subject": event.get('subject'),
+                "signature": signature,
+                "categories": event.get('categories', []),
+                "showAs": event.get('showAs'),
+                "type": event.get('type'),
+                "start": event.get('start', {}).get('dateTime', 'No date'),
+                "id": event.get('id', 'No ID')[:20] + "..."  # Truncate ID
+            })
+        
+        return jsonify({
+            "calendar": calendar_name,
+            "total_events": len(all_events),
+            "events": sorted(event_debug, key=lambda x: x['subject'] or '')
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 def signal_handler(sig, frame):
     """Handle shutdown signals"""
     logger.info("Received shutdown signal, cleaning up...")
