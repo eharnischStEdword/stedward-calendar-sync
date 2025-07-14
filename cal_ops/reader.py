@@ -273,6 +273,7 @@ class CalendarReader:
             'cancelled': 0
         }
         
+        from datetime import datetime, timedelta
         cutoff_date = get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
         future_cutoff = get_central_time() + timedelta(days=365)  # Don't sync events more than a year out
         
@@ -307,7 +308,15 @@ class CalendarReader:
             
             # Check event date
             try:
-                event_start = event.get('start', {}).get('dateTime', '')
+                # Handle both object and string formats for start field
+                start_field = event.get('start', {})
+                if isinstance(start_field, dict):
+                    event_start = start_field.get('dateTime', '')
+                elif isinstance(start_field, str):
+                    event_start = start_field
+                else:
+                    event_start = ''
+                    
                 if event_start:
                     event_date = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
                     
