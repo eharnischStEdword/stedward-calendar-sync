@@ -205,7 +205,7 @@ class CalendarReader:
             try:
                 event_start = event.get('start', {}).get('dateTime', '')
                 if event_start:
-                    event_date = datetime.fromisoformat(event_start.replace('Z', ''))
+                    event_date = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
                     
                     # Skip old events
                     if event_date < cutoff_date:
