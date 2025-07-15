@@ -198,30 +198,70 @@ class CalendarWriter:
             clean_date = clean_date.split('.')[0]  # Remove milliseconds if present
         
         # The occurrence is identified by the original start datetime
-        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{event_id}/instances/{clean_date}"
+        # Use the correct Microsoft Graph API endpoint for occurrences
+        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{event_id}/instances"
+        
+        # First, get the specific occurrence to find its ID
+        params = {
+            '$filter': f"start/dateTime eq '{clean_date}'",
+            '$select': 'id,start,subject'
+        }
         
         try:
-            response = requests.delete(url, headers=headers, timeout=30)
+            # Get the occurrence first
+            get_response = requests.get(url, headers=headers, params=params, timeout=30)
             
-            if response.status_code == 401:
+            if get_response.status_code == 401:
                 # Try refreshing token
                 if self.auth.refresh_access_token():
                     headers = self.auth.get_headers()
                     headers['Prefer'] = 'outlook.timezone="UTC", outlook.send-notifications="false"'
-                    response = requests.delete(url, headers=headers, timeout=30)
+                    get_response = requests.get(url, headers=headers, params=params, timeout=30)
                 else:
-                    logger.error("Authentication failed during occurrence deletion")
+                    logger.error("Authentication failed during occurrence lookup")
                     return False
             
-            if response.status_code in [200, 204]:
-                logger.info(f"✅ Deleted occurrence on {occurrence_date} for event ID: {event_id[:8]}...")
-                return True
-            elif response.status_code == 404:
-                logger.warning(f"Occurrence not found for deletion: {event_id[:8]}... on {occurrence_date}")
-                return True  # Consider already deleted as success
+            if get_response.status_code == 200:
+                data = get_response.json()
+                instances = data.get('value', [])
+                
+                if instances:
+                    # Found the occurrence, delete it using its ID
+                    occurrence_id = instances[0].get('id')
+                    if occurrence_id:
+                        delete_url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{occurrence_id}"
+                        
+                        delete_response = requests.delete(delete_url, headers=headers, timeout=30)
+                        
+                        if delete_response.status_code == 401:
+                            # Try refreshing token
+                            if self.auth.refresh_access_token():
+                                headers = self.auth.get_headers()
+                                headers['Prefer'] = 'outlook.timezone="UTC", outlook.send-notifications="false"'
+                                delete_response = requests.delete(delete_url, headers=headers, timeout=30)
+                            else:
+                                logger.error("Authentication failed during occurrence deletion")
+                                return False
+                        
+                        if delete_response.status_code in [200, 204]:
+                            logger.info(f"✅ Deleted occurrence on {occurrence_date} for event ID: {event_id[:8]}...")
+                            return True
+                        elif delete_response.status_code == 404:
+                            logger.warning(f"Occurrence not found for deletion: {event_id[:8]}... on {occurrence_date}")
+                            return True  # Consider already deleted as success
+                        else:
+                            logger.error(f"❌ Failed to delete occurrence: {delete_response.status_code}")
+                            logger.error(f"Response: {delete_response.text}")
+                            return False
+                    else:
+                        logger.error(f"❌ No occurrence ID found for {occurrence_date}")
+                        return False
+                else:
+                    logger.warning(f"Occurrence not found for deletion: {event_id[:8]}... on {occurrence_date}")
+                    return True  # Consider already deleted as success
             else:
-                logger.error(f"❌ Failed to delete occurrence: {response.status_code}")
-                logger.error(f"Response: {response.text}")
+                logger.error(f"❌ Failed to get occurrence: {get_response.status_code}")
+                logger.error(f"Response: {get_response.text}")
                 return False
         
         except requests.exceptions.Timeout:
