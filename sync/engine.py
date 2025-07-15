@@ -165,6 +165,18 @@ class SyncEngine:
             else:
                 # Execute sync operations
                 result = self._execute_sync_operations(target_id, to_add, to_update, to_delete)
+
+                # -----------------------------------------------------------------
+                # Handle cancelled instances of recurring events (delete-only)
+                # -----------------------------------------------------------------
+                if config.SYNC_OCCURRENCE_EXCEPTIONS:
+                    cancelled_deleted = self._handle_cancelled_occurrences(source_id, target_id)
+                    if cancelled_deleted:
+                        # Update result counters
+                        result['deleted'] += cancelled_deleted
+                        if 'operation_details' in result:
+                            result['operation_details']['delete_success'] += cancelled_deleted
+
                 
                 # Add instance operation counts
                 result['added'] += instance_ops['added']
@@ -503,6 +515,66 @@ class SyncEngine:
         """
         # Always return zeros since we're disabling this feature
         return {'added': 0, 'updated': 0, 'deleted': 0}
+
+    # ------------------------------------------------------------------
+    # NEW: Cancelled Occurrence Handling
+    # ------------------------------------------------------------------
+    def _handle_cancelled_occurrences(self, source_id: str, target_id: str) -> int:
+        """Delete occurrences that are cancelled on the master calendar.
+
+        Returns:
+            Number of occurrences successfully deleted on the target.
+        """
+        try:
+            window_start = (get_central_time() - timedelta(days=1)).astimezone(pytz.UTC)
+            window_end = (get_central_time() + timedelta(days=config.OCCURRENCE_SYNC_DAYS)).astimezone(pytz.UTC)
+
+            # ISO format strings expected by Graph
+            start_str = window_start.isoformat()
+            end_str = window_end.isoformat()
+
+            # Fetch expanded instances (occurrences) within the window
+            source_instances = self.reader.get_calendar_instances(source_id, start_str, end_str) or []
+            target_instances = self.reader.get_calendar_instances(target_id, start_str, end_str) or []
+
+            # Build quick-lookup sets keyed by subject + start for cancelled vs active occurrences
+            def _make_key(inst):
+                subj = (inst.get('subject') or '').strip().lower()
+                dt = inst.get('originalStart') or inst.get('start', {}).get('dateTime', '')
+                # Normalise datetime string (strip timezone markers to compare raw moment)
+                if dt.endswith('Z'):
+                    dt = dt[:-1]
+                return f"{subj}|{dt}"
+
+            cancelled_keys = {
+                _make_key(i) for i in source_instances if i.get('isCancelled', False)
+            }
+
+            # No cancelled occurrences? Fast exit
+            if not cancelled_keys:
+                return 0
+
+            deleted_count = 0
+            for inst in target_instances:
+                if inst.get('isCancelled', False):
+                    # Already cancelled; skip
+                    continue
+
+                key = _make_key(inst)
+                if key in cancelled_keys:
+                    series_id = inst.get('seriesMasterId')
+                    occ_date = inst.get('originalStart') or inst.get('start', {}).get('dateTime', '')
+                    if series_id and occ_date:
+                        if self.writer.delete_occurrence(target_id, series_id, occ_date):
+                            deleted_count += 1
+
+            if deleted_count:
+                logger.info(f"🗑️ Deleted {deleted_count} cancelled occurrences to keep calendars in sync")
+
+            return deleted_count
+        except Exception as e:
+            logger.error(f"Error while handling cancelled occurrences: {e}")
+            return 0
     
     def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
         """Check if an event needs updating - ENHANCED WITH DEBUG LOGGING"""
