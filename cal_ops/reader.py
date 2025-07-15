@@ -9,6 +9,7 @@ import logging
 import requests
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
+import pytz
 
 import config
 from utils.retry import retry_with_backoff
@@ -262,8 +263,15 @@ class CalendarReader:
         }
         
         from datetime import datetime, timedelta
-        cutoff_date = get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
-        future_cutoff = get_central_time() + timedelta(days=365)  # Don't sync events more than a year out
+        import pytz
+        
+        # Create timezone-aware cutoff dates
+        central_tz = pytz.timezone('America/Chicago')
+        now_central = get_central_time()
+        
+        # Convert to UTC for comparison
+        cutoff_date = (now_central - timedelta(days=config.SYNC_CUTOFF_DAYS)).astimezone(pytz.UTC)
+        future_cutoff = (now_central + timedelta(days=365)).astimezone(pytz.UTC)
         
         for event in all_events:
             # Skip cancelled events entirely
@@ -302,19 +310,33 @@ class CalendarReader:
                     event_start = ''
                     
                 if event_start:
-                    event_date = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
+                    # Parse the datetime string
+                    if event_start.endswith('Z'):
+                        event_date = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
+                    else:
+                        event_date = datetime.fromisoformat(event_start)
+                    
+                    # Ensure event_date is timezone-aware
+                    if event_date.tzinfo is None:
+                        # Assume UTC if no timezone info
+                        event_date = pytz.UTC.localize(event_date)
+                    
+                    # Convert to UTC for comparison if needed
+                    event_date_utc = event_date.astimezone(pytz.UTC)
                     
                     # Skip old events
-                    if event_date < cutoff_date:
+                    if event_date_utc < cutoff_date:
                         stats['past_events'] += 1
                         continue
                     
                     # Skip events too far in the future
-                    if event_date > future_cutoff:
+                    if event_date_utc > future_cutoff:
                         stats['future_events'] += 1
                         continue
             except Exception as e:
                 logger.warning(f"Could not parse date for event {event.get('subject')}: {e}")
+                # If we can't parse the date, include the event to be safe
+                pass
             
             public_events.append(event)
         
