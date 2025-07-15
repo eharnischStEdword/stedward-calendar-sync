@@ -185,94 +185,66 @@ class CalendarWriter:
         
         headers = self.auth.get_headers()
         if not headers:
+            logger.error("❌ No auth headers available for occurrence deletion")
             return False
         
-        # Add header to suppress notifications
-        headers['Prefer'] = 'outlook.timezone="UTC", outlook.send-notifications="false"'
-        
-        # For occurrences, we need to use the specific instance endpoint
-        # Format the occurrence date properly (remove timezone info if present)
-        clean_date = occurrence_date.replace('Z', '').replace('+00:00', '')
-        if 'T' in clean_date:
-            # Keep only the date and time part
-            clean_date = clean_date.split('.')[0]  # Remove milliseconds if present
-        
-        # The occurrence is identified by the original start datetime
-        # Use the correct Microsoft Graph API endpoint for occurrences
-        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{event_id}/instances"
-        
-        # First, get the specific occurrence to find its ID
-        params = {
-            '$filter': f"start/dateTime eq '{clean_date}'",
-            '$select': 'id,start,subject'
-        }
-        
         try:
-            # Get the occurrence first
-            get_response = requests.get(url, headers=headers, params=params, timeout=30)
+            # Parse the occurrence date to create a time window
+            from datetime import datetime, timedelta
+            import pytz
             
-            if get_response.status_code == 401:
-                # Try refreshing token
-                if self.auth.refresh_access_token():
-                    headers = self.auth.get_headers()
-                    headers['Prefer'] = 'outlook.timezone="UTC", outlook.send-notifications="false"'
-                    get_response = requests.get(url, headers=headers, params=params, timeout=30)
-                else:
-                    logger.error("Authentication failed during occurrence lookup")
-                    return False
+            # Parse the occurrence date (should be in UTC)
+            occurrence_dt = datetime.fromisoformat(occurrence_date.replace('Z', '+00:00'))
             
-            if get_response.status_code == 200:
-                data = get_response.json()
-                instances = data.get('value', [])
-                
-                if instances:
-                    # Found the occurrence, delete it using its ID
-                    occurrence_id = instances[0].get('id')
-                    if occurrence_id:
-                        delete_url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{occurrence_id}"
-                        
-                        delete_response = requests.delete(delete_url, headers=headers, timeout=30)
-                        
-                        if delete_response.status_code == 401:
-                            # Try refreshing token
-                            if self.auth.refresh_access_token():
-                                headers = self.auth.get_headers()
-                                headers['Prefer'] = 'outlook.timezone="UTC", outlook.send-notifications="false"'
-                                delete_response = requests.delete(delete_url, headers=headers, timeout=30)
-                            else:
-                                logger.error("Authentication failed during occurrence deletion")
-                                return False
-                        
-                        if delete_response.status_code in [200, 204]:
-                            logger.info(f"✅ Deleted occurrence on {occurrence_date} for event ID: {event_id[:8]}...")
-                            return True
-                        elif delete_response.status_code == 404:
-                            logger.warning(f"Occurrence not found for deletion: {event_id[:8]}... on {occurrence_date}")
-                            return True  # Consider already deleted as success
-                        else:
-                            logger.error(f"❌ Failed to delete occurrence: {delete_response.status_code}")
-                            logger.error(f"Response: {delete_response.text}")
-                            return False
-                    else:
-                        logger.error(f"❌ No occurrence ID found for {occurrence_date}")
-                        return False
-                else:
-                    logger.warning(f"Occurrence not found for deletion: {event_id[:8]}... on {occurrence_date}")
-                    return True  # Consider already deleted as success
-            else:
-                logger.error(f"❌ Failed to get occurrence: {get_response.status_code}")
-                logger.error(f"Response: {get_response.text}")
+            # Create a 1-hour window around the occurrence
+            start_window = (occurrence_dt - timedelta(hours=1)).isoformat()
+            end_window = (occurrence_dt + timedelta(hours=1)).isoformat()
+            
+            # First, get the specific occurrence using the time window
+            url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{event_id}/instances"
+            params = {
+                'startDateTime': start_window,
+                'endDateTime': end_window
+            }
+            
+            response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code != 200:
+                logger.error(f"❌ Failed to get occurrence: {response.status_code}")
+                logger.error(f"Response: {response.text}")
                 return False
-        
-        except requests.exceptions.Timeout:
-            logger.error("Request timeout while deleting occurrence")
-            raise
-        except requests.exceptions.ConnectionError:
-            logger.error("Connection error while deleting occurrence")
-            raise
+            
+            instances = response.json().get('value', [])
+            
+            # Find the occurrence that matches our target date
+            target_occurrence = None
+            for instance in instances:
+                instance_start = instance.get('start', {}).get('dateTime', '')
+                if instance_start.startswith(occurrence_date.split('T')[0]):  # Match date part
+                    target_occurrence = instance
+                    break
+            
+            if not target_occurrence:
+                logger.error(f"❌ Occurrence not found for date {occurrence_date}")
+                return False
+            
+            # Delete the occurrence using its ID
+            occurrence_id = target_occurrence['id']
+            delete_url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{occurrence_id}"
+            
+            delete_response = requests.delete(delete_url, headers=headers)
+            
+            if delete_response.status_code == 204:
+                logger.info(f"✅ Successfully deleted occurrence: {target_occurrence.get('subject', 'Unknown')} on {occurrence_date}")
+                return True
+            else:
+                logger.error(f"❌ Failed to delete occurrence: {delete_response.status_code}")
+                logger.error(f"Response: {delete_response.text}")
+                return False
+                
         except Exception as e:
-            logger.error(f"❌ Error deleting occurrence: {e}")
-            raise
+            logger.error(f"❌ Exception during occurrence deletion: {str(e)}")
+            return False
     
     @retry_with_backoff(max_retries=3, base_delay=1)
     def update_occurrence(self, calendar_id: str, event_id: str, occurrence_date: str, update_data: Dict) -> bool:
