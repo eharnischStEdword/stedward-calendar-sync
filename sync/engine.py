@@ -537,6 +537,10 @@ class SyncEngine:
             source_instances = self.reader.get_calendar_instances(source_id, start_str, end_str) or []
             target_instances = self.reader.get_calendar_instances(target_id, start_str, end_str) or []
 
+            logger.info(f"🔍 Checking for cancelled occurrences:")
+            logger.info(f"  Source instances: {len(source_instances)}")
+            logger.info(f"  Target instances: {len(target_instances)}")
+
             # Build quick-lookup sets keyed by subject + start for cancelled vs active occurrences
             def _make_key(inst):
                 subj = (inst.get('subject') or '').strip().lower()
@@ -546,15 +550,29 @@ class SyncEngine:
                     dt = dt[:-1]
                 return f"{subj}|{dt}"
 
+            # Find cancelled instances in source
             cancelled_keys = {
                 _make_key(i) for i in source_instances if i.get('isCancelled', False)
             }
 
+            # Find instances that exist in target but not in source (missing instances)
+            source_keys = {_make_key(i) for i in source_instances if not i.get('isCancelled', False)}
+            target_keys = {_make_key(i) for i in target_instances if not i.get('isCancelled', False)}
+            
+            # Instances that should be deleted (in target but not in source)
+            missing_in_source = target_keys - source_keys
+
+            logger.info(f"  Cancelled instances found: {len(cancelled_keys)}")
+            logger.info(f"  Missing in source: {len(missing_in_source)}")
+
             # No cancelled occurrences? Fast exit
-            if not cancelled_keys:
+            if not cancelled_keys and not missing_in_source:
+                logger.info("  No cancelled or missing instances found")
                 return 0
 
             deleted_count = 0
+
+            # Handle explicitly cancelled instances
             for inst in target_instances:
                 if inst.get('isCancelled', False):
                     # Already cancelled; skip
@@ -565,11 +583,26 @@ class SyncEngine:
                     series_id = inst.get('seriesMasterId')
                     occ_date = inst.get('originalStart') or inst.get('start', {}).get('dateTime', '')
                     if series_id and occ_date:
+                        logger.info(f"  🗑️ Deleting cancelled instance: {inst.get('subject')} on {occ_date}")
+                        if self.writer.delete_occurrence(target_id, series_id, occ_date):
+                            deleted_count += 1
+
+            # Handle missing instances (deleted from source but still in target)
+            for inst in target_instances:
+                if inst.get('isCancelled', False):
+                    continue
+
+                key = _make_key(inst)
+                if key in missing_in_source:
+                    series_id = inst.get('seriesMasterId')
+                    occ_date = inst.get('originalStart') or inst.get('start', {}).get('dateTime', '')
+                    if series_id and occ_date:
+                        logger.info(f"  🗑️ Deleting missing instance: {inst.get('subject')} on {occ_date}")
                         if self.writer.delete_occurrence(target_id, series_id, occ_date):
                             deleted_count += 1
 
             if deleted_count:
-                logger.info(f"🗑️ Deleted {deleted_count} cancelled occurrences to keep calendars in sync")
+                logger.info(f"🗑️ Deleted {deleted_count} cancelled/missing occurrences to keep calendars in sync")
 
             return deleted_count
         except Exception as e:
