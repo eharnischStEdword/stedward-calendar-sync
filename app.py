@@ -518,6 +518,98 @@ def debug_events(calendar_name):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/debug/duplicates')
+def debug_duplicates():
+    """Debug duplicate events in the target calendar"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get target calendar ID
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        if not target_id:
+            return jsonify({"error": "Target calendar not found"}), 404
+        
+        # Get all events from target calendar
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        if not target_events:
+            return jsonify({"error": "Could not retrieve target events"}), 500
+        
+        # Group events by subject to find duplicates
+        events_by_subject = {}
+        for event in target_events:
+            subject = event.get('subject', 'No Subject')
+            if subject not in events_by_subject:
+                events_by_subject[subject] = []
+            
+            events_by_subject[subject].append({
+                'id': event.get('id', 'No ID'),
+                'start': event.get('start', {}).get('dateTime', 'No date'),
+                'end': event.get('end', {}).get('dateTime', 'No date'),
+                'type': event.get('type', 'unknown'),
+                'categories': event.get('categories', []),
+                'signature': sync_engine._create_event_signature(event),
+                'created': event.get('createdDateTime', 'Unknown'),
+                'modified': event.get('lastModifiedDateTime', 'Unknown')
+            })
+        
+        # Find duplicates
+        duplicates = {}
+        for subject, events in events_by_subject.items():
+            if len(events) > 1:
+                # Sort by created date to identify which is newer
+                sorted_events = sorted(events, key=lambda x: x['created'])
+                duplicates[subject] = {
+                    'count': len(events),
+                    'events': sorted_events
+                }
+        
+        # Also check for signature collisions
+        signature_map = {}
+        signature_collisions = []
+        
+        for event in target_events:
+            sig = sync_engine._create_event_signature(event)
+            if sig in signature_map:
+                signature_collisions.append({
+                    'signature': sig,
+                    'event1': {
+                        'subject': signature_map[sig]['subject'],
+                        'id': signature_map[sig]['id'][:20] + '...',
+                        'created': signature_map[sig]['created']
+                    },
+                    'event2': {
+                        'subject': event.get('subject'),
+                        'id': event.get('id', '')[:20] + '...',
+                        'created': event.get('createdDateTime', 'Unknown')
+                    }
+                })
+            else:
+                signature_map[sig] = {
+                    'subject': event.get('subject'),
+                    'id': event.get('id', ''),
+                    'created': event.get('createdDateTime', 'Unknown')
+                }
+        
+        return jsonify({
+            'target_calendar': config.TARGET_CALENDAR,
+            'total_events': len(target_events),
+            'duplicates_by_subject': duplicates,
+            'duplicate_count': len(duplicates),
+            'signature_collisions': signature_collisions,
+            'signature_collision_count': len(signature_collisions),
+            'analysis_time': format_central_time(get_central_time())
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 def signal_handler(sig, frame):
     """Handle shutdown signals"""
     logger.info("Received shutdown signal, cleaning up...")
