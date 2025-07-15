@@ -32,7 +32,8 @@ DRY_RUN_MODE = False  # Set to True to test without making changes
 SYNC_CUTOFF_DAYS = 90  # Only sync events from last N days
 
 # Occurrence Exception Settings
-SYNC_OCCURRENCE_EXCEPTIONS = False  # Disable occurrence sync to prevent duplicates
+# Enable handling of cancelled instances (deletes only). Set to False to fully disable.
+SYNC_OCCURRENCE_EXCEPTIONS = True
 OCCURRENCE_SYNC_DAYS = 60  # How many days ahead to sync instances
 
 # Validation Settings - No longer needed with improved duplicate detection
