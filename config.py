@@ -35,8 +35,8 @@ SYNC_CUTOFF_DAYS = 90  # Only sync events from last N days
 SYNC_OCCURRENCE_EXCEPTIONS = False  # Disable occurrence sync to prevent duplicates
 OCCURRENCE_SYNC_DAYS = 60  # How many days ahead to sync instances
 
-# Validation Settings - Ignore warnings for events with same names but different times
-IGNORE_VALIDATION_WARNINGS = ['no_duplicates', 'event_integrity']
+# Validation Settings - No longer needed with improved duplicate detection
+# IGNORE_VALIDATION_WARNINGS = ['no_duplicates', 'event_integrity']
 
 # OAuth Scopes
 GRAPH_SCOPES = [
