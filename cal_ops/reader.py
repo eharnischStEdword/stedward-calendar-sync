@@ -244,20 +244,8 @@ class CalendarReader:
     
     def get_public_events(self, calendar_id: str, include_instances: bool = False) -> Optional[List[Dict]]:
         """Get only public events from a calendar"""
-        if include_instances and config.SYNC_OCCURRENCE_EXCEPTIONS:
-            # Use calendar instances for date range
-            import pytz
-            start_date = get_central_time()
-            end_date = start_date + timedelta(days=config.OCCURRENCE_SYNC_DAYS)
-            
-            # Convert to UTC for API
-            start_str = start_date.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
-            end_str = end_date.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
-            
-            logger.info(f"Getting calendar instances from {start_str} to {end_str}")
-            all_events = self.get_calendar_instances(calendar_id, start_str, end_str)
-        else:
-            all_events = self.get_calendar_events(calendar_id)
+        # ALWAYS use regular events to avoid duplicates, ignore include_instances parameter
+        all_events = self.get_calendar_events(calendar_id)
             
         if not all_events:
             return None
@@ -273,25 +261,14 @@ class CalendarReader:
             'cancelled': 0
         }
         
-        # Import pytz at the top for timezone handling
-        import pytz
-        
+        from datetime import datetime, timedelta
         cutoff_date = get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
         future_cutoff = get_central_time() + timedelta(days=365)  # Don't sync events more than a year out
         
-        # Ensure cutoff dates are timezone-aware
-        if cutoff_date.tzinfo is None:
-            cutoff_date = pytz.timezone('America/Chicago').localize(cutoff_date)
-        if future_cutoff.tzinfo is None:
-            future_cutoff = pytz.timezone('America/Chicago').localize(future_cutoff)
-        
         for event in all_events:
-            # Check if cancelled (for instances)
+            # Skip cancelled events entirely
             if event.get('isCancelled', False):
                 stats['cancelled'] += 1
-                # Include cancelled events so we can delete them from target
-                if include_instances:
-                    public_events.append(event)
                 continue
             
             # Check if public
@@ -307,12 +284,11 @@ class CalendarReader:
                 logger.debug(f"Skipping tentative event: {event.get('subject')} (showAs: {show_as})")
                 continue
             
-            # For non-instance mode, skip recurring instances
-            if not include_instances:
-                event_type = event.get('type', 'singleInstance')
-                if event_type == 'occurrence':
-                    stats['recurring_instances'] += 1
-                    continue
+            # ALWAYS skip recurring instances to avoid duplicates
+            event_type = event.get('type', 'singleInstance')
+            if event_type == 'occurrence':
+                stats['recurring_instances'] += 1
+                continue
             
             # Check event date
             try:
@@ -327,10 +303,6 @@ class CalendarReader:
                     
                 if event_start:
                     event_date = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
-                    
-                    # Ensure event_date is timezone-aware
-                    if event_date.tzinfo is None:
-                        event_date = pytz.UTC.localize(event_date)
                     
                     # Skip old events
                     if event_date < cutoff_date:
