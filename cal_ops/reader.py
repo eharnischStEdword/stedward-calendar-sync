@@ -273,8 +273,17 @@ class CalendarReader:
             'cancelled': 0
         }
         
+        # Import pytz at the top for timezone handling
+        import pytz
+        
         cutoff_date = get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
         future_cutoff = get_central_time() + timedelta(days=365)  # Don't sync events more than a year out
+        
+        # Ensure cutoff dates are timezone-aware
+        if cutoff_date.tzinfo is None:
+            cutoff_date = pytz.timezone('America/Chicago').localize(cutoff_date)
+        if future_cutoff.tzinfo is None:
+            future_cutoff = pytz.timezone('America/Chicago').localize(future_cutoff)
         
         for event in all_events:
             # Check if cancelled (for instances)
@@ -318,6 +327,10 @@ class CalendarReader:
                     
                 if event_start:
                     event_date = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
+                    
+                    # Ensure event_date is timezone-aware
+                    if event_date.tzinfo is None:
+                        event_date = pytz.UTC.localize(event_date)
                     
                     # Skip old events
                     if event_date < cutoff_date:
