@@ -20,7 +20,7 @@ CLIENT_SECRET = os.environ.get('CLIENT_SECRET', '')
 REDIRECT_URI = os.environ.get('REDIRECT_URI', "https://stedward-calendar-sync.onrender.com/auth/callback")
 
 # Application Settings
-SECRET_KEY = os.environ.get('SECRET_KEY', None)  # Will generate if None
+SECRET_KEY = os.environ.get('SECRET_KEY', secrets.token_hex(32))  # Flask session key
 PORT = int(os.environ.get('PORT', 5000))
 
 # Rate Limiting
@@ -45,5 +45,3 @@ GRAPH_SCOPES = [
     'User.Read',
     'offline_access'
 ]
-# Flask secret key for sessions (set this in Render environment)
-SECRET_KEY = os.environ.get('SECRET_KEY', secrets.token_hex(32))
