@@ -105,8 +105,8 @@ class SyncEngine:
             logger.info(f"Source calendar ID: {source_id}")
             logger.info(f"Target calendar ID: {target_id}")
             
-            # Get events - use instances if occurrence sync is enabled
-            source_events = self.reader.get_public_events(source_id, include_instances=config.SYNC_OCCURRENCE_EXCEPTIONS)
+            # Get events - ALWAYS use regular events, not instances to avoid duplicates
+            source_events = self.reader.get_public_events(source_id, include_instances=False)
             target_events = self.reader.get_calendar_events(target_id)
             
             if source_events is None or target_events is None:
@@ -122,18 +122,13 @@ class SyncEngine:
             target_map = self._build_event_map(target_events)
             logger.info(f"Built target map with {len(target_map)} unique events")
             
-            # Determine operations needed
+            # Determine operations needed - don't check instances to avoid duplicates
             to_add, to_update, to_delete = self._determine_sync_operations(
-                source_events, target_events, target_map, check_instances=config.SYNC_OCCURRENCE_EXCEPTIONS
+                source_events, target_events, target_map, check_instances=False
             )
             
-            # If occurrence sync is enabled, also sync recurring exceptions
+            # Skip instance sync to prevent duplicates
             instance_ops = {'added': 0, 'updated': 0, 'deleted': 0}
-            if config.SYNC_OCCURRENCE_EXCEPTIONS:
-                logger.info("🔄 Syncing recurring event exceptions...")
-                instance_result = self._sync_recurring_exceptions(source_id, target_id)
-                instance_ops = instance_result
-                logger.info(f"Instance sync: {instance_ops}")
             
             logger.info(f"📋 SYNC PLAN: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
             
@@ -179,7 +174,7 @@ class SyncEngine:
                 # Validate sync result if successful
                 if result.get('success') and not config.DRY_RUN_MODE:
                     logger.info("Validating sync results...")
-                    fresh_source = self.reader.get_public_events(source_id)
+                    fresh_source = self.reader.get_public_events(source_id, include_instances=False)
                     fresh_target = self.reader.get_calendar_events(target_id)
                     
                     if fresh_source and fresh_target:
@@ -409,28 +404,8 @@ class SyncEngine:
             return signature
         
         elif event_type == 'occurrence':
-            # Handle occurrences - don't skip them anymore
-            series_master_id = event.get('seriesMasterId', '')
-            original_start_field = event.get('originalStart', {})
-            
-            # Handle originalStart being either a string or a dict
-            if isinstance(original_start_field, dict):
-                original_start = original_start_field.get('dateTime', '')
-            else:
-                original_start = str(original_start_field) if original_start_field else ''
-            
-            is_cancelled = event.get('isCancelled', False)
-            
-            # Normalize the original start time
-            original_start_normalized = self._normalize_datetime(original_start)
-            
-            # Create signature that includes series and occurrence info
-            signature = f"occurrence:{subject}:{series_master_id}:{original_start_normalized}"
-            if is_cancelled:
-                signature = f"cancelled-{signature}"
-            
-            logger.debug(f"Occurrence signature: {signature} (cancelled: {is_cancelled})")
-            return signature
+            # Skip occurrences entirely when not syncing them
+            return f"skip:occurrence:{subject}"
         
         # For single events - include time to distinguish events on same day
         if 'T' in start_normalized:
@@ -450,8 +425,8 @@ class SyncEngine:
         for event in events:
             signature = self._create_event_signature(event)
             
-            # Don't skip occurrences when occurrence sync is enabled
-            if signature.startswith("skip:occurrence:") and not config.SYNC_OCCURRENCE_EXCEPTIONS:
+            # Skip occurrences entirely
+            if signature.startswith("skip:occurrence:"):
                 continue
             
             if signature in event_map:
@@ -489,15 +464,8 @@ class SyncEngine:
             signature = self._create_event_signature(source_event)
             subject = source_event.get('subject', 'No subject')
             
-            # Handle cancelled occurrences when instance sync is enabled
-            if check_instances and signature.startswith("cancelled-occurrence:"):
-                # This is a cancelled occurrence - we need to delete it from target
-                # Look for non-cancelled version in target
-                non_cancelled_sig = signature.replace("cancelled-", "")
-                if non_cancelled_sig in remaining_targets:
-                    logger.debug(f"🗑️ Cancelled occurrence to DELETE: {subject}")
-                    # Add to delete list (handled below)
-                    # Don't remove from remaining_targets yet
+            # Skip occurrences entirely
+            if signature.startswith("skip:occurrence:"):
                 continue
             
             if signature in remaining_targets:
@@ -517,30 +485,8 @@ class SyncEngine:
                 logger.debug(f"➕ ADD needed: {subject} (signature: {signature})")
                 to_add.append(source_event)
         
-        # Handle deletions
-        to_delete = []
-        
-        # If instance sync is enabled, also check for cancelled occurrences
-        if check_instances:
-            # Build list of cancelled occurrence signatures from source
-            cancelled_sigs = set()
-            for event in source_events:
-                sig = self._create_event_signature(event)
-                if sig.startswith("cancelled-occurrence:"):
-                    # Extract the non-cancelled signature
-                    non_cancelled_sig = sig.replace("cancelled-", "")
-                    cancelled_sigs.add(non_cancelled_sig)
-            
-            # Check remaining targets
-            for sig, event in list(remaining_targets.items()):
-                if sig in cancelled_sigs:
-                    # This occurrence was cancelled in source, delete from target
-                    logger.debug(f"🗑️ Cancelled occurrence to delete: {event.get('subject')}")
-                    to_delete.append(event)
-                    del remaining_targets[sig]
-        
         # Remaining events in target should be deleted (not in source anymore)
-        to_delete.extend(list(remaining_targets.values()))
+        to_delete = list(remaining_targets.values())
         
         logger.info(f"📊 Operation summary:")
         logger.info(f"  - {len(to_add)} events to ADD")
@@ -552,103 +498,11 @@ class SyncEngine:
     
     def _sync_recurring_exceptions(self, source_id: str, target_id: str) -> Dict:
         """
-        Sync exceptions for recurring events
+        Sync exceptions for recurring events - DISABLED to prevent duplicates
         Returns dict with counts of instance operations
         """
-        if not config.SYNC_OCCURRENCE_EXCEPTIONS:
-            return {'added': 0, 'updated': 0, 'deleted': 0}
-        
-        try:
-            # Get instances for the configured date range
-            start_date = get_central_time()
-            end_date = start_date + timedelta(days=config.OCCURRENCE_SYNC_DAYS)
-            
-            # Convert to UTC for API
-            start_str = start_date.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
-            end_str = end_date.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
-            
-            logger.info(f"Getting recurring event exceptions from {start_str} to {end_str}")
-            
-            # Get instances from both calendars
-            source_instances = self.reader.get_calendar_instances(source_id, start_str, end_str)
-            target_instances = self.reader.get_calendar_instances(target_id, start_str, end_str)
-            
-            if not source_instances or not target_instances:
-                logger.warning("Could not retrieve calendar instances for exception sync")
-                return {'added': 0, 'updated': 0, 'deleted': 0}
-            
-            # Filter for public events in source
-            public_source_instances = []
-            for instance in source_instances:
-                categories = instance.get('categories', [])
-                show_as = instance.get('showAs', 'busy')
-                
-                # Include if Public and Busy, or if it's cancelled (to sync deletions)
-                if ('Public' in categories and show_as == 'busy') or instance.get('isCancelled', False):
-                    public_source_instances.append(instance)
-            
-            logger.info(f"Found {len(public_source_instances)} public source instances (including cancelled)")
-            
-            # Build maps for comparison
-            source_instance_map = {}
-            for instance in public_source_instances:
-                sig = self._create_event_signature(instance)
-                source_instance_map[sig] = instance
-            
-            target_instance_map = {}
-            for instance in target_instances:
-                sig = self._create_event_signature(instance)
-                target_instance_map[sig] = instance
-            
-            # Find operations needed
-            instance_ops = {'added': 0, 'updated': 0, 'deleted': 0}
-            
-            # Check for cancelled instances that need deletion
-            for sig, source_instance in source_instance_map.items():
-                if sig.startswith("cancelled-occurrence:"):
-                    # Look for the non-cancelled version in target
-                    non_cancelled_sig = sig.replace("cancelled-", "")
-                    if non_cancelled_sig in target_instance_map:
-                        target_instance = target_instance_map[non_cancelled_sig]
-                        # Delete this occurrence from target
-                        event_id = target_instance.get('id')
-                        original_start = source_instance.get('originalStart', {}).get('dateTime', '')
-                        
-                        if not config.DRY_RUN_MODE:
-                            if self.writer.delete_occurrence(target_id, event_id, original_start):
-                                instance_ops['deleted'] += 1
-                                logger.info(f"Deleted cancelled occurrence: {source_instance.get('subject')}")
-                            else:
-                                logger.error(f"Failed to delete cancelled occurrence: {source_instance.get('subject')}")
-                        else:
-                            instance_ops['deleted'] += 1
-                            logger.info(f"DRY RUN: Would delete cancelled occurrence: {source_instance.get('subject')}")
-            
-            # Check for modified occurrences
-            for sig, source_instance in source_instance_map.items():
-                if not sig.startswith("cancelled-") and sig.startswith("occurrence:"):
-                    if sig in target_instance_map:
-                        # Check if update needed
-                        target_instance = target_instance_map[sig]
-                        if self._needs_update(source_instance, target_instance):
-                            event_id = target_instance.get('id')
-                            original_start = source_instance.get('originalStart', {}).get('dateTime', '')
-                            
-                            if not config.DRY_RUN_MODE:
-                                if self.writer.update_occurrence(target_id, event_id, original_start, source_instance):
-                                    instance_ops['updated'] += 1
-                                    logger.info(f"Updated modified occurrence: {source_instance.get('subject')}")
-                                else:
-                                    logger.error(f"Failed to update occurrence: {source_instance.get('subject')}")
-                            else:
-                                instance_ops['updated'] += 1
-                                logger.info(f"DRY RUN: Would update occurrence: {source_instance.get('subject')}")
-            
-            return instance_ops
-            
-        except Exception as e:
-            logger.error(f"Error syncing recurring exceptions: {e}")
-            return {'added': 0, 'updated': 0, 'deleted': 0}
+        # Always return zeros since we're disabling this feature
+        return {'added': 0, 'updated': 0, 'deleted': 0}
     
     def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
         """Check if an event needs updating - ENHANCED WITH DEBUG LOGGING"""
