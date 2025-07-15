@@ -166,22 +166,104 @@ class SyncValidator:
         source_events: List[Dict],
         target_events: List[Dict]
     ) -> Tuple[str, bool, str]:
-        """Check for duplicate events in target"""
-        # Create signatures for all events
-        signatures = defaultdict(list)
+        """
+        Check for TRUE duplicate events in target (same subject, date, time, location)
+        This is the IMPROVED version that only flags real duplicates
+        """
+        # Create detailed event info for each event
+        event_details = []
         
         for event in target_events:
-            sig = self._create_event_signature(event)
-            signatures[sig].append(event.get('subject', 'Unknown'))
+            # Get normalized subject
+            subject = event.get('subject', 'Unknown').strip()
+            
+            # Get start datetime
+            start_str = event.get('start', {}).get('dateTime', '')
+            if not start_str:
+                continue
+                
+            # Get location from body
+            location = ''
+            body = event.get('body', {})
+            if isinstance(body, dict):
+                body_content = body.get('content', '')
+                if 'Location:' in body_content:
+                    import re
+                    location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
+                    if location_match:
+                        location = location_match.group(1).strip()
+            
+            event_details.append({
+                'id': event.get('id'),
+                'subject': subject,
+                'start': start_str,
+                'location': location,
+                'type': event.get('type', 'singleInstance')
+            })
         
-        duplicates = {sig: subjects for sig, subjects in signatures.items() if len(subjects) > 1}
+        # Group events by subject + datetime + location
+        true_duplicates = defaultdict(list)
         
-        passed = len(duplicates) == 0
-        details = f"Found {len(duplicates)} duplicate event groups"
+        for event in event_details:
+            # Create a key that represents true uniqueness
+            # Round time to nearest 5 minutes to catch slight variations
+            try:
+                dt = datetime.fromisoformat(event['start'].replace('Z', '+00:00'))
+                # Round to 5 minute intervals
+                minutes = dt.minute
+                rounded_minutes = 5 * round(minutes / 5)
+                if rounded_minutes == 60:
+                    dt = dt.replace(minute=0) + timedelta(hours=1)
+                else:
+                    dt = dt.replace(minute=rounded_minutes)
+                
+                time_key = dt.strftime('%Y-%m-%d %H:%M')
+            except:
+                time_key = event['start']
+            
+            # Key includes subject + rounded time + location
+            duplicate_key = f"{event['subject'].lower()}|{time_key}|{event['location'].lower()}"
+            true_duplicates[duplicate_key].append(event)
         
-        if duplicates:
-            first_dup = list(duplicates.values())[0]
-            details += f": '{first_dup[0]}' appears {len(first_dup)} times"
+        # Find only TRUE duplicates (multiple events with same key)
+        problematic_duplicates = {}
+        duplicate_count = 0
+        
+        for key, events in true_duplicates.items():
+            if len(events) > 1:
+                # These are TRUE duplicates - same subject, same time (within 5 min), same location
+                subject = events[0]['subject']
+                problematic_duplicates[subject] = {
+                    'count': len(events),
+                    'events': events
+                }
+                duplicate_count += 1
+        
+        passed = duplicate_count == 0
+        details = f"Found {duplicate_count} TRUE duplicate event groups"
+        
+        if problematic_duplicates:
+            # Report the first duplicate group
+            first_subject = list(problematic_duplicates.keys())[0]
+            first_group = problematic_duplicates[first_subject]
+            first_event = first_group['events'][0]
+            
+            details += f": '{first_subject}' at {first_event['start'][:16]}"
+            if first_event['location']:
+                details += f" in {first_event['location']}"
+            details += f" appears {first_group['count']} times"
+            
+            if duplicate_count > 1:
+                details += f" (and {duplicate_count - 1} other duplicate groups)"
+        
+        # Log info about events with same name but different times (these are OK)
+        same_name_different_time = defaultdict(set)
+        for event in event_details:
+            same_name_different_time[event['subject']].add(event['start'][:10])  # Just the date
+        
+        multi_date_events = {subj: dates for subj, dates in same_name_different_time.items() if len(dates) > 1}
+        if multi_date_events:
+            logger.info(f"Events appearing on multiple dates (this is normal): {list(multi_date_events.keys())[:5]}")
         
         return "no_duplicates", passed, details
     
