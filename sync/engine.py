@@ -411,7 +411,14 @@ class SyncEngine:
         elif event_type == 'occurrence':
             # Handle occurrences - don't skip them anymore
             series_master_id = event.get('seriesMasterId', '')
-            original_start = event.get('originalStart', {}).get('dateTime', '')
+            original_start_field = event.get('originalStart', {})
+            
+            # Handle originalStart being either a string or a dict
+            if isinstance(original_start_field, dict):
+                original_start = original_start_field.get('dateTime', '')
+            else:
+                original_start = str(original_start_field) if original_start_field else ''
+            
             is_cancelled = event.get('isCancelled', False)
             
             # Normalize the original start time
