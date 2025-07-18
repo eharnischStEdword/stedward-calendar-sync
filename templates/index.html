@@ -636,6 +636,19 @@
                     icon.textContent = '🔄';
                     labelEl.textContent = 'Sync Now';
                 }
+            } else if (buttonId === 'scheduler-toggle-btn') {
+                const icon = document.getElementById('scheduler-icon');
+                const labelEl = document.getElementById('scheduler-label');
+                
+                if (loading) {
+                    btn.disabled = true;
+                    icon.innerHTML = '<div class="spinner"></div>';
+                    labelEl.textContent = label || 'Toggling...';
+                } else {
+                    btn.disabled = false;
+                    // Don't reset the icon and label here - let toggleScheduler() handle it
+                    // based on the actual scheduler state
+                }
             } else {
                 btn.disabled = loading;
                 if (loading) {
@@ -748,38 +761,44 @@
             // Update auth status
             const authDot = document.getElementById('auth-dot');
             const authText = document.getElementById('auth-text');
-            if (status.authenticated) {
-                authDot.className = 'status-dot success';
-                authText.textContent = 'Connected';
-            } else {
-                authDot.className = 'status-dot error';
-                authText.textContent = 'Disconnected';
+            if (authDot && authText) {
+                if (status.authenticated) {
+                    authDot.className = 'status-dot success';
+                    authText.textContent = 'Connected';
+                } else {
+                    authDot.className = 'status-dot error';
+                    authText.textContent = 'Disconnected';
+                }
             }
 
             // Update sync status
             const syncDot = document.getElementById('sync-dot');
             const syncText = document.getElementById('sync-text');
             
-            if (status.sync_in_progress) {
-                syncDot.className = 'status-dot warning';
-                syncText.textContent = 'Syncing...';
-            } else if (status.last_sync_result && status.last_sync_result.success) {
-                syncDot.className = 'status-dot success';
-                syncText.textContent = 'Ready';
-            } else if (status.last_sync_result && !status.last_sync_result.success) {
-                syncDot.className = 'status-dot error';
-                syncText.textContent = 'Error';
-            } else {
-                syncDot.className = 'status-dot warning';
-                syncText.textContent = 'Never Synced';
+            if (syncDot && syncText) {
+                if (status.sync_in_progress) {
+                    syncDot.className = 'status-dot warning';
+                    syncText.textContent = 'Syncing...';
+                } else if (status.last_sync_result && status.last_sync_result.success) {
+                    syncDot.className = 'status-dot success';
+                    syncText.textContent = 'Ready';
+                } else if (status.last_sync_result && !status.last_sync_result.success) {
+                    syncDot.className = 'status-dot error';
+                    syncText.textContent = 'Error';
+                } else {
+                    syncDot.className = 'status-dot warning';
+                    syncText.textContent = 'Never Synced';
+                }
             }
 
             // Update last sync time using the pre-formatted display string
             const lastSyncElement = document.getElementById('last-sync-time');
-            if (status.last_sync_time_display) {
-                lastSyncElement.textContent = status.last_sync_time_display;
-            } else {
-                lastSyncElement.textContent = 'Never';
+            if (lastSyncElement) {
+                if (status.last_sync_time_display) {
+                    lastSyncElement.textContent = status.last_sync_time_display;
+                } else {
+                    lastSyncElement.textContent = 'Never';
+                }
             }
         }
 
@@ -806,8 +825,9 @@
                     triggerSuccessAnimations();
                     
                     // Update last sync time if provided
-                    if (result.last_sync_time_display) {
-                        document.getElementById('last-sync-time').textContent = result.last_sync_time_display;
+                    const lastSyncElement = document.getElementById('last-sync-time');
+                    if (lastSyncElement && result.last_sync_time_display) {
+                        lastSyncElement.textContent = result.last_sync_time_display;
                     }
                 } else {
                     showMessage('⚠️ Sync completed with issues: ' + (result.message || result.error), 'warning');
@@ -843,16 +863,20 @@
                     const icon = document.getElementById('scheduler-icon');
                     const label = document.getElementById('scheduler-label');
                     
-                    if (result.paused) {
-                        icon.textContent = '▶️';
-                        label.textContent = 'Resume Syncing';
-                        document.getElementById('scheduler-toggle-btn').classList.add('paused');
-                        showMessage('⏸️ Automatic syncing paused', 'warning');
+                    if (icon && label) {
+                        if (result.paused) {
+                            icon.textContent = '▶️';
+                            label.textContent = 'Resume Syncing';
+                            document.getElementById('scheduler-toggle-btn').classList.add('paused');
+                            showMessage('⏸️ Automatic syncing paused', 'warning');
+                        } else {
+                            icon.textContent = '⏸️';
+                            label.textContent = 'Pause Syncing';
+                            document.getElementById('scheduler-toggle-btn').classList.remove('paused');
+                            showMessage('▶️ Automatic syncing resumed', 'success');
+                        }
                     } else {
-                        icon.textContent = '⏸️';
-                        label.textContent = 'Pause Syncing';
-                        document.getElementById('scheduler-toggle-btn').classList.remove('paused');
-                        showMessage('▶️ Automatic syncing resumed', 'success');
+                        showMessage('⚠️ UI update failed - page may need refresh', 'warning');
                     }
                 } else {
                     showMessage('⚠️ Toggle failed: ' + (result.message || result.error), 'warning');
@@ -918,14 +942,16 @@
                 const icon = document.getElementById('scheduler-icon');
                 const label = document.getElementById('scheduler-label');
                 
-                if (status.scheduler_paused) {
-                    icon.textContent = '▶️';
-                    label.textContent = 'Resume Syncing';
-                    document.getElementById('scheduler-toggle-btn').classList.add('paused');
-                } else {
-                    icon.textContent = '⏸️';
-                    label.textContent = 'Pause Syncing';
-                    document.getElementById('scheduler-toggle-btn').classList.remove('paused');
+                if (icon && label) {
+                    if (status.scheduler_paused) {
+                        icon.textContent = '▶️';
+                        label.textContent = 'Resume Syncing';
+                        document.getElementById('scheduler-toggle-btn').classList.add('paused');
+                    } else {
+                        icon.textContent = '⏸️';
+                        label.textContent = 'Pause Syncing';
+                        document.getElementById('scheduler-toggle-btn').classList.remove('paused');
+                    }
                 }
             } catch (error) {
                 console.error('Status load failed:', error);
