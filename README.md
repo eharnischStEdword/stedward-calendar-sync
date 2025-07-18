@@ -116,6 +116,18 @@ This document outlines the comprehensive improvements made to the St. Edward Cal
 
 ### 6. **Operational Improvements**
 
+#### Scheduler Control
+- **Location**: Admin interface and `/scheduler/toggle` endpoint
+- **Features**:
+  - Pause/resume automatic syncing with one click
+  - Visual indicator when syncing is paused
+  - State persistence across server restarts
+  - Manual sync still works when paused
+- **Use Cases**:
+  - Emergency stop during issues
+  - Maintenance windows
+  - Troubleshooting isolation
+
 #### Health Checks
 - **Endpoints**:
   - `/health` - Basic health status
@@ -146,6 +158,7 @@ This document outlines the comprehensive improvements made to the St. Edward Cal
 ### Configuration
 - `GET /enable-dry-run` - Enable dry run mode
 - `GET /disable-dry-run` - Disable dry run mode
+- `POST /scheduler/toggle` - Toggle automatic syncing pause/resume
 
 ## Usage Examples
 
