@@ -13,6 +13,7 @@ import traceback
 import signal
 import sys
 import config
+import json
 from datetime import datetime
 from flask import Flask, render_template, jsonify, redirect, session, request
 
@@ -30,10 +31,35 @@ app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
+# State persistence functions
+def save_scheduler_state(paused: bool):
+    """Save scheduler pause state to file"""
+    try:
+        state_data = {"scheduler_paused": paused}
+        with open('scheduler_state.json', 'w') as f:
+            json.dump(state_data, f)
+        logger.info(f"Scheduler state saved: paused={paused}")
+    except Exception as e:
+        logger.error(f"Failed to save scheduler state: {e}")
+
+def load_scheduler_state() -> bool:
+    """Load scheduler pause state from file"""
+    try:
+        if os.path.exists('scheduler_state.json'):
+            with open('scheduler_state.json', 'r') as f:
+                state_data = json.load(f)
+                paused = state_data.get('scheduler_paused', False)
+                logger.info(f"Scheduler state loaded: paused={paused}")
+                return paused
+    except Exception as e:
+        logger.error(f"Failed to load scheduler state: {e}")
+    return False
+
 # Global components - will be initialized after first successful load
 sync_engine = None
 scheduler = None
 auth_manager = None
+scheduler_paused = load_scheduler_state()  # Load state on startup
 
 def initialize_components():
     """Initialize sync components safely"""
@@ -61,8 +87,11 @@ def initialize_components():
         try:
             from sync.scheduler import SyncScheduler
             scheduler = SyncScheduler(sync_engine)
-            scheduler.start()
-            logger.info("✅ Scheduler started")
+            if not scheduler_paused:
+                scheduler.start()
+                logger.info("✅ Scheduler started")
+            else:
+                logger.info("✅ Scheduler initialized but paused")
         except Exception as e:
             logger.error(f"Failed to initialize scheduler: {e}")
             # Continue without scheduler for now
@@ -122,6 +151,7 @@ def get_status():
             "last_sync_time_display": "Never",
             "last_sync_result": {"success": False, "message": "Not synced yet"},
             "scheduler_running": scheduler.is_running() if scheduler else False,
+            "scheduler_paused": scheduler_paused,
             "dry_run_mode": getattr(config, 'DRY_RUN_MODE', False),
             "circuit_breaker_state": "closed",
             "rate_limit_remaining": 20,
@@ -423,6 +453,41 @@ def restart_scheduler():
         else:
             return jsonify({"error": "Sync engine not available"}), 500
             
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/scheduler/toggle', methods=['POST'])
+def toggle_scheduler():
+    """Toggle scheduler pause/resume"""
+    global scheduler, scheduler_paused
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not scheduler:
+            return jsonify({"error": "Scheduler not initialized"}), 500
+        
+        # Toggle the pause state
+        scheduler_paused = not scheduler_paused
+        save_scheduler_state(scheduler_paused) # Save state after toggle
+        
+        if scheduler_paused:
+            # Pause the scheduler
+            scheduler.stop()
+            message = "Scheduler paused - automatic syncing stopped"
+            logger.info(f"🔄 Scheduler paused at {format_central_time(get_central_time())}")
+        else:
+            # Resume the scheduler
+            scheduler.start()
+            message = "Scheduler resumed - automatic syncing restarted"
+            logger.info(f"🔄 Scheduler resumed at {format_central_time(get_central_time())}")
+        
+        return jsonify({
+            "message": message,
+            "paused": scheduler_paused,
+            "running": scheduler.is_running() if not scheduler_paused else False
+        })
+        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
