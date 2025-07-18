@@ -285,6 +285,20 @@
             background: #c0392b;
         }
 
+        .action-btn.paused {
+            background: #DAAA00;
+            animation: pulse-warning 2s infinite;
+        }
+
+        .action-btn.paused:hover:not(:disabled) {
+            background: #b89400;
+        }
+
+        @keyframes pulse-warning {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(218, 170, 0, 0.7); }
+            50% { box-shadow: 0 0 0 10px rgba(218, 170, 0, 0); }
+        }
+
         .spinner {
             width: 20px;
             height: 20px;
@@ -480,6 +494,11 @@
                     <button class="action-btn" onclick="syncNow()" id="sync-btn">
                         <span id="sync-icon">🔄</span>
                         <span id="sync-label">Sync Now</span>
+                    </button>
+                    
+                    <button class="action-btn secondary" onclick="toggleScheduler()" id="scheduler-toggle-btn">
+                        <span id="scheduler-icon">⏸️</span>
+                        <span id="scheduler-label">Pause Syncing</span>
                     </button>
                     
                     <button class="action-btn secondary" onclick="showStatus()" id="status-btn">
@@ -805,6 +824,51 @@
             }
         }
 
+        async function toggleScheduler() {
+            if (isOperationInProgress) return;
+            
+            isOperationInProgress = true;
+            setButtonState('scheduler-toggle-btn', true, 'Toggling...');
+            
+            try {
+                const response = await fetch('/scheduler/toggle', { 
+                    method: 'POST',
+                    credentials: 'same-origin'
+                });
+                
+                const result = await response.json();
+                
+                if (result.paused !== undefined) {
+                    // Update button state
+                    const icon = document.getElementById('scheduler-icon');
+                    const label = document.getElementById('scheduler-label');
+                    
+                    if (result.paused) {
+                        icon.textContent = '▶️';
+                        label.textContent = 'Resume Syncing';
+                        document.getElementById('scheduler-toggle-btn').classList.add('paused');
+                        showMessage('⏸️ Automatic syncing paused', 'warning');
+                    } else {
+                        icon.textContent = '⏸️';
+                        label.textContent = 'Pause Syncing';
+                        document.getElementById('scheduler-toggle-btn').classList.remove('paused');
+                        showMessage('▶️ Automatic syncing resumed', 'success');
+                    }
+                } else {
+                    showMessage('⚠️ Toggle failed: ' + (result.message || result.error), 'warning');
+                }
+                
+            } catch (error) {
+                showMessage('❌ Network error: ' + error.message, 'error');
+            } finally {
+                setButtonState('scheduler-toggle-btn', false);
+                isOperationInProgress = false;
+                
+                // Refresh status
+                setTimeout(loadStatus, 1000);
+            }
+        }
+
         async function showStatus() {
             if (isOperationInProgress) return;
             
@@ -818,6 +882,11 @@
                 let statusMsg = `📊 System Status:\n`;
                 statusMsg += `• Authentication: ${status.authenticated ? '✅' : '❌'}\n`;
                 statusMsg += `• Scheduler: ${status.scheduler_running ? '✅ Running' : '❌ Stopped'}\n`;
+                if (status.scheduler_paused) {
+                    statusMsg += `• Auto-Sync: ⏸️ Paused\n`;
+                } else {
+                    statusMsg += `• Auto-Sync: ▶️ Active\n`;
+                }
                 statusMsg += `• Rate Limit: ${status.rate_limit_remaining || 0} syncs remaining\n`;
                 statusMsg += `• Total Syncs: ${status.total_syncs || 0}\n`;
                 if (status.current_time) {
@@ -844,6 +913,20 @@
                 const response = await fetch('/status');
                 const status = await response.json();
                 updateStatusDots(status);
+                
+                // Update scheduler toggle button state
+                const icon = document.getElementById('scheduler-icon');
+                const label = document.getElementById('scheduler-label');
+                
+                if (status.scheduler_paused) {
+                    icon.textContent = '▶️';
+                    label.textContent = 'Resume Syncing';
+                    document.getElementById('scheduler-toggle-btn').classList.add('paused');
+                } else {
+                    icon.textContent = '⏸️';
+                    label.textContent = 'Pause Syncing';
+                    document.getElementById('scheduler-toggle-btn').classList.remove('paused');
+                }
             } catch (error) {
                 console.error('Status load failed:', error);
             }
