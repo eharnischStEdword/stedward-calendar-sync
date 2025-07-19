@@ -156,8 +156,8 @@ This document outlines the comprehensive improvements made to the St. Edward Cal
 - `GET /debug/events/<calendar_name>` - Debug calendar events (dev only)
 
 ### Configuration
-- `GET /enable-dry-run` - Enable dry run mode
-- `GET /disable-dry-run` - Disable dry run mode
+- `GET /dry-run/enable` - Enable dry run mode
+- `GET /dry-run/disable` - Disable dry run mode
 - `POST /scheduler/toggle` - Toggle automatic syncing pause/resume
 
 ## Usage Examples
@@ -291,4 +291,4 @@ All source code and related assets are © 2024–2025 Harnisch LLC. All rights r
 
 **Exclusive usage rights have been granted to St. Edward Church & School (Nashville, TN)**. This software may not be used, copied, modified, distributed, or deployed outside of that context without explicit written permission from Harnisch LLC.
 
-If you are interested in licensing this tool for your organization, contact: eric@ericharnisch.com
+If you are interested in licensing this tool for your organization, contact: harnischllc@gmail.com
