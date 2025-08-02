@@ -85,3 +85,43 @@ def get_timezone_offset() -> str:
     now = datetime.now(central)
     offset = now.strftime('%z')
     return f"UTC{offset[:3]}:{offset[3:]}"
+
+
+def parse_graph_datetime(field: dict):
+    """Convert Microsoft Graph {"dateTime": str, "timeZone": str} into an aware UTC datetime.
+
+    Args:
+        field: dict with keys 'dateTime' and 'timeZone'
+    Returns:
+        datetime in UTC or None if missing.
+    """
+    if not field or not field.get("dateTime"):
+        return None
+
+    from datetime import datetime
+    import pytz
+
+    dt_str = field.get("dateTime")
+    tz_label = field.get("timeZone", "UTC") or "UTC"
+
+    try:
+        naive_dt = datetime.fromisoformat(dt_str)
+    except ValueError:
+        # Fallback – dateutil offers wider parsing but avoid extra dep; return None on failure
+        return None
+
+    # If dt already has tzinfo, just convert to UTC
+    if naive_dt.tzinfo is not None:
+        return naive_dt.astimezone(pytz.UTC)
+
+    # Map Microsoft "Central Standard Time" et al. to pytz zone
+    if "Central" in tz_label:
+        tz = pytz.timezone("America/Chicago")
+    else:
+        try:
+            tz = pytz.timezone(tz_label)
+        except Exception:
+            tz = pytz.UTC
+
+    aware_dt = tz.localize(naive_dt)
+    return aware_dt.astimezone(pytz.UTC)

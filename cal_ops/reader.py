@@ -115,9 +115,11 @@ class CalendarReader:
             ]
         
         all_events = []
+        page_counter = 0
+        max_pages = 50  # Safety guard to avoid infinite pagination loops
         
         # Handle pagination
-        while url:
+        while url and page_counter < max_pages:
             params = {
                 '$top': 100,  # Reduced from 500 for better performance
                 '$select': ','.join(select_fields)
@@ -139,6 +141,7 @@ class CalendarReader:
                     data = response.json()
                     events = data.get('value', [])
                     all_events.extend(events)
+                    page_counter += 1
                     
                     # Check for next page
                     url = data.get('@odata.nextLink')
@@ -210,15 +213,19 @@ class CalendarReader:
                 
                 # Handle pagination if needed
                 next_link = data.get('@odata.nextLink')
-                while next_link:
+                page_counter = 0
+                max_pages = 50  # Safety guard for pagination
+                while next_link and page_counter < max_pages:
                     next_response = requests.get(next_link, headers=headers, timeout=30)
                     if next_response.status_code == 200:
                         next_data = next_response.json()
                         all_instances.extend(next_data.get('value', []))
                         next_link = next_data.get('@odata.nextLink')
+                        page_counter += 1
                     else:
                         logger.warning(f"Failed to get next page of instances: {next_response.status_code}")
                         break
+
                 
                 logger.info(f"Retrieved {len(all_instances)} instances from calendar {calendar_id}")
                 
@@ -300,39 +307,21 @@ class CalendarReader:
             
             # Check event date
             try:
-                # Handle both object and string formats for start field
+                from utils.timezone import parse_graph_datetime
                 start_field = event.get('start', {})
-                if isinstance(start_field, dict):
-                    event_start = start_field.get('dateTime', '')
-                elif isinstance(start_field, str):
-                    event_start = start_field
-                else:
-                    event_start = ''
-                    
-                if event_start:
-                    # Parse the datetime string
-                    if event_start.endswith('Z'):
-                        event_date = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
-                    else:
-                        event_date = datetime.fromisoformat(event_start)
-                    
-                    # Ensure event_date is timezone-aware
-                    if event_date.tzinfo is None:
-                        # Assume UTC if no timezone info
-                        event_date = pytz.UTC.localize(event_date)
-                    
-                    # Convert to UTC for comparison if needed
-                    event_date_utc = event_date.astimezone(pytz.UTC)
-                    
-                    # Skip old events
-                    if event_date_utc < cutoff_date:
-                        stats['past_events'] += 1
-                        continue
-                    
-                    # Skip events too far in the future
-                    if event_date_utc > future_cutoff:
-                        stats['future_events'] += 1
-                        continue
+                event_date_utc = parse_graph_datetime(start_field)
+                if not event_date_utc:
+                    continue
+
+                # Skip old events
+                if event_date_utc < cutoff_date:
+                    stats['past_events'] += 1
+                    continue
+
+                # Skip events too far in the future
+                if event_date_utc > future_cutoff:
+                    stats['future_events'] += 1
+                    continue
             except Exception as e:
                 logger.warning(f"Could not parse date for event {event.get('subject')}: {e}")
                 # If we can't parse the date, include the event to be safe
