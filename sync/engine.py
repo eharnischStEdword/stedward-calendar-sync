@@ -1163,8 +1163,25 @@ class SyncEngine:
     def get_status(self) -> Dict:
         """Get current sync status"""
         with self.sync_lock:
+            # Handle last_sync_time safely - it might be a string or datetime
+            last_sync_time_iso = None
+            if self.last_sync_time:
+                if isinstance(self.last_sync_time, str):
+                    last_sync_time_iso = self.last_sync_time
+                else:
+                    try:
+                        last_sync_time_iso = self.last_sync_time.isoformat()
+                    except AttributeError:
+                        last_sync_time_iso = str(self.last_sync_time)
+            
+            # Handle current_time safely
+            try:
+                current_time_iso = get_central_time().isoformat()
+            except AttributeError:
+                current_time_iso = str(get_central_time())
+            
             status = {
-                'last_sync_time': self.last_sync_time.isoformat() if self.last_sync_time else None,
+                'last_sync_time': last_sync_time_iso,
                 'last_sync_time_display': format_central_time(self.last_sync_time) if self.last_sync_time else 'Never',
                 'last_sync_result': self.last_sync_result,
                 'sync_in_progress': self.sync_in_progress,
@@ -1180,7 +1197,7 @@ class SyncEngine:
                 'authenticated': self.auth.is_authenticated() if self.auth else False,
                 'scheduler_running': True,  # Placeholder - scheduler status
                 'timezone': 'America/Chicago',
-                'current_time': get_central_time().isoformat(),
+                'current_time': current_time_iso,
                 'occurrence_sync_enabled': config.SYNC_OCCURRENCE_EXCEPTIONS,
                 'change_tracker': self.change_tracker.get_cache_stats()
             }
