@@ -319,21 +319,29 @@ class CalendarReader:
                 if not event_date_utc:
                     continue
 
-                # Skip old events
+                # Skip old events (unless it's a recurring event that should always be synced)
                 if event_date_utc < cutoff_date:
-                    stats['past_events'] += 1
-                    # Debug logging for specific events
-                    if 'Ladies Auxiliary' in event.get('subject', ''):
-                        logger.info(f"🔍 Ladies Auxiliary event filtered - too old: {event.get('subject')} (date: {event_date_utc}, cutoff: {cutoff_date})")
-                    continue
+                    # Special override for recurring events - always include them regardless of age
+                    if event.get('type') == 'seriesMaster':
+                        logger.info(f"🔄 Including recurring event despite age: {event.get('subject')} (started: {event_date_utc})")
+                    else:
+                        stats['past_events'] += 1
+                        # Debug logging for specific events
+                        if 'Ladies Auxiliary' in event.get('subject', ''):
+                            logger.info(f"🔍 Ladies Auxiliary event filtered - too old: {event.get('subject')} (date: {event_date_utc}, cutoff: {cutoff_date})")
+                        continue
 
-                # Skip events too far in the future
+                # Skip events too far in the future (but allow recurring events to extend further)
                 if event_date_utc > future_cutoff:
-                    stats['future_events'] += 1
-                    # Debug logging for specific events
-                    if 'Ladies Auxiliary' in event.get('subject', ''):
-                        logger.info(f"🔍 Ladies Auxiliary event filtered - too far in future: {event.get('subject')} (date: {event_date_utc}, cutoff: {future_cutoff})")
-                    continue
+                    # Special override for recurring events - allow them to extend further into the future
+                    if event.get('type') == 'seriesMaster':
+                        logger.info(f"🔄 Including recurring event despite future date: {event.get('subject')} (extends to: {event_date_utc})")
+                    else:
+                        stats['future_events'] += 1
+                        # Debug logging for specific events
+                        if 'Ladies Auxiliary' in event.get('subject', ''):
+                            logger.info(f"🔍 Ladies Auxiliary event filtered - too far in future: {event.get('subject')} (date: {event_date_utc}, cutoff: {future_cutoff})")
+                        continue
             except Exception as e:
                 logger.warning(f"Could not parse date for event {event.get('subject')}: {e}")
                 # If we can't parse the date, include the event to be safe
