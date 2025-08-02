@@ -49,13 +49,10 @@ class SyncScheduler:
     
     def _run_scheduler(self):
         """Run the scheduler loop"""
-        # Schedule sync to run every 23 minutes to avoid overlap with health checks
-        schedule.every(23).minutes.do(self._scheduled_sync)
+        # Schedule sync to run every 23 minutes with built-in health check
+        schedule.every(23).minutes.do(self._scheduled_sync_with_health_check)
         
-        # Schedule health check to run every 35 minutes (different interval to avoid overlap)
-        schedule.every(35).minutes.do(self._scheduled_health_check)
-        
-        logger.info(f"Scheduler started - sync every 23 minutes, health check every 35 minutes (CT) - started at {format_central_time(get_central_time())}")
+        logger.info(f"Scheduler started - sync with health check every 23 minutes (CT) - started at {format_central_time(get_central_time())}")
         
         # Add startup delay to prevent immediate sync after deployment
         logger.info("⏳ Waiting 2 minutes before first scheduled sync to allow deployment to stabilize...")
@@ -94,15 +91,54 @@ class SyncScheduler:
             # Don't let sync errors crash the scheduler
             logger.error(f"❌ Scheduled sync failed at {format_central_time(get_central_time())}: {e}")
     
-    def _scheduled_health_check(self):
-        """Function called by scheduler for health checks"""
+    def _scheduled_sync_with_health_check(self):
+        """Function called by scheduler - runs health check before sync"""
         try:
-            logger.info(f"Running scheduled health check (every 35 minutes) at {format_central_time(get_central_time())}")
+            logger.info(f"Running scheduled sync with health check (every 23 minutes) at {format_central_time(get_central_time())}")
             
-            # Simple health check - just log that we're alive
-            # This helps keep Render awake without doing heavy operations
-            logger.info(f"💓 Health check completed - service is alive at {format_central_time(get_central_time())}")
+            # Step 1: Run health check first
+            logger.info("💓 Running pre-sync health check...")
+            health_check_passed = self._run_health_check()
+            
+            if not health_check_passed:
+                logger.warning(f"⚠️ Health check failed - skipping sync at {format_central_time(get_central_time())}")
+                return
+            
+            logger.info("✅ Health check passed - proceeding with sync")
+            
+            # Step 2: Run sync only if health check passed
+            self._scheduled_sync()
                 
         except Exception as e:
-            # Don't let health check errors crash the scheduler
-            logger.error(f"❌ Scheduled health check failed at {format_central_time(get_central_time())}: {e}")
+            # Don't let errors crash the scheduler
+            logger.error(f"❌ Scheduled sync with health check failed at {format_central_time(get_central_time())}: {e}")
+    
+    def _run_health_check(self):
+        """Run a comprehensive health check"""
+        try:
+            # Check authentication
+            if not self.sync_engine.auth.is_authenticated():
+                logger.warning("Health check failed: Not authenticated")
+                return False
+            
+            # Check if sync engine is available
+            if not self.sync_engine:
+                logger.warning("Health check failed: Sync engine not available")
+                return False
+            
+            # Check if we can access calendars (lightweight test)
+            try:
+                calendars = self.sync_engine.reader.get_calendars()
+                if not calendars:
+                    logger.warning("Health check failed: Cannot access calendars")
+                    return False
+            except Exception as e:
+                logger.warning(f"Health check failed: Calendar access error: {e}")
+                return False
+            
+            logger.info("💓 Health check completed successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Health check error: {e}")
+            return False
