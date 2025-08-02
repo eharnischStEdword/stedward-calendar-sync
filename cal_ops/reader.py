@@ -323,7 +323,7 @@ class CalendarReader:
                 if event_date_utc < cutoff_date:
                     # Special override for recurring events - always include them regardless of age
                     if event.get('type') == 'seriesMaster':
-                        logger.info(f"🔄 Including recurring event despite age: {event.get('subject')} (started: {event_date_utc})")
+                        logger.info(f"🔄 Including old recurring event: {event.get('subject')} (started: {event_date_utc})")
                     else:
                         stats['past_events'] += 1
                         # Debug logging for specific events

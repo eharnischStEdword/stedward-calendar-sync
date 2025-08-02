@@ -29,7 +29,7 @@ MAX_SYNC_REQUESTS_PER_HOUR = 20
 # Sync Settings
 MASTER_CALENDAR_PROTECTION = True  # Never allow operations on source calendar
 DRY_RUN_MODE = False  # Set to True to test without making changes
-SYNC_CUTOFF_DAYS = 1825  # Only sync events from last N days (5 years to include all recurring events)
+SYNC_CUTOFF_DAYS = 1825  # 5 years to include all recurring events
 
 # Occurrence Exception Settings
 # Enable handling of cancelled instances (deletes only). Set to False to fully disable.

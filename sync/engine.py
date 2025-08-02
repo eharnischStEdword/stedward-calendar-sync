@@ -6,6 +6,7 @@
 Sync Engine - Complete Working Version with Category Updates and Central Time + Occurrence Support
 """
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 from threading import Lock
@@ -164,7 +165,7 @@ class SyncEngine:
                 }
             else:
                 # Execute sync operations
-                result = self._execute_sync_operations(target_id, to_add, to_update, to_delete)
+                result = self._execute_sync_operations_batch(target_id, to_add, to_update, to_delete)
 
                 # -----------------------------------------------------------------
                 # Handle cancelled instances of recurring events (delete-only)
@@ -687,19 +688,18 @@ class SyncEngine:
         logger.info(f"  ➡️  No changes detected for '{subject}' (modification times differ but content is same)")
         return False
     
-    def _execute_sync_operations(
+    def _execute_sync_operations_batch(
         self, 
         target_calendar_id: str,
         to_add: List[Dict],
         to_update: List[Tuple[Dict, Dict]],
         to_delete: List[Dict]
     ) -> Dict:
-        """Execute the sync operations with chunked processing to prevent timeouts"""
+        """Execute sync operations using batch API calls"""
         successful = 0
         failed = 0
         total = len(to_add) + len(to_update) + len(to_delete)
         
-        # Track operation details
         operation_details = {
             'add_success': 0,
             'add_failed': 0,
@@ -709,67 +709,49 @@ class SyncEngine:
             'delete_failed': 0
         }
         
-        # Process in chunks to prevent timeouts
-        chunk_size = 10  # Process 10 events at a time
-        import time
+        # Use batch operations for better performance
+        logger.info(f"🎯 Using batch operations for {total} total operations")
         
-        # Add new events in chunks
-        logger.info(f"🎯 Adding {len(to_add)} new events in chunks of {chunk_size}...")
-        for i in range(0, len(to_add), chunk_size):
-            chunk = to_add[i:i + chunk_size]
-            logger.info(f"Processing add chunk {i//chunk_size + 1}/{(len(to_add) + chunk_size - 1)//chunk_size}")
-            
-            for event in chunk:
-                if self.writer.create_event(target_calendar_id, event):
-                    successful += 1
-                    operation_details['add_success'] += 1
-                else:
-                    failed += 1
-                    operation_details['add_failed'] += 1
-            
-            # Small break between chunks to prevent timeouts
-            if i + chunk_size < len(to_add):
-                time.sleep(0.5)
+        # Batch create new events
+        if to_add:
+            logger.info(f"📦 Batch creating {len(to_add)} events...")
+            batch_result = self.writer.batch_create_events(target_calendar_id, to_add)
+            successful += batch_result['successful']
+            failed += batch_result['failed']
+            operation_details['add_success'] = batch_result['successful']
+            operation_details['add_failed'] = batch_result['failed']
         
-        # Update existing events in chunks
-        logger.info(f"🔄 Updating {len(to_update)} existing events in chunks of {chunk_size}...")
-        for i in range(0, len(to_update), chunk_size):
-            chunk = to_update[i:i + chunk_size]
-            logger.info(f"Processing update chunk {i//chunk_size + 1}/{(len(to_update) + chunk_size - 1)//chunk_size}")
-            
-            for source_event, target_event in chunk:
-                event_id = target_event.get('id')
-                if self.writer.update_event(target_calendar_id, event_id, source_event):
-                    successful += 1
-                    operation_details['update_success'] += 1
-                else:
-                    failed += 1
-                    operation_details['update_failed'] += 1
-            
-            # Small break between chunks to prevent timeouts
-            if i + chunk_size < len(to_update):
-                time.sleep(0.5)
+        # Batch update existing events (can't batch PATCH, do in chunks)
+        if to_update:
+            logger.info(f"🔄 Updating {len(to_update)} events in chunks...")
+            chunk_size = 20
+            for i in range(0, len(to_update), chunk_size):
+                chunk = to_update[i:i + chunk_size]
+                logger.info(f"  Processing update chunk {i//chunk_size + 1}/{(len(to_update) + chunk_size - 1)//chunk_size}")
+                
+                for source_event, target_event in chunk:
+                    event_id = target_event.get('id')
+                    if self.writer.update_event(target_calendar_id, event_id, source_event):
+                        successful += 1
+                        operation_details['update_success'] += 1
+                    else:
+                        failed += 1
+                        operation_details['update_failed'] += 1
+                
+                # Small delay between chunks
+                if i + chunk_size < len(to_update):
+                    time.sleep(0.5)
         
-        # Delete removed events in chunks
-        logger.info(f"🗑️ Deleting {len(to_delete)} obsolete events in chunks of {chunk_size}...")
-        for i in range(0, len(to_delete), chunk_size):
-            chunk = to_delete[i:i + chunk_size]
-            logger.info(f"Processing delete chunk {i//chunk_size + 1}/{(len(to_delete) + chunk_size - 1)//chunk_size}")
-            
-            for event in chunk:
-                event_id = event.get('id')
-                if self.writer.delete_event(target_calendar_id, event_id):
-                    successful += 1
-                    operation_details['delete_success'] += 1
-                else:
-                    failed += 1
-                    operation_details['delete_failed'] += 1
-            
-            # Small break between chunks to prevent timeouts
-            if i + chunk_size < len(to_delete):
-                time.sleep(0.5)
+        # Batch delete removed events
+        if to_delete:
+            logger.info(f"🗑️ Batch deleting {len(to_delete)} events...")
+            event_ids = [event.get('id') for event in to_delete]
+            batch_result = self.writer.batch_delete_events(target_calendar_id, event_ids)
+            successful += batch_result['successful']
+            failed += batch_result['failed']
+            operation_details['delete_success'] = batch_result['successful']
+            operation_details['delete_failed'] = batch_result['failed']
         
-        # Log operation details
         self.structured_logger.log_sync_event('sync_operations_completed', operation_details)
         
         return {
