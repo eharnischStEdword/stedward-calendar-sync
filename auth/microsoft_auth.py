@@ -40,6 +40,12 @@ class MicrosoftAuth:
                     cached = json.load(f)
                 self.env_access_token = cached.get('access_token')
                 self.env_refresh_token = cached.get('refresh_token')
+                
+                # Also load expiration time to environment
+                expires_at = cached.get('expires_at')
+                if expires_at:
+                    os.environ['TOKEN_EXPIRES_AT'] = expires_at
+                
                 logger.info("✅ Loaded tokens from persistent storage")
             else:
                 self.env_access_token = None
@@ -195,6 +201,9 @@ class MicrosoftAuth:
                     if tokens.get('refresh_token'):
                         self.env_refresh_token = new_refresh
                     
+                    # Store expiration time in environment for background threads
+                    os.environ['TOKEN_EXPIRES_AT'] = expires_at.isoformat()
+                    
                     # Save to persistent storage instead of logging full tokens
                     self._save_tokens_to_disk(new_access, new_refresh, expires_at)
                     
@@ -248,6 +257,9 @@ class MicrosoftAuth:
                 # Also update environment variables for scheduler
                 self.env_access_token = tokens.get('access_token')
                 self.env_refresh_token = tokens.get('refresh_token')
+                
+                # Store expiration time in environment for background threads
+                os.environ['TOKEN_EXPIRES_AT'] = expires_at.isoformat()
                 
                 # Save to persistent storage instead of logging full tokens
                 self._save_tokens_to_disk(tokens.get('access_token'), tokens.get('refresh_token'), expires_at)
