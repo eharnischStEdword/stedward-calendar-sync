@@ -290,12 +290,18 @@ class CalendarReader:
             categories = event.get('categories', [])
             if 'Public' not in categories:
                 stats['non_public'] += 1
+                # Debug logging for specific events
+                if 'Ladies Auxiliary' in event.get('subject', ''):
+                    logger.info(f"🔍 Ladies Auxiliary event filtered - not public: {event.get('subject')} (categories: {categories})")
                 continue
             
             # Skip tentative events
             show_as = event.get('showAs', 'busy')
             if show_as != 'busy':
                 stats['tentative'] += 1
+                # Debug logging for specific events
+                if 'Ladies Auxiliary' in event.get('subject', ''):
+                    logger.info(f"🔍 Ladies Auxiliary event filtered - tentative: {event.get('subject')} (showAs: {show_as})")
                 logger.debug(f"Skipping tentative event: {event.get('subject')} (showAs: {show_as})")
                 continue
             
@@ -316,11 +322,17 @@ class CalendarReader:
                 # Skip old events
                 if event_date_utc < cutoff_date:
                     stats['past_events'] += 1
+                    # Debug logging for specific events
+                    if 'Ladies Auxiliary' in event.get('subject', ''):
+                        logger.info(f"🔍 Ladies Auxiliary event filtered - too old: {event.get('subject')} (date: {event_date_utc}, cutoff: {cutoff_date})")
                     continue
 
                 # Skip events too far in the future
                 if event_date_utc > future_cutoff:
                     stats['future_events'] += 1
+                    # Debug logging for specific events
+                    if 'Ladies Auxiliary' in event.get('subject', ''):
+                        logger.info(f"🔍 Ladies Auxiliary event filtered - too far in future: {event.get('subject')} (date: {event_date_utc}, cutoff: {future_cutoff})")
                     continue
             except Exception as e:
                 logger.warning(f"Could not parse date for event {event.get('subject')}: {e}")

@@ -610,18 +610,21 @@ class SyncEngine:
             return 0
     
     def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
-        """Check if an event needs updating - ENHANCED WITH DEBUG LOGGING"""
+        """Check if an event needs updating - OPTIMIZED FOR PERFORMANCE"""
         subject = source_event.get('subject', 'Unknown')
         
-        # Get modification times
+        # Quick check: compare modification times first (fastest check)
         source_modified = source_event.get('lastModifiedDateTime')
         target_modified = target_event.get('lastModifiedDateTime')
         
-        logger.info(f"🔍 Checking if '{subject}' needs update:")
-        logger.info(f"  Source modified: {source_modified}")
-        logger.info(f"  Target modified: {target_modified}")
+        if source_modified == target_modified:
+            # If modification times match, no changes needed
+            return False
         
-        # Compare key fields with debug logging
+        # If we get here, there are changes - do detailed comparison
+        logger.info(f"🔍 Checking if '{subject}' needs update (modified times differ)")
+        
+        # Compare key fields
         if source_event.get('subject') != target_event.get('subject'):
             logger.info(f"  📝 Subject changed: '{source_event.get('subject')}' != '{target_event.get('subject')}'")
             return True
@@ -638,27 +641,21 @@ class SyncEngine:
             logger.info(f"  📅 All-day flag changed for '{subject}'")
             return True
         
-        # Compare categories with detailed logging
+        # Compare categories
         source_categories = set(source_event.get('categories', []))
         target_categories = set(target_event.get('categories', []))
-        
-        logger.info(f"  📋 Categories comparison for '{subject}':")
-        logger.info(f"    Source categories: {source_categories}")
-        logger.info(f"    Target categories: {target_categories}")
         
         if source_categories != target_categories:
             logger.info(f"  ✅ CATEGORIES CHANGED for '{subject}': {source_categories} != {target_categories}")
             return True
         
-        # Compare location with logging
+        # Compare location
         source_location = source_event.get('location', {})
         target_location = target_event.get('location', {})
         
         # Normalize location comparison (could be string or dict)
         source_loc_str = source_location.get('displayName', '') if isinstance(source_location, dict) else str(source_location)
         target_loc_str = target_location.get('displayName', '') if isinstance(target_location, dict) else str(target_location)
-        
-        logger.info(f"  📍 Location: '{source_loc_str}' vs '{target_loc_str}'")
         
         if source_loc_str != target_loc_str:
             logger.info(f"  ✅ LOCATION CHANGED for '{subject}': '{source_loc_str}' != '{target_loc_str}'")
@@ -667,9 +664,6 @@ class SyncEngine:
         # Compare body content
         source_body = source_event.get('body', {}).get('content', '') if isinstance(source_event.get('body'), dict) else ''
         target_body = target_event.get('body', {}).get('content', '') if isinstance(target_event.get('body'), dict) else ''
-        
-        # Log first 100 chars of body for comparison
-        logger.info(f"  📄 Body content: '{source_body[:100]}...' vs '{target_body[:100]}...'")
         
         if source_body != target_body:
             logger.info(f"  ✅ BODY CONTENT CHANGED for '{subject}'")
@@ -683,8 +677,8 @@ class SyncEngine:
                 logger.info(f"  ✅ RECURRENCE PATTERN CHANGED for '{subject}'")
                 return True
         
-        # No changes detected
-        logger.info(f"  ➡️  No changes detected for '{subject}'")
+        # No changes detected (modification times might be different due to timezone or other metadata)
+        logger.info(f"  ➡️  No changes detected for '{subject}' (modification times differ but content is same)")
         return False
     
     def _execute_sync_operations(
