@@ -590,6 +590,45 @@ def debug_events(calendar_name):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/cache/clear', methods=['POST'])
+def clear_cache():
+    """Clear the event cache"""
+    try:
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated", "redirect": "/"}), 401
+        
+        sync_engine.change_tracker.clear_cache()
+        
+        return jsonify({
+            "success": True,
+            "message": "Event cache cleared successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Cache clear error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/cache/stats')
+def get_cache_stats():
+    """Get cache statistics"""
+    try:
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        stats = sync_engine.change_tracker.get_cache_stats()
+        
+        return jsonify({
+            "success": True,
+            "cache_stats": stats
+        })
+        
+    except Exception as e:
+        logger.error(f"Cache stats error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/debug/duplicates')
 def debug_duplicates():
     """Debug duplicate events in the target calendar"""
