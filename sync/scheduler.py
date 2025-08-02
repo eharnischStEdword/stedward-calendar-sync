@@ -54,6 +54,10 @@ class SyncScheduler:
         
         logger.info(f"Scheduler started - sync will run every 15 minutes (CT) - started at {format_central_time(get_central_time())}")
         
+        # Add startup delay to prevent immediate sync after deployment
+        logger.info("⏳ Waiting 2 minutes before first scheduled sync to allow deployment to stabilize...")
+        time.sleep(120)  # Wait 2 minutes before first sync
+        
         while True:
             with self.scheduler_lock:
                 if not self.scheduler_running:

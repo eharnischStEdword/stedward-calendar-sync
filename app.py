@@ -83,18 +83,14 @@ def initialize_components():
             logger.error(f"Failed to initialize sync engine: {e}")
             # Continue without sync engine for now
     
-    if scheduler is None:
+    if scheduler is None and sync_engine is not None:
         try:
             from sync.scheduler import SyncScheduler
             scheduler = SyncScheduler(sync_engine)
-            if not scheduler_paused:
-                scheduler.start()
-                logger.info("✅ Scheduler started")
-            else:
-                logger.info("✅ Scheduler initialized but paused")
+            # Don't start scheduler immediately - let it start on first request
+            logger.info("✅ Scheduler initialized (will start on first request)")
         except Exception as e:
             logger.error(f"Failed to initialize scheduler: {e}")
-            # Continue without scheduler for now
     
     return True
 
@@ -188,6 +184,11 @@ def index():
     try:
         # Initialize components if needed
         initialize_components()
+        
+        # Start scheduler on first request (not during deployment)
+        if scheduler and not scheduler.is_running() and not scheduler_paused:
+            scheduler.start()
+            logger.info("✅ Scheduler started on first request")
         
         if not auth_manager or not auth_manager.is_authenticated():
             # Show auth page
