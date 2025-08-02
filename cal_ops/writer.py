@@ -321,12 +321,8 @@ class CalendarWriter:
             else:
                 location_text = str(source_location)
         
-        # Create body content with ONLY location - NO original content
-        body_content = ""
-        if location_text:
-            body_content = f"<p><strong>Location:</strong> {location_text}</p>"
-        
-        # DO NOT append original content - public calendar should only show location
+        # Create body content - keep it minimal for privacy
+        body_content = "<p>Event details available upon request.</p>"
         
         # Build event data
         event_data = {

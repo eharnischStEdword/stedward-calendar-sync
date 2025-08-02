@@ -77,7 +77,7 @@ class SyncEngine:
             raise
     
     def _do_sync(self) -> Dict:
-        """Actual sync implementation with timeout protection"""
+        """Simple sync: Calendar A public events → Calendar B"""
         start_time = get_central_time()
         
         # Check if already syncing
@@ -86,41 +86,7 @@ class SyncEngine:
                 return {"error": "Sync already in progress"}
             self.sync_in_progress = True
         
-        # Check rate limit
-        if not self._check_rate_limit():
-            with self.sync_lock:
-                self.sync_in_progress = False
-            return {"error": "Rate limit exceeded. Please wait before syncing again."}
-        
-        # Record sync request
-        self.sync_request_times.append(get_central_time())
-        
-        logger.info("🚀 Starting calendar sync")
-        self.structured_logger.log_sync_event('sync_started', {
-            'timestamp': get_central_time().isoformat()
-        })
-        
         try:
-            # Use efficient change-based sync if cache is valid
-            if self.change_tracker.is_cache_valid():
-                logger.info("🔄 Using efficient change-based sync")
-                return self._do_change_based_sync()
-            else:
-                logger.info("🔄 Cache invalid or missing - using full sync")
-                return self._do_full_sync()
-        finally:
-            # Always clear sync state when done
-            with self.sync_lock:
-                self.sync_in_progress = False
-                self.sync_state['in_progress'] = False
-                self.sync_state['phase'] = None
-                self.sync_state['progress'] = 0
-        
-        try:
-            # Pre-flight checks
-            if not self._pre_flight_check():
-                return {"error": "Pre-flight checks failed. Check logs for details."}
-            
             # Get calendar IDs
             source_id = self.reader.find_calendar_id(config.SOURCE_CALENDAR)
             target_id = self.reader.find_calendar_id(config.TARGET_CALENDAR)
@@ -135,172 +101,63 @@ class SyncEngine:
             logger.info(f"Source calendar ID: {source_id}")
             logger.info(f"Target calendar ID: {target_id}")
             
-            # Get events - ALWAYS use regular events, not instances to avoid duplicates
+            # Get public events from source
             source_events = self.reader.get_public_events(source_id, include_instances=False)
-            target_events = self.reader.get_calendar_events(target_id)
+            if source_events is None:
+                return {"error": "Failed to retrieve source calendar events"}
             
-            if source_events is None or target_events is None:
-                return {"error": "Failed to retrieve calendar events"}
+            # Get all events from target
+            target_events = self.reader.get_calendar_events(target_id)
+            if target_events is None:
+                return {"error": "Failed to retrieve target calendar events"}
             
             logger.info(f"📊 Retrieved {len(source_events)} source events and {len(target_events)} target events")
             
-            # Debug event signatures for troubleshooting
-            self._debug_event_signatures(source_events[:5], "SOURCE")
-            self._debug_event_signatures(target_events[:5], "TARGET")
-            
-            # Build target map
+            # Build target map for quick lookup
             target_map = self._build_event_map(target_events)
-            logger.info(f"Built target map with {len(target_map)} unique events")
             
-            # Determine operations needed - don't check instances to avoid duplicates
+            # Determine operations needed
             to_add, to_update, to_delete = self._determine_sync_operations(
                 source_events, target_events, target_map, check_instances=False
             )
             
-            # Skip instance sync to prevent duplicates
-            instance_ops = {'added': 0, 'updated': 0, 'deleted': 0}
-            
             logger.info(f"📋 SYNC PLAN: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
-            
-            # Debug what we're planning to do
-            if to_add:
-                logger.info("📝 Events to ADD:")
-                for event in to_add[:3]:  # Log first 3
-                    sig = self._create_event_signature(event)
-                    logger.info(f"  - {event.get('subject')} | Signature: {sig}")
-            
-            if to_update:
-                logger.info("🔄 Events to UPDATE:")
-                for source_event, target_event in to_update[:3]:  # Log first 3
-                    sig = self._create_event_signature(source_event)
-                    logger.info(f"  - {source_event.get('subject')} | Signature: {sig}")
-            
-            if to_delete:
-                logger.info("🗑️ Events to DELETE:")
-                for event in to_delete[:3]:  # Log first 3
-                    sig = self._create_event_signature(event)
-                    logger.info(f"  - {event.get('subject')} | Signature: {sig}")
             
             # Check dry run mode
             if config.DRY_RUN_MODE:
                 logger.info("🧪 DRY RUN MODE - No changes will be made")
-                result = {
+                return {
                     'success': True,
                     'message': f'DRY RUN: Would add {len(to_add)}, update {len(to_update)}, delete {len(to_delete)}',
                     'dry_run': True,
-                    'added': len(to_add) + instance_ops['added'],
-                    'updated': len(to_update) + instance_ops['updated'],
-                    'deleted': len(to_delete) + instance_ops['deleted']
+                    'added': len(to_add),
+                    'updated': len(to_update),
+                    'deleted': len(to_delete)
                 }
-            else:
-                # Initialize sync state for progress tracking
-                total_ops = len(to_add) + len(to_update) + len(to_delete)
-                self.sync_state.update({
-                    'in_progress': True,
-                    'phase': None,
-                    'progress': 0,
-                    'total': total_ops,
-                    'last_checkpoint': get_central_time()
-                })
-                
-                # Execute sync operations
-                result = self._execute_sync_operations_batch(target_id, to_add, to_update, to_delete)
-
-                # -----------------------------------------------------------------
-                # Handle cancelled instances of recurring events (delete-only)
-                # -----------------------------------------------------------------
-                if config.SYNC_OCCURRENCE_EXCEPTIONS:
-                    cancelled_deleted = self._handle_cancelled_occurrences(source_id, target_id)
-                    if cancelled_deleted:
-                        # Update result counters
-                        result['deleted'] += cancelled_deleted
-                        if 'operation_details' in result:
-                            result['operation_details']['delete_success'] += cancelled_deleted
-
-                
-                # Add instance operation counts
-                result['added'] += instance_ops['added']
-                result['updated'] += instance_ops['updated']
-                result['deleted'] += instance_ops['deleted']
-                
-                # Update cache with current events after successful sync
-                if result.get('success') and not config.DRY_RUN_MODE:
-                    logger.info("💾 Updating event cache after successful sync...")
-                    self.change_tracker.update_cache(source_events)
-                
-                # Validate sync result if successful
-                if result.get('success') and not config.DRY_RUN_MODE:
-                    logger.info("Validating sync results...")
-                    fresh_source = self.reader.get_public_events(source_id, include_instances=False)
-                    fresh_target = self.reader.get_calendar_events(target_id)
-                    
-                    if fresh_source and fresh_target:
-                        is_valid, validations = self.validator.validate_sync_result(
-                            fresh_source, fresh_target
-                        )
-                        
-                        # Filter out ignored warnings
-                        ignored_warnings = getattr(config, 'IGNORE_VALIDATION_WARNINGS', ['no_duplicates', 'event_integrity'])
-                        failed_checks = [(check, passed) for check, passed in validations if not passed]
-                        non_ignored_failures = [(check, passed) for check, passed in failed_checks 
-                                               if check not in ignored_warnings]
-                        
-                        # Consider valid if only ignored warnings failed
-                        is_valid = len(non_ignored_failures) == 0
-                        
-                        result['validation'] = {
-                            'is_valid': is_valid,
-                            'checks': validations,
-                            'ignored_warnings': ignored_warnings
-                        }
-                        
-                        if not is_valid:
-                            logger.warning(f"Sync validation failed: {non_ignored_failures}")
-                            self.structured_logger.log_sync_event('sync_validation_failed', {
-                                'validations': validations,
-                                'non_ignored_failures': non_ignored_failures
-                            })
-                        elif failed_checks:
-                            # Log ignored warnings at INFO level
-                            ignored_checks = [(check, passed) for check, passed in failed_checks 
-                                            if check in ignored_warnings]
-                            logger.info(f"Sync validation passed (ignored warnings: {[check for check, _ in ignored_checks]})")
+            
+            # Execute sync operations
+            result = self._execute_sync_operations_batch(target_id, to_add, to_update, to_delete)
+            
+            # Handle cancelled occurrences of recurring events
+            if config.SYNC_OCCURRENCE_EXCEPTIONS:
+                cancelled_deleted = self._handle_cancelled_occurrences(source_id, target_id)
+                if cancelled_deleted:
+                    result['deleted'] += cancelled_deleted
+                    if 'operation_details' in result:
+                        result['operation_details']['delete_success'] += cancelled_deleted
+            
+            # Update cache if change tracking is enabled
+            if hasattr(self, 'change_tracker'):
+                self.change_tracker.update_cache(source_events)
             
             # Calculate duration
             duration = (get_central_time() - start_time).total_seconds()
             result['duration'] = duration
             
-            # Check for timeout - if sync is taking too long, log warning
-            if duration > 120:  # 2 minutes
-                logger.warning(f"⚠️ Sync took {duration:.1f}s - approaching timeout limit")
-            if duration > 180:  # 3 minutes
-                logger.error(f"🚨 Sync took {duration:.1f}s - may cause worker timeout")
-            
             # Update sync state
             with self.sync_lock:
                 self.last_sync_time = get_central_time()
                 self.last_sync_result = result
-            
-            # Record metrics and history
-            if not config.DRY_RUN_MODE:
-                self.metrics.record_sync_duration(duration)
-                self.metrics.record_sync_result(
-                    result.get('added', 0),
-                    result.get('updated', 0),
-                    result.get('deleted', 0),
-                    result.get('failed_operations', 0)
-                )
-                self.history.add_entry(result)
-            
-            # Log structured event
-            self.structured_logger.log_sync_event('sync_completed', {
-                'duration_seconds': duration,
-                'added': result.get('added', 0),
-                'updated': result.get('updated', 0),
-                'deleted': result.get('deleted', 0),
-                'success': result.get('success', False),
-                'dry_run': config.DRY_RUN_MODE
-            })
             
             logger.info(f"🎉 Sync completed in {duration:.2f} seconds: {result}")
             return result
@@ -320,30 +177,16 @@ class SyncEngine:
             with self.sync_lock:
                 self.last_sync_result = error_result
             
-            # Log structured error
-            self.structured_logger.log_sync_event('sync_failed', {
-                'error': str(e),
-                'duration_seconds': duration
-            })
-            
-            # Record failure metrics
-            self.metrics.record_sync_duration(duration)
-            self.metrics.record_sync_result(0, 0, 0, 1)
-            
-            logger.error(f"💥 Sync error after {duration:.2f} seconds: {error_result}")
+            logger.error(f"❌ Sync failed: {e}")
             return error_result
             
         finally:
+            # Always clear sync state when done
             with self.sync_lock:
                 self.sync_in_progress = False
-                # Clear sync state
-                self.sync_state.update({
-                    'in_progress': False,
-                    'phase': None,
-                    'progress': 0,
-                    'total': 0,
-                    'last_checkpoint': None
-                })
+                self.sync_state['in_progress'] = False
+                self.sync_state['phase'] = None
+                self.sync_state['progress'] = 0
     
     def _do_change_based_sync(self) -> Dict:
         """Efficient sync using change detection"""
