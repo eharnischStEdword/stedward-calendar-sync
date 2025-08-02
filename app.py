@@ -253,7 +253,7 @@ def index():
 
 @app.route('/sync', methods=['POST'])
 def trigger_sync():
-    """Trigger manual sync"""
+    """Trigger manual sync - returns immediately"""
     try:
         if not sync_engine:
             return jsonify({"error": "Sync engine not initialized"}), 500
@@ -261,13 +261,19 @@ def trigger_sync():
         if not auth_manager or not auth_manager.is_authenticated():
             return jsonify({"error": "Not authenticated", "redirect": "/"}), 401
         
-        result = sync_engine.sync_calendars()
+        # Start sync in background thread
+        import threading
+        sync_thread = threading.Thread(
+            target=sync_engine.sync_calendars,
+            daemon=True
+        )
+        sync_thread.start()
         
-        # Add formatted time to result
-        if result.get('success') and sync_engine.last_sync_time:
-            result['last_sync_time_display'] = format_central_time(sync_engine.last_sync_time)
-        
-        return jsonify(result)
+        return jsonify({
+            "success": True,
+            "message": "Sync started in background",
+            "status": "Check /status endpoint for progress"
+        })
         
     except Exception as e:
         logger.error(f"Sync trigger error: {e}")

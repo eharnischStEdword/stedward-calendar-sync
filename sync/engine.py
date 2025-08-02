@@ -41,6 +41,15 @@ class SyncEngine:
         self.last_sync_result = {"success": False, "message": "Not synced yet"}
         self.sync_in_progress = False
         
+        # Sync state for resumable operations
+        self.sync_state = {
+            'in_progress': False,
+            'phase': None,  # 'add', 'update', 'delete'
+            'progress': 0,
+            'total': 0,
+            'last_checkpoint': None
+        }
+        
         # Rate limiting
         self.sync_request_times = []
         
@@ -164,6 +173,16 @@ class SyncEngine:
                     'deleted': len(to_delete) + instance_ops['deleted']
                 }
             else:
+                # Initialize sync state for progress tracking
+                total_ops = len(to_add) + len(to_update) + len(to_delete)
+                self.sync_state.update({
+                    'in_progress': True,
+                    'phase': None,
+                    'progress': 0,
+                    'total': total_ops,
+                    'last_checkpoint': get_central_time()
+                })
+                
                 # Execute sync operations
                 result = self._execute_sync_operations_batch(target_id, to_add, to_update, to_delete)
 
@@ -292,6 +311,14 @@ class SyncEngine:
         finally:
             with self.sync_lock:
                 self.sync_in_progress = False
+                # Clear sync state
+                self.sync_state.update({
+                    'in_progress': False,
+                    'phase': None,
+                    'progress': 0,
+                    'total': 0,
+                    'last_checkpoint': None
+                })
     
     def _debug_event_signatures(self, events: List[Dict], label: str):
         """Debug helper to log event signatures"""
@@ -695,10 +722,9 @@ class SyncEngine:
         to_update: List[Tuple[Dict, Dict]],
         to_delete: List[Dict]
     ) -> Dict:
-        """Execute sync operations using batch API calls"""
+        """Execute sync operations in small chunks with checkpoints"""
         successful = 0
         failed = 0
-        total = len(to_add) + len(to_update) + len(to_delete)
         
         operation_details = {
             'add_success': 0,
@@ -709,27 +735,37 @@ class SyncEngine:
             'delete_failed': 0
         }
         
-        # Use batch operations for better performance
-        logger.info(f"🎯 Using batch operations for {total} total operations")
+        # Process in very small batches to avoid timeouts
+        BATCH_SIZE = 5
         
-        # Batch create new events
+        # Phase 1: Additions
         if to_add:
-            logger.info(f"📦 Batch creating {len(to_add)} events...")
-            batch_result = self.writer.batch_create_events(target_calendar_id, to_add)
-            successful += batch_result['successful']
-            failed += batch_result['failed']
-            operation_details['add_success'] = batch_result['successful']
-            operation_details['add_failed'] = batch_result['failed']
-        
-        # Batch update existing events (can't batch PATCH, do in chunks)
-        if to_update:
-            logger.info(f"🔄 Updating {len(to_update)} events in chunks...")
-            chunk_size = 20
-            for i in range(0, len(to_update), chunk_size):
-                chunk = to_update[i:i + chunk_size]
-                logger.info(f"  Processing update chunk {i//chunk_size + 1}/{(len(to_update) + chunk_size - 1)//chunk_size}")
+            self.sync_state['phase'] = 'add'
+            for i in range(0, len(to_add), BATCH_SIZE):
+                batch = to_add[i:i + BATCH_SIZE]
+                logger.info(f"Adding batch {i//BATCH_SIZE + 1}/{(len(to_add) + BATCH_SIZE - 1)//BATCH_SIZE}")
                 
-                for source_event, target_event in chunk:
+                batch_result = self.writer.batch_create_events(target_calendar_id, batch)
+                successful += batch_result['successful']
+                failed += batch_result['failed']
+                operation_details['add_success'] += batch_result['successful']
+                operation_details['add_failed'] += batch_result['failed']
+                
+                # Update progress
+                self.sync_state['progress'] = i + len(batch)
+                self.sync_state['last_checkpoint'] = get_central_time()
+                
+                # Yield control to prevent timeout
+                time.sleep(0.1)
+        
+        # Phase 2: Updates (most time-consuming)
+        if to_update:
+            self.sync_state['phase'] = 'update'
+            for i in range(0, len(to_update), BATCH_SIZE):
+                batch = to_update[i:i + BATCH_SIZE]
+                logger.info(f"Updating batch {i//BATCH_SIZE + 1}/{(len(to_update) + BATCH_SIZE - 1)//BATCH_SIZE}")
+                
+                for source_event, target_event in batch:
                     event_id = target_event.get('id')
                     if self.writer.update_event(target_calendar_id, event_id, source_event):
                         successful += 1
@@ -738,21 +774,37 @@ class SyncEngine:
                         failed += 1
                         operation_details['update_failed'] += 1
                 
-                # Small delay between chunks
-                if i + chunk_size < len(to_update):
-                    time.sleep(0.5)
+                # Update progress
+                self.sync_state['progress'] = i + len(batch)
+                self.sync_state['last_checkpoint'] = get_central_time()
+                
+                # Longer pause between update batches
+                time.sleep(0.5)
         
-        # Batch delete removed events
+        # Phase 3: Deletions
         if to_delete:
-            logger.info(f"🗑️ Batch deleting {len(to_delete)} events...")
-            event_ids = [event.get('id') for event in to_delete]
-            batch_result = self.writer.batch_delete_events(target_calendar_id, event_ids)
-            successful += batch_result['successful']
-            failed += batch_result['failed']
-            operation_details['delete_success'] = batch_result['successful']
-            operation_details['delete_failed'] = batch_result['failed']
+            self.sync_state['phase'] = 'delete'
+            for i in range(0, len(to_delete), BATCH_SIZE):
+                batch = to_delete[i:i + BATCH_SIZE]
+                event_ids = [event.get('id') for event in batch]
+                
+                batch_result = self.writer.batch_delete_events(target_calendar_id, event_ids)
+                successful += batch_result['successful']
+                failed += batch_result['failed']
+                operation_details['delete_success'] += batch_result['successful']
+                operation_details['delete_failed'] += batch_result['failed']
+                
+                # Update progress
+                self.sync_state['progress'] = i + len(batch)
+                self.sync_state['last_checkpoint'] = get_central_time()
+                
+                time.sleep(0.1)
         
-        self.structured_logger.log_sync_event('sync_operations_completed', operation_details)
+        # Clear state
+        self.sync_state['phase'] = None
+        self.sync_state['progress'] = 0
+        
+        total = len(to_add) + len(to_update) + len(to_delete)
         
         return {
             'success': True,
@@ -769,11 +821,17 @@ class SyncEngine:
     def get_status(self) -> Dict:
         """Get current sync status"""
         with self.sync_lock:
-            return {
+            status = {
                 'last_sync_time': self.last_sync_time.isoformat() if self.last_sync_time else None,
                 'last_sync_time_display': format_central_time(self.last_sync_time) if self.last_sync_time else 'Never',
                 'last_sync_result': self.last_sync_result,
                 'sync_in_progress': self.sync_in_progress,
+                'sync_progress': {
+                    'phase': self.sync_state.get('phase'),
+                    'progress': self.sync_state.get('progress', 0),
+                    'total': self.sync_state.get('total', 0),
+                    'percent': round((self.sync_state.get('progress', 0) / max(self.sync_state.get('total', 1), 1)) * 100, 1)
+                } if self.sync_in_progress else None,
                 'rate_limit_remaining': config.MAX_SYNC_REQUESTS_PER_HOUR - len(self.sync_request_times),
                 'circuit_breaker_state': self.circuit_breaker.state,
                 'total_syncs': len(self.history.history),
@@ -783,3 +841,4 @@ class SyncEngine:
                 'current_time': get_central_time().isoformat(),
                 'occurrence_sync_enabled': config.SYNC_OCCURRENCE_EXCEPTIONS
             }
+            return status
