@@ -49,10 +49,13 @@ class SyncScheduler:
     
     def _run_scheduler(self):
         """Run the scheduler loop"""
-        # Schedule sync to run every 15 minutes to keep Render awake and ensure frequent syncing
-        schedule.every(15).minutes.do(self._scheduled_sync)
+        # Schedule sync to run every 23 minutes to avoid overlap with health checks
+        schedule.every(23).minutes.do(self._scheduled_sync)
         
-        logger.info(f"Scheduler started - sync will run every 15 minutes (CT) - started at {format_central_time(get_central_time())}")
+        # Schedule health check to run every 35 minutes (different interval to avoid overlap)
+        schedule.every(35).minutes.do(self._scheduled_health_check)
+        
+        logger.info(f"Scheduler started - sync every 23 minutes, health check every 35 minutes (CT) - started at {format_central_time(get_central_time())}")
         
         # Add startup delay to prevent immediate sync after deployment
         logger.info("⏳ Waiting 2 minutes before first scheduled sync to allow deployment to stabilize...")
@@ -71,7 +74,7 @@ class SyncScheduler:
     def _scheduled_sync(self):
         """Function called by scheduler - IMPROVED with error handling"""
         try:
-            logger.info(f"Running scheduled sync (every 15 minutes) at {format_central_time(get_central_time())}")
+            logger.info(f"Running scheduled sync (every 23 minutes) at {format_central_time(get_central_time())}")
             
             # Check if authenticated before trying to sync
             if not self.sync_engine.auth.is_authenticated():
@@ -90,3 +93,16 @@ class SyncScheduler:
         except Exception as e:
             # Don't let sync errors crash the scheduler
             logger.error(f"❌ Scheduled sync failed at {format_central_time(get_central_time())}: {e}")
+    
+    def _scheduled_health_check(self):
+        """Function called by scheduler for health checks"""
+        try:
+            logger.info(f"Running scheduled health check (every 35 minutes) at {format_central_time(get_central_time())}")
+            
+            # Simple health check - just log that we're alive
+            # This helps keep Render awake without doing heavy operations
+            logger.info(f"💓 Health check completed - service is alive at {format_central_time(get_central_time())}")
+                
+        except Exception as e:
+            # Don't let health check errors crash the scheduler
+            logger.error(f"❌ Scheduled health check failed at {format_central_time(get_central_time())}: {e}")
