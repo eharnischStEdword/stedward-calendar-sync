@@ -7,7 +7,7 @@ import os
 # Basic worker configuration
 workers = 1  # Start with just 1 worker for Render
 worker_class = 'sync'  # Use sync workers instead of threaded
-timeout = 120
+timeout = 300  # Increased to 5 minutes for long sync operations
 keepalive = 2
 
 # Bind to the port Render provides
@@ -23,5 +23,10 @@ preload_app = False
 
 # Process naming
 proc_name = 'calendar-sync'
+
+# Worker lifecycle settings
+max_requests = 0  # Don't restart workers after N requests
+max_requests_jitter = 0
+worker_connections = 1000
 
 print(f"Gunicorn binding to {bind}")
