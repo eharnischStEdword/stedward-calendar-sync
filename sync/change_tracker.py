@@ -151,9 +151,20 @@ class ChangeTracker:
     
     def get_cache_stats(self) -> Dict:
         """Get statistics about the cache"""
+        # Handle last_sync_time safely - it might be a string or datetime
+        last_sync_time_iso = None
+        if self.last_sync_time:
+            if isinstance(self.last_sync_time, str):
+                last_sync_time_iso = self.last_sync_time
+            else:
+                try:
+                    last_sync_time_iso = self.last_sync_time.isoformat()
+                except AttributeError:
+                    last_sync_time_iso = str(self.last_sync_time)
+        
         return {
             'cached_events': len(self.event_cache),
-            'last_sync_time': self.last_sync_time.isoformat() if self.last_sync_time else None,
+            'last_sync_time': last_sync_time_iso,
             'cache_file': self.cache_file,
             'cache_exists': os.path.exists(self.cache_file)
         }

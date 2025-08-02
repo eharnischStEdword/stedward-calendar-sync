@@ -153,7 +153,7 @@ def get_status():
             "rate_limit_remaining": 20,
             "total_syncs": 0,
             "timezone": "America/Chicago",
-            "current_time": get_central_time().isoformat()
+            "current_time": get_central_time().isoformat() if hasattr(get_central_time(), 'isoformat') else str(get_central_time())
         }
         
         if sync_engine:
