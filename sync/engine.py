@@ -215,6 +215,11 @@ class SyncEngine:
                 result['updated'] += instance_ops['updated']
                 result['deleted'] += instance_ops['deleted']
                 
+                # Update cache with current events after successful sync
+                if result.get('success') and not config.DRY_RUN_MODE:
+                    logger.info("💾 Updating event cache after successful sync...")
+                    self.change_tracker.update_cache(source_events)
+                
                 # Validate sync result if successful
                 if result.get('success') and not config.DRY_RUN_MODE:
                     logger.info("Validating sync results...")
@@ -538,6 +543,11 @@ class SyncEngine:
                 result['added'] += instance_ops['added']
                 result['updated'] += instance_ops['updated']
                 result['deleted'] += instance_ops['deleted']
+                
+                # Update cache with current events after successful sync
+                if result.get('success') and not config.DRY_RUN_MODE:
+                    logger.info("💾 Updating event cache after successful sync...")
+                    self.change_tracker.update_cache(source_events)
                 
                 # Validate sync result if successful
                 if result.get('success') and not config.DRY_RUN_MODE:
