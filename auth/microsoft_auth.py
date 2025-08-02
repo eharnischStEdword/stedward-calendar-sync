@@ -6,6 +6,7 @@
 Microsoft OAuth - Hybrid Authentication (session + environment fallback)
 """
 import os
+import json
 import requests
 import urllib.parse
 from datetime import datetime, timedelta
@@ -17,10 +18,51 @@ logger = logging.getLogger(__name__)
 
 class MicrosoftAuth:
     def __init__(self):
-        # Load tokens from environment as fallback for scheduler
-        self.env_access_token = os.environ.get('ACCESS_TOKEN')
-        self.env_refresh_token = os.environ.get('REFRESH_TOKEN')
-        logger.info("Auth manager initialized (hybrid mode)")
+        # Set up persistent token storage on Render disk
+        self.token_file = '/data/token_cache.json'
+        
+        # Try to load tokens from persistent storage first
+        self._load_tokens_from_disk()
+        
+        # Fall back to environment variables if disk storage is empty
+        if not self.env_refresh_token:
+            self.env_access_token = os.environ.get('ACCESS_TOKEN')
+            self.env_refresh_token = os.environ.get('REFRESH_TOKEN')
+            logger.info("Auth manager initialized (hybrid mode - using environment fallback)")
+        else:
+            logger.info("Auth manager initialized (hybrid mode - using persistent storage)")
+    
+    def _load_tokens_from_disk(self):
+        """Load tokens from persistent disk storage"""
+        try:
+            if os.path.exists(self.token_file):
+                with open(self.token_file, 'r') as f:
+                    cached = json.load(f)
+                self.env_access_token = cached.get('access_token')
+                self.env_refresh_token = cached.get('refresh_token')
+                logger.info("✅ Loaded tokens from persistent storage")
+            else:
+                self.env_access_token = None
+                self.env_refresh_token = None
+                logger.info("No persistent token cache found")
+        except Exception as e:
+            logger.warning(f"Failed to load tokens from disk: {e}")
+            self.env_access_token = None
+            self.env_refresh_token = None
+    
+    def _save_tokens_to_disk(self, access_token, refresh_token, expires_at):
+        """Save tokens to persistent disk storage"""
+        try:
+            token_data = {
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'expires_at': expires_at.isoformat()
+            }
+            with open(self.token_file, 'w') as f:
+                json.dump(token_data, f)
+            logger.info("✅ Tokens saved to persistent storage")
+        except Exception as e:
+            logger.error(f"Failed to save tokens to disk: {e}")
     
     def _is_in_request_context(self):
         """Check if we're in a Flask request context"""
@@ -153,12 +195,15 @@ class MicrosoftAuth:
                     if tokens.get('refresh_token'):
                         self.env_refresh_token = new_refresh
                     
-                    # Log new tokens for manual update
+                    # Save to persistent storage instead of logging full tokens
+                    self._save_tokens_to_disk(new_access, new_refresh, expires_at)
+                    
+                    # Log a truncated version for debugging
                     logger.info("="*60)
-                    logger.info("NEW TOKENS - Update these in Render environment variables:")
-                    logger.info(f"ACCESS_TOKEN={new_access}")
+                    logger.info("TOKENS REFRESHED - Saved to persistent storage")
+                    logger.info(f"ACCESS_TOKEN=<redacted>")
                     if tokens.get('refresh_token'):
-                        logger.info(f"REFRESH_TOKEN={new_refresh}")
+                        logger.info(f"REFRESH_TOKEN=<redacted>")
                     logger.info(f"TOKEN_EXPIRES_AT={expires_at.isoformat()}")
                     logger.info("="*60)
                 
@@ -204,11 +249,14 @@ class MicrosoftAuth:
                 self.env_access_token = tokens.get('access_token')
                 self.env_refresh_token = tokens.get('refresh_token')
                 
-                # Log tokens for manual environment update
+                # Save to persistent storage instead of logging full tokens
+                self._save_tokens_to_disk(tokens.get('access_token'), tokens.get('refresh_token'), expires_at)
+                
+                # Log a truncated version for debugging
                 logger.info("="*60)
-                logger.info("NEW TOKENS - Update these in Render environment variables:")
-                logger.info(f"ACCESS_TOKEN={tokens.get('access_token')}")
-                logger.info(f"REFRESH_TOKEN={tokens.get('refresh_token')}")
+                logger.info("AUTHENTICATION SUCCESSFUL - Tokens saved to persistent storage")
+                logger.info(f"ACCESS_TOKEN=<redacted>")
+                logger.info(f"REFRESH_TOKEN=<redacted>")
                 logger.info(f"TOKEN_EXPIRES_AT={expires_at.isoformat()}")
                 logger.info("="*60)
                 
@@ -226,4 +274,13 @@ class MicrosoftAuth:
             session.pop('access_token', None)
             session.pop('refresh_token', None)
             session.pop('token_expires_at', None)
+        
+        # Clear persistent storage
+        try:
+            if os.path.exists(self.token_file):
+                os.remove(self.token_file)
+                logger.info("Cleared persistent token cache")
+        except Exception as e:
+            logger.warning(f"Failed to clear persistent token cache: {e}")
+        
         # Don't clear environment tokens as they're still needed for scheduler
