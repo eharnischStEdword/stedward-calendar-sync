@@ -100,13 +100,21 @@ class SyncEngine:
             'timestamp': get_central_time().isoformat()
         })
         
-        # Use efficient change-based sync if cache is valid
-        if self.change_tracker.is_cache_valid():
-            logger.info("🔄 Using efficient change-based sync")
-            return self._do_change_based_sync()
-        else:
-            logger.info("🔄 Cache invalid or missing - using full sync")
-            return self._do_full_sync()
+        try:
+            # Use efficient change-based sync if cache is valid
+            if self.change_tracker.is_cache_valid():
+                logger.info("🔄 Using efficient change-based sync")
+                return self._do_change_based_sync()
+            else:
+                logger.info("🔄 Cache invalid or missing - using full sync")
+                return self._do_full_sync()
+        finally:
+            # Always clear sync state when done
+            with self.sync_lock:
+                self.sync_in_progress = False
+                self.sync_state['in_progress'] = False
+                self.sync_state['phase'] = None
+                self.sync_state['progress'] = 0
         
         try:
             # Pre-flight checks
