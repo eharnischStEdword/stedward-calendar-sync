@@ -321,8 +321,10 @@ class CalendarWriter:
             else:
                 location_text = str(source_location)
         
-        # Create body content - keep it minimal for privacy
-        body_content = "<p>Event details available upon request.</p>"
+        # Create body content with location information
+        body_content = ""
+        if location_text:
+            body_content = f"<p><strong>Location:</strong> {location_text}</p>"
         
         # Build event data
         event_data = {
