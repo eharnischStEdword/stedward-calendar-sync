@@ -63,7 +63,7 @@ class SyncEngine:
             raise
     
     def _do_sync(self) -> Dict:
-        """Actual sync implementation"""
+        """Actual sync implementation with timeout protection"""
         start_time = get_central_time()
         
         # Check if already syncing
@@ -224,6 +224,12 @@ class SyncEngine:
             # Calculate duration
             duration = (get_central_time() - start_time).total_seconds()
             result['duration'] = duration
+            
+            # Check for timeout - if sync is taking too long, log warning
+            if duration > 120:  # 2 minutes
+                logger.warning(f"⚠️ Sync took {duration:.1f}s - approaching timeout limit")
+            if duration > 180:  # 3 minutes
+                logger.error(f"🚨 Sync took {duration:.1f}s - may cause worker timeout")
             
             # Update sync state
             with self.sync_lock:
@@ -688,7 +694,7 @@ class SyncEngine:
         to_update: List[Tuple[Dict, Dict]],
         to_delete: List[Dict]
     ) -> Dict:
-        """Execute the sync operations"""
+        """Execute the sync operations with chunked processing to prevent timeouts"""
         successful = 0
         failed = 0
         total = len(to_add) + len(to_update) + len(to_delete)
@@ -703,37 +709,65 @@ class SyncEngine:
             'delete_failed': 0
         }
         
-        # Add new events
-        logger.info(f"🎯 Adding {len(to_add)} new events...")
-        for event in to_add:
-            if self.writer.create_event(target_calendar_id, event):
-                successful += 1
-                operation_details['add_success'] += 1
-            else:
-                failed += 1
-                operation_details['add_failed'] += 1
+        # Process in chunks to prevent timeouts
+        chunk_size = 10  # Process 10 events at a time
+        import time
         
-        # Update existing events
-        logger.info(f"🔄 Updating {len(to_update)} existing events...")
-        for source_event, target_event in to_update:
-            event_id = target_event.get('id')
-            if self.writer.update_event(target_calendar_id, event_id, source_event):
-                successful += 1
-                operation_details['update_success'] += 1
-            else:
-                failed += 1
-                operation_details['update_failed'] += 1
+        # Add new events in chunks
+        logger.info(f"🎯 Adding {len(to_add)} new events in chunks of {chunk_size}...")
+        for i in range(0, len(to_add), chunk_size):
+            chunk = to_add[i:i + chunk_size]
+            logger.info(f"Processing add chunk {i//chunk_size + 1}/{(len(to_add) + chunk_size - 1)//chunk_size}")
+            
+            for event in chunk:
+                if self.writer.create_event(target_calendar_id, event):
+                    successful += 1
+                    operation_details['add_success'] += 1
+                else:
+                    failed += 1
+                    operation_details['add_failed'] += 1
+            
+            # Small break between chunks to prevent timeouts
+            if i + chunk_size < len(to_add):
+                time.sleep(0.5)
         
-        # Delete removed events
-        logger.info(f"🗑️ Deleting {len(to_delete)} obsolete events...")
-        for event in to_delete:
-            event_id = event.get('id')
-            if self.writer.delete_event(target_calendar_id, event_id):
-                successful += 1
-                operation_details['delete_success'] += 1
-            else:
-                failed += 1
-                operation_details['delete_failed'] += 1
+        # Update existing events in chunks
+        logger.info(f"🔄 Updating {len(to_update)} existing events in chunks of {chunk_size}...")
+        for i in range(0, len(to_update), chunk_size):
+            chunk = to_update[i:i + chunk_size]
+            logger.info(f"Processing update chunk {i//chunk_size + 1}/{(len(to_update) + chunk_size - 1)//chunk_size}")
+            
+            for source_event, target_event in chunk:
+                event_id = target_event.get('id')
+                if self.writer.update_event(target_calendar_id, event_id, source_event):
+                    successful += 1
+                    operation_details['update_success'] += 1
+                else:
+                    failed += 1
+                    operation_details['update_failed'] += 1
+            
+            # Small break between chunks to prevent timeouts
+            if i + chunk_size < len(to_update):
+                time.sleep(0.5)
+        
+        # Delete removed events in chunks
+        logger.info(f"🗑️ Deleting {len(to_delete)} obsolete events in chunks of {chunk_size}...")
+        for i in range(0, len(to_delete), chunk_size):
+            chunk = to_delete[i:i + chunk_size]
+            logger.info(f"Processing delete chunk {i//chunk_size + 1}/{(len(to_delete) + chunk_size - 1)//chunk_size}")
+            
+            for event in chunk:
+                event_id = event.get('id')
+                if self.writer.delete_event(target_calendar_id, event_id):
+                    successful += 1
+                    operation_details['delete_success'] += 1
+                else:
+                    failed += 1
+                    operation_details['delete_failed'] += 1
+            
+            # Small break between chunks to prevent timeouts
+            if i + chunk_size < len(to_delete):
+                time.sleep(0.5)
         
         # Log operation details
         self.structured_logger.log_sync_event('sync_operations_completed', operation_details)
