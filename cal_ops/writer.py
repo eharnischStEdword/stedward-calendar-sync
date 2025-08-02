@@ -326,15 +326,36 @@ class CalendarWriter:
         if location_text:
             body_content = f"<p><strong>Location:</strong> {location_text}</p>"
         
+        # Handle all-day events properly
+        is_all_day = source_event.get('isAllDay', False)
+        
+        if is_all_day:
+            # For all-day events, use date format without time
+            start_date = source_event.get('start', {}).get('dateTime', '').split('T')[0]
+            end_date = source_event.get('end', {}).get('dateTime', '').split('T')[0]
+            
+            start_field = {
+                'dateTime': start_date,
+                'timeZone': source_event.get('start', {}).get('timeZone', 'UTC')
+            }
+            end_field = {
+                'dateTime': end_date,
+                'timeZone': source_event.get('end', {}).get('timeZone', 'UTC')
+            }
+        else:
+            # For timed events, use the original start/end times
+            start_field = source_event.get('start')
+            end_field = source_event.get('end')
+        
         # Build event data
         event_data = {
             'subject': source_event.get('subject'),
-            'start': source_event.get('start'),
-            'end': source_event.get('end'),
+            'start': start_field,
+            'end': end_field,
             'categories': source_event.get('categories', []),
             'body': {'contentType': 'html', 'content': body_content},
             'location': {},  # Clear location for privacy
-            'isAllDay': source_event.get('isAllDay', False),
+            'isAllDay': is_all_day,
             'showAs': 'busy',  # Always busy for public calendar
             'isReminderOn': False,  # No reminders on public calendar
             'sensitivity': 'normal'  # Ensure not marked as private
