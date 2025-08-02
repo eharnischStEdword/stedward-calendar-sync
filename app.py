@@ -275,6 +275,11 @@ def trigger_sync():
             "status": "Check /status endpoint for progress"
         })
         
+        # Also start scheduler if not running
+        if scheduler and not scheduler.is_running() and not scheduler_paused:
+            scheduler.start()
+            logger.info("✅ Scheduler started via manual sync trigger")
+        
     except Exception as e:
         logger.error(f"Sync trigger error: {e}")
         return jsonify({"error": str(e)}), 500
@@ -609,6 +614,33 @@ def clear_cache():
         
     except Exception as e:
         logger.error(f"Cache clear error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/scheduler/start', methods=['POST'])
+def start_scheduler():
+    """Manually start the scheduler"""
+    try:
+        if not scheduler:
+            return jsonify({"error": "Scheduler not initialized"}), 500
+        
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated", "redirect": "/"}), 401
+        
+        if scheduler.is_running():
+            return jsonify({
+                "success": True,
+                "message": "Scheduler is already running"
+            })
+        
+        scheduler.start()
+        
+        return jsonify({
+            "success": True,
+            "message": "Scheduler started successfully"
+        })
+        
+    except Exception as e:
+        logger.error(f"Scheduler start error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/cache/stats')
