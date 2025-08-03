@@ -862,12 +862,13 @@ class CalendarWriter:
                 end_date = None
             
             if start_date and end_date:
+                # For all-day events, use dateTime format with timezone
                 event_data['start'] = {
-                    'date': start_date,
+                    'dateTime': f"{start_date}T00:00:00.0000000",
                     'timeZone': 'Central Standard Time'
                 }
                 event_data['end'] = {
-                    'date': end_date,
+                    'dateTime': f"{end_date}T00:00:00.0000000",
                     'timeZone': 'Central Standard Time'
                 }
             else:
