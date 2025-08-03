@@ -700,6 +700,9 @@ class CalendarWriter:
             start_date = source_event.get('start', {}).get('dateTime', '').split('T')[0]
             end_date = source_event.get('end', {}).get('dateTime', '').split('T')[0]
             
+            # For all-day events, end date should be the day AFTER the event
+            end_date = self._get_next_day(end_date)
+            
             start_field = {
                 'date': start_date,
                 'timeZone': source_event.get('start', {}).get('timeZone', 'UTC')
@@ -732,6 +735,14 @@ class CalendarWriter:
             event_data['recurrence'] = source_event.get('recurrence')
         
         return event_data
+    
+    def _get_next_day(self, date_string):
+        """Get the next day for all-day event end date"""
+        from datetime import datetime, timedelta
+        
+        date_obj = datetime.strptime(date_string, '%Y-%m-%d')
+        next_day = date_obj + timedelta(days=1)
+        return next_day.strftime('%Y-%m-%d')
     
     def batch_create_events(self, calendar_id: str, events: List[Dict], batch_size: int = 20) -> Dict:
         """Create multiple events in batches for better performance"""

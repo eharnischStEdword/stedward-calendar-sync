@@ -15,7 +15,8 @@ import sys
 import config
 import json
 from datetime import datetime
-from flask import Flask, render_template, jsonify, redirect, session, request
+from flask import Flask, render_template, jsonify, redirect, session, request, copy_current_request_context
+import threading
 
 # Import timezone utilities
 from utils import DateTimeUtils
@@ -23,6 +24,18 @@ from utils import DateTimeUtils
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Add sync status file constant
+SYNC_STATUS_FILE = "sync_status.json"
+
+# Add sync status helper function
+def update_sync_status(status_data):
+    """Thread-safe status update using file system"""
+    try:
+        with open(SYNC_STATUS_FILE, 'w') as f:
+            json.dump(status_data, f)
+    except Exception as e:
+        logger.error(f"Failed to update sync status: {e}")
 
 # Initialize Flask
 app = Flask(__name__)
@@ -253,7 +266,7 @@ def index():
 
 @app.route('/sync', methods=['POST'])
 def trigger_sync():
-    """Trigger manual sync - returns immediately"""
+    """Trigger manual sync with thread-safe status updates"""
     try:
         if not sync_engine:
             return jsonify({"error": "Sync engine not initialized"}), 500
@@ -261,18 +274,38 @@ def trigger_sync():
         if not auth_manager or not auth_manager.is_authenticated():
             return jsonify({"error": "Not authenticated", "redirect": "/"}), 401
         
-        # Start sync in background thread
-        import threading
-        sync_thread = threading.Thread(
-            target=sync_engine.sync_calendars,
-            daemon=True
-        )
+        @copy_current_request_context
+        def background_sync():
+            with app.app_context():
+                try:
+                    # Update status to running
+                    update_sync_status({"status": "running", "progress": 0})
+                    
+                    # Perform actual sync
+                    result = sync_engine.sync_calendars()
+                    
+                    # Update with final results
+                    update_sync_status({
+                        "status": "completed",
+                        "result": result,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                except Exception as e:
+                    update_sync_status({
+                        "status": "error", 
+                        "error": str(e),
+                        "timestamp": datetime.now().isoformat()
+                    })
+        
+        # Start background task with proper context
+        sync_thread = threading.Thread(target=background_sync)
+        sync_thread.daemon = True
         sync_thread.start()
         
         return jsonify({
             "success": True,
             "message": "Sync started in background",
-            "status": "Check /status endpoint for progress"
+            "status": "Check /sync/status endpoint for progress"
         })
         
         # Also start scheduler if not running
@@ -283,6 +316,19 @@ def trigger_sync():
     except Exception as e:
         logger.error(f"Sync trigger error: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/sync/status')
+def sync_status():
+    """Get current sync status from file"""
+    try:
+        if os.path.exists(SYNC_STATUS_FILE):
+            with open(SYNC_STATUS_FILE, 'r') as f:
+                status = json.load(f)
+            return jsonify(status)
+        else:
+            return jsonify({"status": "idle"})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)})
 
 @app.route('/auth/callback')
 def auth_callback():
