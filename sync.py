@@ -1107,7 +1107,7 @@ class SyncEngine:
         }
         
         # Process in very small batches to avoid timeouts
-        BATCH_SIZE = 5
+        BATCH_SIZE = 20  # Changed from 5
         
         # Phase 1: Additions
         if to_add:

@@ -1294,6 +1294,13 @@ def event_search():
         logger.error(f"Event search error: {e}")
         return f"Error: {str(e)}", 500
 
+def handle_timeout(signum, frame):
+    """Handle worker timeout gracefully"""
+    logger.warning("Worker timeout - completing current operation")
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, handle_timeout)
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting calendar sync service on port {port}")

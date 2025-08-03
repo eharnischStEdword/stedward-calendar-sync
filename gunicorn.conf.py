@@ -7,7 +7,8 @@ import os
 # Basic worker configuration
 workers = 1  # Start with just 1 worker for Render
 worker_class = 'sync'  # Use sync workers instead of threaded
-timeout = 600  # Increased to 10 minutes for large calendar syncs
+timeout = 120  # Reduced from 600 to 120 seconds
+graceful_timeout = 30  # Add this line
 keepalive = 2
 
 # Bind to the port Render provides
