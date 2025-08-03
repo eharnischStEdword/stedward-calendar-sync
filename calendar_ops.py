@@ -8,7 +8,7 @@ Consolidated Calendar Operations - Handles all read/write operations to Microsof
 import logging
 import requests
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pytz
 import uuid
 
@@ -780,7 +780,7 @@ class CalendarWriter:
             raise
     
     def _prepare_event_data(self, source_event: Dict) -> Dict:
-        """Prepare event data for creation/update - MINIMAL DIAGNOSTIC VERSION"""
+        """Prepare event data for creation/update"""
         # Extract location for body content
         source_location = source_event.get('location', {})
         location_text = ""
@@ -807,18 +807,33 @@ class CalendarWriter:
             'sensitivity': 'normal'  # Ensure not marked as private
         }
         
-        # MINIMAL DIAGNOSTIC: Trace the data flow
+        # Calculate event duration for diagnostic purposes
         subject = source_event.get('subject', 'Unknown')
         start_data = source_event.get('start', {})
         end_data = source_event.get('end', {})
         source_is_all_day = source_event.get('isAllDay', False)
         
-        # Surgical logging - only for events that might be problematic
-        if 'Adoration' in subject or 'Mass' in subject or 'Practice' in subject:
-            logger.info(f"🔍 TRACING '{subject}':")
-            logger.info(f"  Source isAllDay: {source_is_all_day}")
-            logger.info(f"  Start data: {start_data}")
-            logger.info(f"  End data: {end_data}")
+        # DIAGNOSTIC: Log long events for review
+        start_str = start_data.get('dateTime', '')
+        end_str = end_data.get('dateTime', '')
+        
+        if start_str and end_str and not source_is_all_day:
+            try:
+                start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+                end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
+                duration_hours = (end_dt - start_dt).total_seconds() / 3600
+                
+                # Log events longer than 8 hours for review
+                if duration_hours > 8:
+                    # Convert to Central Time for display
+                    central_start = start_dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=-5)))  # CST
+                    central_end = end_dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=-5)))  # CST
+                    logger.info(f"📏 Long event detected: '{subject}'")
+                    logger.info(f"   Duration: {duration_hours:.1f} hours")
+                    logger.info(f"   Central Time: {central_start.strftime('%I:%M %p')} to {central_end.strftime('%I:%M %p')}")
+                    logger.info(f"   This may be intentional (e.g., all-day adoration) or a data entry error")
+            except Exception as e:
+                logger.debug(f"Could not calculate duration for {subject}: {e}")
         
         # Simple logic: Use source's isAllDay flag directly
         event_data['isAllDay'] = source_is_all_day
@@ -854,8 +869,6 @@ class CalendarWriter:
                     'date': end_date,
                     'timeZone': 'Central Standard Time'
                 }
-                if 'Adoration' in subject or 'Mass' in subject or 'Practice' in subject:
-                    logger.info(f"📅 All-day event '{subject}' -> {start_date} to {end_date}")
             else:
                 event_data['start'] = source_event.get('start', {})
                 event_data['end'] = source_event.get('end', {})
@@ -863,9 +876,6 @@ class CalendarWriter:
             # Timed event handling - preserve original data
             event_data['start'] = start_data
             event_data['end'] = end_data
-            
-            if 'Adoration' in subject or 'Mass' in subject or 'Practice' in subject:
-                logger.info(f"⏰ Timed event '{subject}' -> Start: {start_data.get('dateTime')} End: {end_data.get('dateTime')}")
         
         # Add recurrence for series masters
         if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):

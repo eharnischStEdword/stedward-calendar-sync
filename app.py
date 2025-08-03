@@ -896,6 +896,81 @@ def debug_event_details(event_subject):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/debug/event-durations')
+def debug_event_durations():
+    """Report on event durations to identify potential data issues"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source events
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        events = sync_engine.reader.get_public_events(source_id)
+        
+        duration_analysis = {
+            'under_2_hours': [],
+            '2_to_4_hours': [],
+            '4_to_8_hours': [],
+            'over_8_hours': [],
+            'all_day': []
+        }
+        
+        for event in events:
+            if event.get('isAllDay', False):
+                duration_analysis['all_day'].append(event.get('subject'))
+                continue
+                
+            start_str = event.get('start', {}).get('dateTime', '')
+            end_str = event.get('end', {}).get('dateTime', '')
+            
+            if start_str and end_str:
+                try:
+                    start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+                    end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
+                    duration_hours = (end_dt - start_dt).total_seconds() / 3600
+                    
+                    # Convert to Central Time for display
+                    central_start = start_dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=-5)))  # CST
+                    central_end = end_dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=-5)))  # CST
+                    
+                    event_info = {
+                        'subject': event.get('subject'),
+                        'duration_hours': round(duration_hours, 1),
+                        'start_time': central_start.strftime('%I:%M %p'),
+                        'end_time': central_end.strftime('%I:%M %p'),
+                        'date': central_start.strftime('%Y-%m-%d')
+                    }
+                    
+                    if duration_hours < 2:
+                        duration_analysis['under_2_hours'].append(event_info)
+                    elif duration_hours < 4:
+                        duration_analysis['2_to_4_hours'].append(event_info)
+                    elif duration_hours < 8:
+                        duration_analysis['4_to_8_hours'].append(event_info)
+                    else:
+                        duration_analysis['over_8_hours'].append(event_info)
+                        
+                except Exception as e:
+                    logger.debug(f"Error analyzing {event.get('subject')}: {e}")
+        
+        return jsonify({
+            'analysis': duration_analysis,
+            'recommendations': [
+                'Events over 8 hours: Verify these are intentional (e.g., all-day adoration)',
+                'Events with odd durations: Check for data entry errors in source calendar',
+                'All-day events: Should have no specific times in source'
+            ]
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/debug/duplicates')
 def debug_duplicates():
     """Debug duplicate events in the target calendar"""
