@@ -268,25 +268,59 @@ class CalendarWriter:
         if not headers:
             return False
         
-        # Format the occurrence date properly
-        clean_date = occurrence_date.replace('Z', '').replace('+00:00', '')
-        if 'T' in clean_date:
-            clean_date = clean_date.split('.')[0]  # Remove milliseconds if present
-        
-        # The occurrence is identified by the original start datetime
-        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{event_id}/instances/{clean_date}"
-        
-        # Prepare update data
-        prepared_data = self._prepare_event_data(update_data)
-        
         try:
-            response = requests.patch(url, headers=headers, json=prepared_data, timeout=30)
+            # First, get the specific occurrence using the time window approach
+            # Parse the occurrence date to create a time window
+            from datetime import datetime, timedelta
+            
+            # Parse the occurrence date (should be in UTC)
+            occurrence_dt = datetime.fromisoformat(occurrence_date.replace('Z', '+00:00'))
+            
+            # Create a 1-hour window around the occurrence
+            start_window = (occurrence_dt - timedelta(hours=1)).isoformat()
+            end_window = (occurrence_dt + timedelta(hours=1)).isoformat()
+            
+            # Get the specific occurrence using the time window
+            instances_url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{event_id}/instances"
+            params = {
+                'startDateTime': start_window,
+                'endDateTime': end_window
+            }
+            
+            response = requests.get(instances_url, headers=headers, params=params, timeout=30)
+            
+            if response.status_code != 200:
+                logger.error(f"❌ Failed to get occurrence: {response.status_code}")
+                return False
+            
+            instances = response.json().get('value', [])
+            
+            # Find the occurrence that matches our target date
+            target_occurrence = None
+            for instance in instances:
+                instance_start = instance.get('start', {}).get('dateTime', '')
+                if instance_start.startswith(occurrence_date.split('T')[0]):  # Match date part
+                    target_occurrence = instance
+                    break
+            
+            if not target_occurrence:
+                logger.error(f"❌ Occurrence not found for date {occurrence_date}")
+                return False
+            
+            # Now update the occurrence using its ID
+            occurrence_id = target_occurrence['id']
+            update_url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{occurrence_id}"
+            
+            # Prepare update data
+            prepared_data = self._prepare_event_data(update_data)
+            
+            response = requests.patch(update_url, headers=headers, json=prepared_data, timeout=30)
             
             if response.status_code == 401:
                 # Try refreshing token
                 if self.auth.refresh_access_token():
                     headers = self.auth.get_headers()
-                    response = requests.patch(url, headers=headers, json=prepared_data, timeout=30)
+                    response = requests.patch(update_url, headers=headers, json=prepared_data, timeout=30)
                 else:
                     logger.error("Authentication failed during occurrence update")
                     return False
