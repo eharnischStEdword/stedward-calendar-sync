@@ -583,13 +583,19 @@
                     credentials: 'same-origin'
                 });
                 
+                // Check if response is JSON
+                const contentType = response.headers.get("content-type");
+                if (!contentType || !contentType.includes("application/json")) {
+                    window.location.href = '/';
+                    return;
+                }
+                
                 const result = await response.json();
                 
                 if (result.success) {
                     const msg = `✅ Sync completed! Added: ${result.added || 0}, Updated: ${result.updated || 0}, Deleted: ${result.deleted || 0}`;
                     showMessage(msg, 'success');
                     
-                    // Update last sync time if provided
                     const lastSyncElement = document.getElementById('last-sync-time');
                     if (lastSyncElement && result.last_sync_time_display) {
                         lastSyncElement.textContent = result.last_sync_time_display;
@@ -599,12 +605,15 @@
                 }
                 
             } catch (error) {
-                showMessage('❌ Network error: ' + error.message, 'error');
+                if (error.message.includes('JSON')) {
+                    window.location.href = '/';
+                } else {
+                    showMessage('❌ Network error: ' + error.message, 'error');
+                }
             } finally {
                 setButtonState('sync-btn', false);
                 isOperationInProgress = false;
                 
-                // Refresh status
                 setTimeout(loadStatus, 1000);
             }
         }
