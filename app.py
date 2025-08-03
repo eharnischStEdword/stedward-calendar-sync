@@ -15,7 +15,7 @@ import sys
 import config
 import json
 from datetime import datetime
-from flask import Flask, render_template, jsonify, redirect, session, request, copy_current_request_context
+from flask import Flask, render_template, jsonify, redirect, session, request, copy_current_request_context, make_response
 import threading
 
 # Import timezone utilities
@@ -43,6 +43,48 @@ app.secret_key = secrets.token_hex(32)
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+# Security Headers Middleware
+@app.after_request
+def add_security_headers(response):
+    """Add comprehensive security headers to all responses"""
+    # HTTPS Enforcement
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains; preload'
+    
+    # Content Security Policy - Strict but allows necessary resources
+    csp_policy = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' data:; "
+        "connect-src 'self' https://graph.microsoft.com https://login.microsoftonline.com; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "upgrade-insecure-requests"
+    )
+    response.headers['Content-Security-Policy'] = csp_policy
+    
+    # Additional Security Headers
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    
+    # Remove server information
+    response.headers['Server'] = 'St. Edward Calendar Sync'
+    
+    return response
+
+# HTTPS Enforcement Middleware
+@app.before_request
+def enforce_https():
+    """Enforce HTTPS for all requests"""
+    if request.headers.get('X-Forwarded-Proto') == 'http':
+        url = request.url.replace('http://', 'https://', 1)
+        return redirect(url, code=301)
 
 # State persistence functions
 def save_scheduler_state(paused: bool):
@@ -798,7 +840,7 @@ def apple_touch_icon():
     import base64
     
     # Calendar emoji SVG as apple touch icon
-    svg_content = '''<svg width="180" height="180" xmlns="http://www.w3.org/2000/svg">
+    svg_content = '''<svg width="180" height="180" xmlns="https://www.w3.org/2000/svg">
       <rect width="180" height="180" fill="#f8f8f8" rx="36"/>
       <text x="50%" y="55%" font-family="Apple Color Emoji,Segoe UI Emoji,Noto Color Emoji" font-size="120" text-anchor="middle">📅</text>
     </svg>'''
@@ -812,7 +854,7 @@ def apple_touch_icon():
 @app.route('/favicon.ico')
 def favicon():
     """Serve favicon"""
-    return redirect("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📅%3C/text%3E%3C/svg%3E")
+    return redirect("data:image/svg+xml,%3Csvg xmlns='https://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📅%3C/text%3E%3C/svg%3E")
 
 # Add this route to your app.py file (add it before the if __name__ == '__main__': line)
 
