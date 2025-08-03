@@ -266,7 +266,7 @@ def index():
 
 @app.route('/sync', methods=['POST'])
 def trigger_sync():
-    """Trigger manual sync with thread-safe status updates"""
+    """Trigger manual sync"""
     try:
         if not sync_engine:
             return jsonify({"error": "Sync engine not initialized"}), 500
@@ -274,44 +274,14 @@ def trigger_sync():
         if not auth_manager or not auth_manager.is_authenticated():
             return jsonify({"error": "Not authenticated", "redirect": "/"}), 401
         
-        @copy_current_request_context
-        def background_sync():
-            with app.app_context():
-                try:
-                    # Update status to running
-                    update_sync_status({"status": "running", "progress": 0})
-                    
-                    # Perform actual sync
-                    result = sync_engine.sync_calendars()
-                    
-                    # Update with final results
-                    update_sync_status({
-                        "status": "completed",
-                        "result": result,
-                        "timestamp": datetime.now().isoformat()
-                    })
-                except Exception as e:
-                    update_sync_status({
-                        "status": "error", 
-                        "error": str(e),
-                        "timestamp": datetime.now().isoformat()
-                    })
+        # Run sync synchronously to capture results
+        result = sync_engine.sync_calendars()
         
-        # Start background task with proper context
-        sync_thread = threading.Thread(target=background_sync)
-        sync_thread.daemon = True
-        sync_thread.start()
+        # Add the formatted last sync time to the result
+        if result.get('success'):
+            result['last_sync_time_display'] = DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
         
-        return jsonify({
-            "success": True,
-            "message": "Sync started in background",
-            "status": "Check /sync/status endpoint for progress"
-        })
-        
-        # Also start scheduler if not running
-        if scheduler and not scheduler.is_running() and not scheduler_paused:
-            scheduler.start()
-            logger.info("✅ Scheduler started via manual sync trigger")
+        return jsonify(result)
         
     except Exception as e:
         logger.error(f"Sync trigger error: {e}")

@@ -692,35 +692,12 @@ class CalendarWriter:
         if location_text:
             body_content = f"<p><strong>Location:</strong> {location_text}</p>"
         
-        # Handle all-day events properly
+        # Check if this is an all-day event
         is_all_day = source_event.get('isAllDay', False)
-        
-        if is_all_day:
-            # For all-day events, Microsoft Graph expects 'date' field, not 'dateTime'
-            start_date = source_event.get('start', {}).get('dateTime', '').split('T')[0]
-            end_date = source_event.get('end', {}).get('dateTime', '').split('T')[0]
-            
-            # For all-day events, end date should be the day AFTER the event
-            end_date = self._get_next_day(end_date)
-            
-            start_field = {
-                'date': start_date,
-                'timeZone': source_event.get('start', {}).get('timeZone', 'UTC')
-            }
-            end_field = {
-                'date': end_date,
-                'timeZone': source_event.get('end', {}).get('timeZone', 'UTC')
-            }
-        else:
-            # For timed events, use the original start/end times
-            start_field = source_event.get('start')
-            end_field = source_event.get('end')
         
         # Build event data
         event_data = {
             'subject': source_event.get('subject'),
-            'start': start_field,
-            'end': end_field,
             'categories': source_event.get('categories', []),
             'body': {'contentType': 'html', 'content': body_content},
             'location': {},  # Clear location for privacy
@@ -729,6 +706,16 @@ class CalendarWriter:
             'isReminderOn': False,  # No reminders on public calendar
             'sensitivity': 'normal'  # Ensure not marked as private
         }
+        
+        # Handle start/end times based on event type
+        if is_all_day:
+            # For all-day events, just copy the structure as-is
+            event_data['start'] = source_event.get('start')
+            event_data['end'] = source_event.get('end')
+        else:
+            # For timed events, ensure proper structure
+            event_data['start'] = source_event.get('start')
+            event_data['end'] = source_event.get('end')
         
         # Add recurrence for series masters
         if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
