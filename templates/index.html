@@ -350,6 +350,8 @@
                     </div>
                     <div style="text-align: right;">
                         <div>Last sync: <span id="last-sync-time">Never</span></div>
+                        <div>Next scheduled: <span id="next-sync-time">Unknown</span></div>
+                        <div style="font-size: 0.8rem; color: #888;">Scheduled syncs today: <span id="scheduled-sync-count">0</span></div>
                         <div class="timezone-info">All times in Central Time (CT)</div>
                     </div>
                 </div>
@@ -567,6 +569,18 @@
                 } else {
                     lastSyncElement.textContent = 'Never';
                 }
+            }
+
+            // Update next scheduled sync time
+            const nextSyncElement = document.getElementById('next-sync-time');
+            if (nextSyncElement && status.next_scheduled_sync_display) {
+                nextSyncElement.textContent = status.next_scheduled_sync_display;
+            }
+
+            // Update scheduled sync count
+            const scheduledCountElement = document.getElementById('scheduled-sync-count');
+            if (scheduledCountElement && status.scheduled_sync_count !== undefined) {
+                scheduledCountElement.textContent = status.scheduled_sync_count;
             }
         }
 

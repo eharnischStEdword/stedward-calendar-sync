@@ -350,6 +350,7 @@ class CalendarReader:
         stats = {
             'total_events': len(all_events),
             'non_public': 0,
+            'not_busy': 0,
             'tentative': 0,
             'recurring_instances': 0,
             'past_events': 0,
@@ -375,17 +376,15 @@ class CalendarReader:
             categories = event.get('categories', [])
             if 'Public' not in categories:
                 stats['non_public'] += 1
-                # Debug logging for specific events
-                if 'Ladies Auxiliary' in event.get('subject', ''):
-                    logger.info(f"🔍 Ladies Auxiliary event filtered - not public: {event.get('subject')} (categories: {categories})")
+                logger.debug(f"Skipping non-public event: {event.get('subject')} (categories: {categories})")
                 continue
-            
-            # Include tentative events but mark them appropriately
+
+            # CRITICAL: Also check if event is marked as Busy
             show_as = event.get('showAs', 'busy')
-            if show_as == 'tentative':
-                stats['tentative'] += 1
-                logger.info(f"📝 Including tentative event: {event.get('subject')} (showAs: {show_as})")
-                # Continue processing - don't skip tentative events
+            if show_as != 'busy':
+                stats['not_busy'] += 1
+                logger.info(f"📝 Skipping non-busy public event: {event.get('subject')} (showAs: {show_as})")
+                continue
             
             # ALWAYS skip recurring instances to avoid duplicates
             event_type = event.get('type', 'singleInstance')
@@ -773,7 +772,7 @@ class CalendarWriter:
             raise
     
     def _prepare_event_data(self, source_event: Dict) -> Dict:
-        """Prepare event data for creation/update"""
+        """Prepare event data for creation/update with proper all-day handling"""
         # Extract location for body content
         source_location = source_event.get('location', {})
         location_text = ""
@@ -789,10 +788,10 @@ class CalendarWriter:
         if location_text:
             body_content = f"<p><strong>Location:</strong> {location_text}</p>"
         
-        # Check if this is an all-day event using our detection function
-        is_all_day = is_all_day_event(source_event)
+        # CRITICAL: Detect all-day events properly
+        is_all_day = source_event.get('isAllDay', False)
         
-        # Build event data
+        # Build base event data
         event_data = {
             'subject': source_event.get('subject'),
             'categories': source_event.get('categories', []),
@@ -804,27 +803,51 @@ class CalendarWriter:
             'sensitivity': 'normal'  # Ensure not marked as private
         }
         
-        # Handle start/end times based on event type
+        # CRITICAL: Handle all-day events with proper date-only format
         if is_all_day:
-            # Use all-day formatting to prevent timezone issues
-            all_day_format = format_all_day_event(source_event)
-            if all_day_format:
-                event_data.update(all_day_format)
-                logger.info(f"📅 Processing as all-day event: {source_event.get('subject')} (All-day: {is_all_day})")
+            # For all-day events, Microsoft Graph expects date-only format in start/end
+            start_dt = source_event.get('start', {})
+            end_dt = source_event.get('end', {})
+            
+            # Extract just the date part
+            if 'dateTime' in start_dt:
+                # Convert "2025-08-04T00:00:00.0000000" to "2025-08-04"
+                start_date = start_dt['dateTime'].split('T')[0]
+            elif 'date' in start_dt:
+                start_date = start_dt['date']
             else:
-                # Fallback to regular formatting if all-day parsing fails
-                logger.warning(f"⚠️ All-day formatting failed for '{source_event.get('subject')}', using fallback")
-                event_data.update({
-                    'start': source_event.get('start', {}),
-                    'end': source_event.get('end', {})
-                })
+                logger.error(f"No valid start date for all-day event: {source_event.get('subject')}")
+                start_date = None
+                
+            if 'dateTime' in end_dt:
+                # Convert "2025-08-05T00:00:00.0000000" to "2025-08-05"
+                end_date = end_dt['dateTime'].split('T')[0]
+            elif 'date' in end_dt:
+                end_date = end_dt['date']
+            else:
+                logger.error(f"No valid end date for all-day event: {source_event.get('subject')}")
+                end_date = None
+            
+            if start_date and end_date:
+                # Use date-only format for all-day events
+                event_data['start'] = {
+                    'date': start_date,
+                    'timeZone': 'Central Standard Time'
+                }
+                event_data['end'] = {
+                    'date': end_date,
+                    'timeZone': 'Central Standard Time'
+                }
+                logger.info(f"📅 Preparing all-day event '{source_event.get('subject')}' with dates: {start_date} to {end_date}")
+            else:
+                # Fallback if date extraction fails
+                event_data['start'] = source_event.get('start', {})
+                event_data['end'] = source_event.get('end', {})
         else:
-            # Regular timed event - use existing timezone handling
-            event_data.update({
-                'start': source_event.get('start', {}),
-                'end': source_event.get('end', {})
-            })
-            logger.debug(f"⏰ Processing as timed event: {source_event.get('subject')} (All-day: {is_all_day})")
+            # Regular timed event - use dateTime format
+            event_data['start'] = source_event.get('start', {})
+            event_data['end'] = source_event.get('end', {})
+            logger.debug(f"⏰ Preparing timed event: {source_event.get('subject')}")
         
         # Add recurrence for series masters
         if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):

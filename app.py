@@ -287,6 +287,16 @@ def get_status():
                 except:
                     status['last_sync_time_display'] = "Unknown"
         
+        # Add scheduler details to status
+        if scheduler:
+            scheduler_status = scheduler.get_scheduler_status()
+            status['scheduler_details'] = scheduler_status
+            status['last_scheduled_sync'] = scheduler_status.get('last_scheduled_sync')
+            status['last_scheduled_sync_display'] = scheduler_status.get('last_scheduled_sync_display', 'Never')
+            status['next_scheduled_sync'] = scheduler_status.get('next_scheduled_sync')
+            status['next_scheduled_sync_display'] = scheduler_status.get('next_scheduled_sync_display', 'Unknown')
+            status['scheduled_sync_count'] = scheduler_status.get('scheduled_sync_count', 0)
+        
         return jsonify(status)
         
     except Exception as e:

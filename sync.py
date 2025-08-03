@@ -1468,6 +1468,11 @@ class SyncScheduler:
         self.scheduler_lock = Lock()
         self.scheduler_running = False
         self.scheduler_thread = None
+        # ADD THESE LINES:
+        self.last_scheduled_sync = None
+        self.next_scheduled_sync = None
+        self.scheduled_sync_count = 0
+        self.scheduled_sync_history = []  # Keep last 10 scheduled syncs
     
     def start(self):
         """Start the scheduler"""
@@ -1513,6 +1518,18 @@ class SyncScheduler:
         
         logger.info(f"Scheduler stopped at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}")
     
+    def get_scheduler_status(self):
+        """Get detailed scheduler status including sync times"""
+        return {
+            'running': self.is_running(),
+            'last_scheduled_sync': self.last_scheduled_sync.isoformat() if self.last_scheduled_sync else None,
+            'last_scheduled_sync_display': DateTimeUtils.format_central_time(self.last_scheduled_sync) if self.last_scheduled_sync else 'Never',
+            'next_scheduled_sync': self.next_scheduled_sync.isoformat() if self.next_scheduled_sync else None,
+            'next_scheduled_sync_display': DateTimeUtils.format_central_time(self.next_scheduled_sync) if self.next_scheduled_sync else 'Unknown',
+            'scheduled_sync_count': self.scheduled_sync_count,
+            'recent_scheduled_syncs': self.scheduled_sync_history[-5:]  # Last 5 syncs
+        }
+    
     def _scheduled_sync(self):
         """Function called by scheduler - IMPROVED with error handling"""
         try:
@@ -1544,7 +1561,27 @@ class SyncScheduler:
     def _scheduled_sync_with_health_check(self):
         """Function called by scheduler - runs health check before sync"""
         try:
-            logger.info(f"Running scheduled sync with health check (every 23 minutes) at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}")
+            # Record the scheduled sync attempt
+            self.last_scheduled_sync = DateTimeUtils.get_central_time()
+            self.scheduled_sync_count += 1
+            
+            # Calculate next sync time (23 minutes from now)
+            self.next_scheduled_sync = DateTimeUtils.get_central_time() + timedelta(minutes=23)
+            
+            # Add to history
+            sync_record = {
+                'timestamp': self.last_scheduled_sync.isoformat(),
+                'success': False,  # Will update after sync
+                'type': 'scheduled'
+            }
+            self.scheduled_sync_history.append(sync_record)
+            if len(self.scheduled_sync_history) > 10:
+                self.scheduled_sync_history.pop(0)
+            
+            logger.info("="*60)
+            logger.info(f"🔄 SCHEDULED SYNC TRIGGERED at {DateTimeUtils.format_central_time(self.last_scheduled_sync)}")
+            logger.info(f"⏰ Next scheduled sync will be at: {DateTimeUtils.format_central_time(self.next_scheduled_sync)}")
+            logger.info("="*60)
             
             # Step 1: Run health check first
             logger.info("💓 Running pre-sync health check...")
@@ -1556,6 +1593,14 @@ class SyncScheduler:
             # Step 2: Health check passed, run sync
             logger.info("✅ Health check passed, proceeding with sync...")
             self._scheduled_sync()
+            
+            # Update the record as successful
+            if self.scheduled_sync_history:
+                self.scheduled_sync_history[-1]['success'] = True
+            
+            logger.info("="*60)
+            logger.info(f"✅ SCHEDULED SYNC COMPLETED at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}")
+            logger.info("="*60)
             
         except Exception as e:
             logger.error(f"❌ Scheduled sync with health check failed: {e}")

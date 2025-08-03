@@ -16,7 +16,7 @@ DEBUG = ENVIRONMENT == 'development'
 # Shared Mailbox Configuration
 SHARED_MAILBOX = os.environ.get('SHARED_MAILBOX', "your_shared_mailbox@yourdomain.org")
 SOURCE_CALENDAR = os.environ.get('SOURCE_CALENDAR', "Calendar")
-TARGET_CALENDAR = os.environ.get('TARGET_CALENDAR', "Public Calendar")
+TARGET_CALENDAR = os.environ.get('TARGET_CALENDAR', "St. Edward Public Calendar")
 
 # Azure AD Configuration
 CLIENT_ID = os.environ.get('CLIENT_ID', "your_client_id_here")
