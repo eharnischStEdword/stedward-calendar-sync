@@ -67,7 +67,7 @@ def initialize_components():
     
     if auth_manager is None:
         try:
-            from auth.microsoft_auth import MicrosoftAuth
+            from auth import MicrosoftAuth
             auth_manager = MicrosoftAuth()
             logger.info("✅ Auth manager initialized")
         except Exception as e:
