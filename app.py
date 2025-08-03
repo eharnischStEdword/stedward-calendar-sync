@@ -18,7 +18,7 @@ from datetime import datetime
 from flask import Flask, render_template, jsonify, redirect, session, request
 
 # Import timezone utilities
-from utils.timezone import get_central_time, format_central_time, utc_to_central
+from utils import get_central_time, format_central_time, utc_to_central
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
