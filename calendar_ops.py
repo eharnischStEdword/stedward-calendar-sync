@@ -64,27 +64,27 @@ def format_all_day_event(source_event):
     """
     Convert an all-day event to proper Microsoft Graph format.
     
-    This ensures all-day events use date-only format and isAllDay flag,
-    preventing timezone conversion issues.
+    Microsoft Graph requires dateTime format even for all-day events,
+    but interprets them as date-only when isAllDay is true.
     """
     try:
         start_time = source_event.get('start', {})
         end_time = source_event.get('end', {})
         
-        # Extract date components only, ignoring time
+        # Extract date components and format as midnight times
         if 'dateTime' in start_time:
             start_dt = datetime.fromisoformat(start_time['dateTime'].replace('Z', '+00:00'))
-            start_date = start_dt.date().isoformat()
+            start_date_str = start_dt.date().isoformat() + "T00:00:00.0000000"
         elif 'date' in start_time:
-            start_date = start_time['date']
+            start_date_str = start_time['date'] + "T00:00:00.0000000"
         else:
             raise ValueError("No valid start date found")
             
         if 'dateTime' in end_time:
             end_dt = datetime.fromisoformat(end_time['dateTime'].replace('Z', '+00:00'))
-            end_date = end_dt.date().isoformat()
+            end_date_str = end_dt.date().isoformat() + "T00:00:00.0000000"
         elif 'date' in end_time:
-            end_date = end_time['date']
+            end_date_str = end_time['date'] + "T00:00:00.0000000"
         else:
             raise ValueError("No valid end date found")
         
@@ -92,11 +92,11 @@ def format_all_day_event(source_event):
         return {
             'isAllDay': True,
             'start': {
-                'date': start_date,
-                'timeZone': 'UTC'  # Timezone is ignored for all-day events
+                'dateTime': start_date_str,
+                'timeZone': 'UTC'
             },
             'end': {
-                'date': end_date,
+                'dateTime': end_date_str,
                 'timeZone': 'UTC'
             }
         }
