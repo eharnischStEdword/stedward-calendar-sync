@@ -18,7 +18,7 @@ from datetime import datetime
 from flask import Flask, render_template, jsonify, redirect, session, request
 
 # Import timezone utilities
-from utils import get_central_time, format_central_time, utc_to_central
+from utils import DateTimeUtils
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -99,7 +99,7 @@ def health_check():
     """Health check for Render"""
     return jsonify({
         "status": "healthy",
-        "timestamp": get_central_time().isoformat(),
+        "timestamp": DateTimeUtils.get_central_time().isoformat(),
         "service": "st-edward-calendar-sync",
         "timezone": "America/Chicago"
     }), 200
@@ -128,7 +128,7 @@ def detailed_health():
     
     return jsonify({
         "status": status,
-        "timestamp": get_central_time().isoformat(),
+        "timestamp": DateTimeUtils.get_central_time().isoformat(),
         "timezone": "America/Chicago",
         "checks": checks
     })
@@ -153,7 +153,7 @@ def get_status():
             "rate_limit_remaining": 20,
             "total_syncs": 0,
             "timezone": "America/Chicago",
-            "current_time": get_central_time().isoformat() if hasattr(get_central_time(), 'isoformat') else str(get_central_time())
+            "current_time": DateTimeUtils.get_central_time().isoformat() if hasattr(DateTimeUtils.get_central_time(), 'isoformat') else str(DateTimeUtils.get_central_time())
         }
         
         if sync_engine:
@@ -323,9 +323,9 @@ def debug_info():
     """Basic debug information"""
     try:
         debug_data = {
-            "timestamp": get_central_time().isoformat(),
+            "timestamp": DateTimeUtils.get_central_time().isoformat(),
             "timezone": "America/Chicago",
-            "current_time_display": format_central_time(get_central_time()),
+            "current_time_display": DateTimeUtils.format_central_time(DateTimeUtils.get_central_time()),
             "environment_vars": {
                 "CLIENT_ID": bool(os.environ.get('CLIENT_ID')),
                 "CLIENT_SECRET": bool(os.environ.get('CLIENT_SECRET')),
@@ -364,7 +364,7 @@ def get_metrics():
         
         # Add timezone info
         metrics['timezone'] = 'America/Chicago'
-        metrics['report_time'] = format_central_time(get_central_time())
+        metrics['report_time'] = DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
         
         return jsonify(metrics)
         
@@ -427,7 +427,7 @@ def validate_sync():
         )
         
         # Add formatted timestamp
-        validation_report['report_time_display'] = format_central_time(get_central_time())
+        validation_report['report_time_display'] = DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
         
         return jsonify(validation_report)
         
@@ -487,12 +487,12 @@ def toggle_scheduler():
             # Pause the scheduler
             scheduler.stop()
             message = "Scheduler paused - automatic syncing stopped"
-            logger.info(f"🔄 Scheduler paused at {format_central_time(get_central_time())}")
+            logger.info(f"🔄 Scheduler paused at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}")
         else:
             # Resume the scheduler
             scheduler.start()
             message = "Scheduler resumed - automatic syncing restarted"
-            logger.info(f"🔄 Scheduler resumed at {format_central_time(get_central_time())}")
+            logger.info(f"🔄 Scheduler resumed at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}")
         
         return jsonify({
             "message": message,
@@ -544,7 +544,7 @@ def debug_calendars():
                 "shared_mailbox": config.SHARED_MAILBOX
             },
             "timezone": "America/Chicago",
-            "current_time": format_central_time(get_central_time()),
+            "current_time": DateTimeUtils.format_central_time(DateTimeUtils.get_central_time()),
             "web_calendar_url": "https://outlook.office365.com/owa/calendar/fbd704b50f2540068cb048469a830830@stedward.org/e399b41349f3441ca9b092248fc807f56673636587944979855/calendar.html"
         })
         
@@ -744,7 +744,7 @@ def debug_duplicates():
             'duplicate_count': len(duplicates),
             'signature_collisions': signature_collisions,
             'signature_collision_count': len(signature_collisions),
-            'analysis_time': format_central_time(get_central_time())
+            'analysis_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
         })
         
     except Exception as e:
@@ -767,7 +767,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 # Initialize on startup
 logger.info("🚀 Starting St. Edward Calendar Sync")
 logger.info(f"🕐 Server timezone: America/Chicago")
-logger.info(f"🕐 Current time: {format_central_time(get_central_time())}")
+logger.info(f"🕐 Current time: {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}")
 initialize_components()
 
 @app.route('/apple-touch-icon.png')
@@ -825,7 +825,7 @@ def bulletin_events():
         import requests
         
         central_tz = pytz.timezone('America/Chicago')
-        today = get_central_time().date()
+        today = DateTimeUtils.get_central_time().date()
         
         if week_param == 'current':
             # Current week (Sunday to Saturday)
@@ -995,7 +995,7 @@ def bulletin_events():
                              days=formatted_days,
                              week_label=week_label,
                              week_param=week_param,
-                             generated_time=format_central_time(get_central_time()))
+                             generated_time=DateTimeUtils.format_central_time(DateTimeUtils.get_central_time()))
         
     except Exception as e:
         logger.error(f"Bulletin events error: {e}")
@@ -1029,7 +1029,7 @@ def event_search():
         import requests
         
         central_tz = pytz.timezone('America/Chicago')
-        today = get_central_time().date()
+        today = DateTimeUtils.get_central_time().date()
         start_date = today
         
         # Determine end date based on range
