@@ -696,16 +696,16 @@ class CalendarWriter:
         is_all_day = source_event.get('isAllDay', False)
         
         if is_all_day:
-            # For all-day events, use date format without time
+            # For all-day events, Microsoft Graph expects 'date' field, not 'dateTime'
             start_date = source_event.get('start', {}).get('dateTime', '').split('T')[0]
             end_date = source_event.get('end', {}).get('dateTime', '').split('T')[0]
             
             start_field = {
-                'dateTime': start_date,
+                'date': start_date,
                 'timeZone': source_event.get('start', {}).get('timeZone', 'UTC')
             }
             end_field = {
-                'dateTime': end_date,
+                'date': end_date,
                 'timeZone': source_event.get('end', {}).get('timeZone', 'UTC')
             }
         else:

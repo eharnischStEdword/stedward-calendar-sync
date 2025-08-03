@@ -800,6 +800,26 @@ def favicon():
 
 # Add this route to your app.py file (add it before the if __name__ == '__main__': line)
 
+def utc_to_central(utc_dt):
+    """Convert UTC datetime to Central Time"""
+    import pytz
+    if utc_dt.tzinfo is None:
+        utc_dt = pytz.UTC.localize(utc_dt)
+    central = pytz.timezone('America/Chicago')
+    return utc_dt.astimezone(central)
+
+def format_central_time(dt):
+    """Format datetime for display in Central timezone"""
+    if dt is None:
+        return 'Never'
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+    import pytz
+    central_tz = pytz.timezone('America/Chicago')
+    if dt.tzinfo is None:
+        dt = central_tz.localize(dt)
+    return dt.astimezone(central_tz).strftime('%b %d, %Y at %I:%M %p CT')
+
 @app.route('/bulletin-events')
 def bulletin_events():
     """Get events for the weekly bulletin with week selection"""
