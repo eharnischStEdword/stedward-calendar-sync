@@ -423,7 +423,8 @@ class SyncValidator:
             self._validate_event_dates,
             self._validate_no_duplicates,
             self._validate_recurring_events,
-            self._validate_event_integrity
+            self._validate_event_integrity,
+            self._validate_all_day_events
         ]
     
     def validate_sync_result(
@@ -632,6 +633,48 @@ class SyncValidator:
         
         return "event_integrity", passed, details
     
+    def _validate_all_day_events(
+        self,
+        source_events: List[Dict],
+        target_events: List[Dict]
+    ) -> Tuple[str, bool, str]:
+        """Validate that all-day events are properly handled"""
+        issues = []
+        
+        # Check that all-day events in source are all-day in target
+        source_all_day = [e for e in source_events if e.get('isAllDay', False)]
+        target_all_day = [e for e in target_events if e.get('isAllDay', False)]
+        
+        # Create maps for comparison
+        source_map = {e.get('subject', ''): e for e in source_all_day}
+        target_map = {e.get('subject', ''): e for e in target_all_day}
+        
+        for subject in source_map:
+            if subject in target_map:
+                source_event = source_map[subject]
+                target_event = target_map[subject]
+                
+                # Check that both are marked as all-day
+                if not target_event.get('isAllDay', False):
+                    issues.append(f"All-day event '{subject}' not marked as all-day in target")
+                
+                # Check that target uses date-only format for all-day events
+                target_start = target_event.get('start', {})
+                target_end = target_event.get('end', {})
+                
+                if 'dateTime' in target_start or 'dateTime' in target_end:
+                    issues.append(f"All-day event '{subject}' uses dateTime format instead of date-only")
+            else:
+                issues.append(f"All-day event '{subject}' missing from target")
+        
+        passed = len(issues) == 0
+        details = f"Found {len(issues)} all-day event issues" if not passed else "All all-day events properly formatted"
+        
+        if issues:
+            details += f": {', '.join(issues[:3])}"
+        
+        return "all_day_event_handling", passed, details
+    
     def _create_event_signature(self, event: Dict) -> str:
         """Create a signature for event comparison"""
         subject = event.get('subject', '').strip()
@@ -774,6 +817,11 @@ class SyncEngine:
             
             logger.info(f"📊 Retrieved {len(source_events)} source events and {len(target_events)} target events")
             
+            # Log all-day event statistics
+            source_all_day_count = sum(1 for e in source_events if e.get('isAllDay', False))
+            target_all_day_count = sum(1 for e in target_events if e.get('isAllDay', False))
+            logger.info(f"📅 All-day events - Source: {source_all_day_count}, Target: {target_all_day_count}")
+            
             # Build target map for quick lookup
             target_map = self._build_event_map(target_events)
             
@@ -827,6 +875,11 @@ class SyncEngine:
             with self.sync_lock:
                 self.last_sync_time = DateTimeUtils.get_central_time()
                 self.last_sync_result = result
+            
+            # Log all-day event summary
+            if 'all_day_events' in result:
+                all_day_summary = result['all_day_events']
+                logger.info(f"📅 All-day events processed: {all_day_summary['total_processed']} (Added: {all_day_summary['added']}, Updated: {all_day_summary['updated']})")
             
             logger.info(f"🎉 Sync completed in {duration:.2f} seconds: {result}")
             return result
@@ -986,21 +1039,26 @@ class SyncEngine:
             if signature.startswith("skip:occurrence:"):
                 continue
             
+            # Log all-day status for debugging
+            is_all_day = source_event.get('isAllDay', False)
+            if is_all_day:
+                logger.debug(f"📅 Processing all-day event: {subject}")
+            
             if signature in remaining_targets:
                 # Event exists - check if update needed
                 target_event = remaining_targets[signature]
                 
                 if self._needs_update(source_event, target_event):
-                    logger.debug(f"📝 UPDATE needed: {subject}")
+                    logger.debug(f"📝 UPDATE needed: {subject} (All-day: {is_all_day})")
                     to_update.append((source_event, target_event))
                 else:
-                    logger.debug(f"✅ No change needed: {subject}")
+                    logger.debug(f"✅ No change needed: {subject} (All-day: {is_all_day})")
                 
                 # Remove from remaining targets
                 del remaining_targets[signature]
             else:
                 # Event doesn't exist - add it
-                logger.debug(f"➕ ADD needed: {subject} (signature: {signature})")
+                logger.debug(f"➕ ADD needed: {subject} (All-day: {is_all_day}) (signature: {signature})")
                 to_add.append(source_event)
         
         # Remaining events in target should be deleted (not in source anymore)
@@ -1177,6 +1235,10 @@ class SyncEngine:
         
         total = len(to_add) + len(to_update) + len(to_delete)
         
+        # Count all-day events processed
+        all_day_added = sum(1 for event in to_add if event.get('isAllDay', False))
+        all_day_updated = sum(1 for source_event, _ in to_update if source_event.get('isAllDay', False))
+        
         return {
             'success': True,
             'message': f'Sync complete: {successful}/{total} operations successful',
@@ -1186,7 +1248,12 @@ class SyncEngine:
             'updated': operation_details['update_success'],
             'deleted': operation_details['delete_success'],
             'operation_details': operation_details,
-            'safeguards_active': config.MASTER_CALENDAR_PROTECTION
+            'safeguards_active': config.MASTER_CALENDAR_PROTECTION,
+            'all_day_events': {
+                'added': all_day_added,
+                'updated': all_day_updated,
+                'total_processed': all_day_added + all_day_updated
+            }
         }
     
     def _handle_cancelled_occurrences(self, source_id: str, target_id: str) -> int:

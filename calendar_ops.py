@@ -18,6 +18,94 @@ from utils import RetryUtils, DateTimeUtils
 logger = logging.getLogger(__name__)
 
 
+def is_all_day_event(event):
+    """
+    Detect if an event should be treated as all-day based on its timing characteristics.
+    
+    This function checks multiple conditions to identify all-day events:
+    - Events that span exactly 24 hours starting at midnight
+    - Events explicitly marked as all-day in source data
+    - Events with date-only formatting (no time components)
+    """
+    try:
+        # Check if source explicitly marks this as all-day
+        if hasattr(event, 'isAllDay') and event.get('isAllDay'):
+            return True
+            
+        # Parse start and end times
+        start_time = event.get('start', {})
+        end_time = event.get('end', {})
+        
+        # Handle different datetime formats from source calendar
+        if 'dateTime' in start_time and 'dateTime' in end_time:
+            start_dt = datetime.fromisoformat(start_time['dateTime'].replace('Z', '+00:00'))
+            end_dt = datetime.fromisoformat(end_time['dateTime'].replace('Z', '+00:00'))
+            
+            # Check if it spans exactly 24 hours and starts at midnight
+            duration = end_dt - start_dt
+            is_24_hours = duration.total_seconds() == 86400  # 24 * 60 * 60
+            starts_at_midnight = start_dt.hour == 0 and start_dt.minute == 0 and start_dt.second == 0
+            
+            return is_24_hours and starts_at_midnight
+            
+        # If using date-only format, it's definitely all-day
+        elif 'date' in start_time and 'date' in end_time:
+            return True
+            
+        return False
+        
+    except (ValueError, KeyError, AttributeError) as e:
+        # Log the error but don't fail the sync
+        logger.warning(f"Could not determine if event is all-day: {e}")
+        return False
+
+
+def format_all_day_event(source_event):
+    """
+    Convert an all-day event to proper Microsoft Graph format.
+    
+    This ensures all-day events use date-only format and isAllDay flag,
+    preventing timezone conversion issues.
+    """
+    try:
+        start_time = source_event.get('start', {})
+        end_time = source_event.get('end', {})
+        
+        # Extract date components only, ignoring time
+        if 'dateTime' in start_time:
+            start_dt = datetime.fromisoformat(start_time['dateTime'].replace('Z', '+00:00'))
+            start_date = start_dt.date().isoformat()
+        elif 'date' in start_time:
+            start_date = start_time['date']
+        else:
+            raise ValueError("No valid start date found")
+            
+        if 'dateTime' in end_time:
+            end_dt = datetime.fromisoformat(end_time['dateTime'].replace('Z', '+00:00'))
+            end_date = end_dt.date().isoformat()
+        elif 'date' in end_time:
+            end_date = end_time['date']
+        else:
+            raise ValueError("No valid end date found")
+        
+        # Return properly formatted all-day event structure
+        return {
+            'isAllDay': True,
+            'start': {
+                'date': start_date,
+                'timeZone': 'UTC'  # Timezone is ignored for all-day events
+            },
+            'end': {
+                'date': end_date,
+                'timeZone': 'UTC'
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error formatting all-day event: {e}")
+        return None
+
+
 class CalendarReader:
     """Handles reading calendar data from Microsoft Graph"""
     
@@ -397,7 +485,7 @@ class CalendarWriter:
                     return False
             
             if response.status_code in [200, 201]:
-                logger.info(f"✅ Created event: {event_data.get('subject')}")
+                logger.info(f"✅ Created event: {event_data.get('subject')} (All-day: {create_data.get('isAllDay', False)})")
                 return True
             else:
                 logger.error(f"❌ Failed to create event: {response.status_code}")
@@ -443,7 +531,7 @@ class CalendarWriter:
                     return False
             
             if response.status_code == 200:
-                logger.info(f"✅ Updated event: {event_data.get('subject')}")
+                logger.info(f"✅ Updated event: {event_data.get('subject')} (All-day: {update_data.get('isAllDay', False)})")
                 return True
             else:
                 logger.error(f"❌ Failed to update event: {response.status_code}")
@@ -652,7 +740,7 @@ class CalendarWriter:
             occurrence_id = target_occurrence['id']
             update_url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{occurrence_id}"
             
-            # Prepare update data
+            # Prepare update data with all-day event handling
             prepared_data = self._prepare_event_data(update_data)
             
             response = requests.patch(update_url, headers=headers, json=prepared_data, timeout=30)
@@ -701,8 +789,8 @@ class CalendarWriter:
         if location_text:
             body_content = f"<p><strong>Location:</strong> {location_text}</p>"
         
-        # Check if this is an all-day event
-        is_all_day = source_event.get('isAllDay', False)
+        # Check if this is an all-day event using our detection function
+        is_all_day = is_all_day_event(source_event)
         
         # Build event data
         event_data = {
@@ -718,13 +806,25 @@ class CalendarWriter:
         
         # Handle start/end times based on event type
         if is_all_day:
-            # For all-day events, just copy the structure as-is
-            event_data['start'] = source_event.get('start')
-            event_data['end'] = source_event.get('end')
+            # Use all-day formatting to prevent timezone issues
+            all_day_format = format_all_day_event(source_event)
+            if all_day_format:
+                event_data.update(all_day_format)
+                logger.info(f"📅 Processing as all-day event: {source_event.get('subject')} (All-day: {is_all_day})")
+            else:
+                # Fallback to regular formatting if all-day parsing fails
+                logger.warning(f"⚠️ All-day formatting failed for '{source_event.get('subject')}', using fallback")
+                event_data.update({
+                    'start': source_event.get('start', {}),
+                    'end': source_event.get('end', {})
+                })
         else:
-            # For timed events, ensure proper structure
-            event_data['start'] = source_event.get('start')
-            event_data['end'] = source_event.get('end')
+            # Regular timed event - use existing timezone handling
+            event_data.update({
+                'start': source_event.get('start', {}),
+                'end': source_event.get('end', {})
+            })
+            logger.debug(f"⏰ Processing as timed event: {source_event.get('subject')} (All-day: {is_all_day})")
         
         # Add recurrence for series masters
         if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
@@ -790,6 +890,12 @@ class CalendarWriter:
                     for result in batch_results:
                         if result.get('status') in [200, 201]:
                             results['successful'] += 1
+                            # Log all-day status if available in response
+                            response_body = result.get('body', {})
+                            if response_body and isinstance(response_body, dict):
+                                is_all_day = response_body.get('isAllDay', False)
+                                subject = response_body.get('subject', 'Unknown')
+                                logger.debug(f"✅ Batch created: {subject} (All-day: {is_all_day})")
                         else:
                             results['failed'] += 1
                             error_msg = f"Event {result.get('id')}: Status {result.get('status')}"
