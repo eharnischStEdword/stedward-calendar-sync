@@ -1073,8 +1073,11 @@ class SyncEngine:
         return to_add, to_update, to_delete
     
     def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
-        """Check if an event needs updating - OPTIMIZED FOR PERFORMANCE"""
+        """Check if an event needs updating - COMPARE PREPARED DATA WITH TARGET"""
         subject = source_event.get('subject', 'Unknown')
+        
+        # Prepare the source event as it would be in the target calendar
+        prepared_source_data = self.writer._prepare_event_data(source_event)
         
         # Skip update if only modification times are different and no actual content changed
         # Store original modification times for comparison
@@ -1100,60 +1103,59 @@ class SyncEngine:
             # If modification times match, no changes needed
             return False
         
-        # If we get here, there are changes - do detailed comparison
+        # If we get here, there are changes - do detailed comparison using prepared data
         logger.info(f"🔍 Checking if '{subject}' needs update (modified times differ)")
         
-        # Compare key fields
-        if source_event.get('subject') != target_event.get('subject'):
-            logger.info(f"  📝 Subject changed: '{source_event.get('subject')}' != '{target_event.get('subject')}'")
+        # Compare normalized subject
+        prepared_subject = prepared_source_data.get('subject', '').strip().lower()
+        target_subject = target_event.get('subject', '').strip().lower()
+        
+        if prepared_subject != target_subject:
+            logger.info(f"  📝 Subject changed: '{prepared_subject}' != '{target_subject}'")
             return True
         
-        if source_event.get('start') != target_event.get('start'):
+        # Compare start/end times
+        if prepared_source_data.get('start') != target_event.get('start'):
             logger.info(f"  🕐 Start time changed for '{subject}'")
             return True
         
-        if source_event.get('end') != target_event.get('end'):
+        if prepared_source_data.get('end') != target_event.get('end'):
             logger.info(f"  🕐 End time changed for '{subject}'")
             return True
         
-        if source_event.get('isAllDay') != target_event.get('isAllDay'):
+        if prepared_source_data.get('isAllDay') != target_event.get('isAllDay'):
             logger.info(f"  📅 All-day flag changed for '{subject}'")
             return True
         
         # Compare categories
-        source_categories = set(source_event.get('categories', []))
+        prepared_categories = set(prepared_source_data.get('categories', []))
         target_categories = set(target_event.get('categories', []))
         
-        if source_categories != target_categories:
-            logger.info(f"  ✅ CATEGORIES CHANGED for '{subject}': {source_categories} != {target_categories}")
+        if prepared_categories != target_categories:
+            logger.info(f"  ✅ CATEGORIES CHANGED for '{subject}': {prepared_categories} != {target_categories}")
             return True
         
-        # Compare location
-        source_location = source_event.get('location', {})
+        # Compare location (prepared vs target)
+        prepared_location = prepared_source_data.get('location', {})
         target_location = target_event.get('location', {})
         
         # Normalize location comparison (could be string or dict)
-        source_loc_str = source_location.get('displayName', '') if isinstance(source_location, dict) else str(source_location)
+        prepared_loc_str = prepared_location.get('displayName', '') if isinstance(prepared_location, dict) else str(prepared_location)
         target_loc_str = target_location.get('displayName', '') if isinstance(target_location, dict) else str(target_location)
         
-        if source_loc_str != target_loc_str:
-            logger.info(f"  ✅ LOCATION CHANGED for '{subject}': '{source_loc_str}' != '{target_loc_str}'")
+        if prepared_loc_str.strip().lower() != target_loc_str.strip().lower():
+            logger.info(f"  ✅ LOCATION CHANGED for '{subject}': '{prepared_loc_str}' != '{target_loc_str}'")
             return True
         
-        # Compare body content - only consider location changes
-        def extract_location_from_body(body_content):
-            import re
-            match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
-            return match.group(1).strip() if match else ''
-
-        source_body = source_event.get('body', {}).get('content', '') if isinstance(source_event.get('body'), dict) else ''
+        # Compare body content (prepared vs target)
+        prepared_body = prepared_source_data.get('body', {}).get('content', '') if isinstance(prepared_source_data.get('body'), dict) else ''
         target_body = target_event.get('body', {}).get('content', '') if isinstance(target_event.get('body'), dict) else ''
 
-        source_location_in_body = extract_location_from_body(source_body)
-        target_location_in_body = extract_location_from_body(target_body)
-
-        # Only consider body changed if location info is actually different
-        if source_location_in_body != target_location_in_body:
+        # Normalize body content for comparison
+        prepared_body_normalized = prepared_body.strip().lower()
+        target_body_normalized = target_body.strip().lower()
+        
+        if prepared_body_normalized != target_body_normalized:
             logger.info(f"  ✅ BODY CONTENT CHANGED for '{subject}'")
             return True
         

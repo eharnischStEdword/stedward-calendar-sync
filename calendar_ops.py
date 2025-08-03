@@ -953,11 +953,33 @@ class CalendarWriter:
                             # Get the original event data to log what failed
                             event_idx = int(result.get('id')) - 1
                             failed_event = batch[event_idx] if event_idx < len(batch) else None
+                            
+                            # Build detailed error message
                             error_msg = f"Event {result.get('id')}: Status {result.get('status')}"
                             if failed_event:
-                                error_msg += f" - Subject: {failed_event.get('subject', 'Unknown')}"
+                                error_msg += f" - Subject: '{failed_event.get('subject', 'Unknown')}'"
+                                # Log additional event details for debugging
+                                start_time = failed_event.get('start', {})
+                                if isinstance(start_time, dict):
+                                    error_msg += f" - Start: {start_time.get('dateTime', start_time.get('date', 'Unknown'))}"
+                                error_msg += f" - All-day: {failed_event.get('isAllDay', False)}"
+                            
+                            # Extract detailed error information from response
                             if result.get('body'):
-                                error_msg += f" - Error: {result.get('body', {}).get('error', {}).get('message', 'Unknown error')}"
+                                error_body = result.get('body', {})
+                                if isinstance(error_body, dict):
+                                    error_detail = error_body.get('error', {})
+                                    if isinstance(error_detail, dict):
+                                        error_msg += f" - API Error: {error_detail.get('message', 'Unknown error')}"
+                                        error_code = error_detail.get('code', '')
+                                        if error_code:
+                                            error_msg += f" (Code: {error_code})"
+                                        # Log validation errors if present
+                                        if 'innerError' in error_detail:
+                                            inner_error = error_detail['innerError']
+                                            if isinstance(inner_error, dict):
+                                                error_msg += f" - Details: {inner_error.get('message', '')}"
+                            
                             results['errors'].append(error_msg)
                             logger.error(error_msg)
                 else:
