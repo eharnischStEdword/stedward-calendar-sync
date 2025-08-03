@@ -780,7 +780,7 @@ class CalendarWriter:
             raise
     
     def _prepare_event_data(self, source_event: Dict) -> Dict:
-        """Prepare event data for creation/update with robust time handling"""
+        """Prepare event data for creation/update - MINIMAL DIAGNOSTIC VERSION"""
         # Extract location for body content
         source_location = source_event.get('location', {})
         location_text = ""
@@ -807,117 +807,23 @@ class CalendarWriter:
             'sensitivity': 'normal'  # Ensure not marked as private
         }
         
-        # CRITICAL: Robust time handling with defensive programming
+        # MINIMAL DIAGNOSTIC: Trace the data flow
+        subject = source_event.get('subject', 'Unknown')
         start_data = source_event.get('start', {})
         end_data = source_event.get('end', {})
-        
-        # Check if this should be treated as all-day
         source_is_all_day = source_event.get('isAllDay', False)
-        has_start_time = 'dateTime' in start_data
-        has_end_time = 'dateTime' in end_data
         
-        logger.info(f"🔍 Analyzing event '{source_event.get('subject')}':")
-        logger.info(f"  - Source isAllDay: {source_is_all_day}")
-        logger.info(f"  - Has start time: {has_start_time}")
-        logger.info(f"  - Has end time: {has_end_time}")
+        # Surgical logging - only for events that might be problematic
+        if 'Adoration' in subject or 'Mass' in subject or 'Practice' in subject:
+            logger.info(f"🔍 TRACING '{subject}':")
+            logger.info(f"  Source isAllDay: {source_is_all_day}")
+            logger.info(f"  Start data: {start_data}")
+            logger.info(f"  End data: {end_data}")
         
-        # DEFENSIVE LOGIC: Determine if this should be all-day
-        should_be_all_day = False
+        # Simple logic: Use source's isAllDay flag directly
+        event_data['isAllDay'] = source_is_all_day
         
-        # Case 1: Source explicitly marks as all-day
         if source_is_all_day:
-            should_be_all_day = True
-            logger.info(f"  ✅ Treating as all-day: Source explicitly marked as all-day")
-        
-        # Case 2: Uses date-only format (no time component)
-        elif 'date' in start_data and 'date' in end_data:
-            should_be_all_day = True
-            logger.info(f"  ✅ Treating as all-day: Uses date-only format")
-        
-        # Case 3: Has specific times - MUST be timed event
-        elif has_start_time and has_end_time:
-            should_be_all_day = False
-            logger.info(f"  ✅ Treating as timed event: Has specific start/end times")
-            
-            # VALIDATION: Check for suspicious patterns
-            start_time = start_data.get('dateTime', '')
-            end_time = end_data.get('dateTime', '')
-            
-            if start_time and end_time:
-                try:
-                    # Parse times to check for 24-hour spans
-                    start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                    end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
-                    
-                    duration = end_dt - start_dt
-                    duration_hours = duration.total_seconds() / 3600
-                    
-                    # SUSPICIOUS PATTERN: 24-hour span starting at midnight
-                    if (duration_hours >= 23.5 and duration_hours <= 24.5 and 
-                        start_dt.hour == 0 and start_dt.minute == 0 and 
-                        not source_is_all_day):
-                        logger.warning(f"  ⚠️ SUSPICIOUS: Event spans ~24 hours but not marked as all-day!")
-                        logger.warning(f"     Start: {start_time} -> End: {end_time}")
-                        logger.warning(f"     Duration: {duration_hours:.1f} hours")
-                        logger.warning(f"     This might be a timed event with missing end time")
-                        
-                        # FIX: Calculate reasonable end time (1 hour duration)
-                        if 'Adoration' in source_event.get('subject', ''):
-                            # Adoration typically 1 hour
-                            end_dt = start_dt + timedelta(hours=1)
-                        elif 'Mass' in source_event.get('subject', ''):
-                            # Mass typically 1 hour
-                            end_dt = start_dt + timedelta(hours=1)
-                        elif 'Practice' in source_event.get('subject', ''):
-                            # Practice typically 1.5 hours
-                            end_dt = start_dt + timedelta(hours=1, minutes=30)
-                        else:
-                            # Default to 1 hour
-                            end_dt = start_dt + timedelta(hours=1)
-                        
-                        # Update end time
-                        end_data['dateTime'] = end_dt.isoformat()
-                        logger.info(f"  🔧 FIXED: Calculated reasonable end time: {end_data['dateTime']}")
-                
-                except Exception as e:
-                    logger.error(f"  ❌ Error parsing times: {e}")
-        
-        # Case 4: Missing end time - calculate reasonable duration
-        elif has_start_time and not has_end_time:
-            should_be_all_day = False
-            logger.info(f"  ✅ Treating as timed event: Has start time, calculating end time")
-            
-            try:
-                start_time = start_data.get('dateTime', '')
-                if start_time:
-                    start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                    
-                    # Calculate reasonable end time based on event type
-                    if 'Adoration' in source_event.get('subject', ''):
-                        end_dt = start_dt + timedelta(hours=1)
-                    elif 'Mass' in source_event.get('subject', ''):
-                        end_dt = start_dt + timedelta(hours=1)
-                    elif 'Practice' in source_event.get('subject', ''):
-                        end_dt = start_dt + timedelta(hours=1, minutes=30)
-                    else:
-                        end_dt = start_dt + timedelta(hours=1)
-                    
-                    end_data['dateTime'] = end_dt.isoformat()
-                    logger.info(f"  🔧 CALCULATED: End time: {end_data['dateTime']}")
-            
-            except Exception as e:
-                logger.error(f"  ❌ Error calculating end time: {e}")
-        
-        # Case 5: No time information - treat as all-day
-        else:
-            should_be_all_day = True
-            logger.info(f"  ✅ Treating as all-day: No time information available")
-        
-        # Set the final isAllDay flag
-        event_data['isAllDay'] = should_be_all_day
-        
-        # Handle the event based on final determination
-        if should_be_all_day:
             # All-day event handling
             start_dt = source_event.get('start', {})
             end_dt = source_event.get('end', {})
@@ -928,7 +834,7 @@ class CalendarWriter:
             elif 'date' in start_dt:
                 start_date = start_dt['date']
             else:
-                logger.error(f"No valid start date for all-day event: {source_event.get('subject')}")
+                logger.error(f"No valid start date for all-day event: {subject}")
                 start_date = None
                 
             if 'dateTime' in end_dt:
@@ -936,7 +842,7 @@ class CalendarWriter:
             elif 'date' in end_dt:
                 end_date = end_dt['date']
             else:
-                logger.error(f"No valid end date for all-day event: {source_event.get('subject')}")
+                logger.error(f"No valid end date for all-day event: {subject}")
                 end_date = None
             
             if start_date and end_date:
@@ -948,21 +854,18 @@ class CalendarWriter:
                     'date': end_date,
                     'timeZone': 'Central Standard Time'
                 }
-                logger.info(f"📅 Final: All-day event '{source_event.get('subject')}' with dates: {start_date} to {end_date}")
+                if 'Adoration' in subject or 'Mass' in subject or 'Practice' in subject:
+                    logger.info(f"📅 All-day event '{subject}' -> {start_date} to {end_date}")
             else:
                 event_data['start'] = source_event.get('start', {})
                 event_data['end'] = source_event.get('end', {})
         else:
-            # Timed event handling - ensure proper timezone
-            if 'timeZone' not in start_data:
-                start_data['timeZone'] = 'Central Standard Time'
-            if 'timeZone' not in end_data:
-                end_data['timeZone'] = 'Central Standard Time'
-            
+            # Timed event handling - preserve original data
             event_data['start'] = start_data
             event_data['end'] = end_data
             
-            logger.info(f"⏰ Final: Timed event '{source_event.get('subject')}' - Start: {start_data.get('dateTime')} End: {end_data.get('dateTime')}")
+            if 'Adoration' in subject or 'Mass' in subject or 'Practice' in subject:
+                logger.info(f"⏰ Timed event '{subject}' -> Start: {start_data.get('dateTime')} End: {end_data.get('dateTime')}")
         
         # Add recurrence for series masters
         if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
