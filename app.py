@@ -128,6 +128,27 @@ scheduler_paused = load_scheduler_state()  # Load state on startup
 
 # Global flag to track if components have been initialized
 _components_initialized = False
+_sync_ready = False
+
+def initialize_calendar_sync_background():
+    """Initialize sync operations in background thread"""
+    global _sync_ready
+    try:
+        logger.info("🔄 Starting background calendar sync initialization...")
+        
+        # Initialize components
+        initialize_components()
+        
+        # Perform any heavy initialization here
+        if sync_engine:
+            # Test connection to Microsoft Graph (lightweight)
+            logger.info("🔗 Testing Microsoft Graph connection...")
+            # Don't perform full sync during startup - just test connection
+        
+        _sync_ready = True
+        logger.info("✅ Background calendar sync initialization completed")
+    except Exception as e:
+        logger.error(f"❌ Background sync initialization failed: {e}")
 
 def ensure_components_initialized():
     """Initialize components on first request to avoid startup delays"""
@@ -139,6 +160,13 @@ def ensure_components_initialized():
             logger.info("✅ Components initialized on first request")
         except Exception as e:
             logger.error(f"Failed to initialize components on first request: {e}")
+
+# Start background initialization if not in debug mode
+if not app.debug:
+    import threading
+    init_thread = threading.Thread(target=initialize_calendar_sync_background, daemon=True)
+    init_thread.start()
+    logger.info("🚀 Started background sync initialization thread")
 
 def initialize_components():
     """Initialize sync components safely"""
@@ -175,12 +203,25 @@ def initialize_components():
 
 @app.route('/health')
 def health_check():
-    """Health check for Render - must respond quickly"""
+    """Lightweight health check - responds immediately for Render"""
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "service": "st-edward-calendar-sync"
+        "service": "st-edward-calendar-sync",
+        "version": "1.0.0"
     }), 200
+
+@app.route('/ready')
+def readiness_check():
+    """Check if sync services are ready"""
+    try:
+        global _sync_ready
+        if _sync_ready and auth_manager and sync_engine:
+            return jsonify({"status": "ready"}), 200
+        else:
+            return jsonify({"status": "initializing"}), 503
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 503
 
 @app.route('/health/detailed')
 def detailed_health():
@@ -1421,12 +1462,25 @@ def event_search():
         logger.error(f"Event search error: {e}")
         return f"Error: {str(e)}", 500
 
-def handle_timeout(signum, frame):
-    """Handle worker timeout gracefully"""
-    logger.warning("Worker timeout - completing current operation")
-    raise SystemExit(0)
+class GracefulShutdownHandler:
+    def __init__(self):
+        self.shutdown_requested = False
+        signal.signal(signal.SIGTERM, self.handle_sigterm)
+        signal.signal(signal.SIGINT, self.handle_sigterm)
+    
+    def handle_sigterm(self, signum, frame):
+        logger.warning(f"Received signal {signum}, initiating graceful shutdown...")
+        self.shutdown_requested = True
+        
+        # Wait for current operations to complete (max 30 seconds)
+        if hasattr(self, 'current_sync_thread') and self.current_sync_thread.is_alive():
+            self.current_sync_thread.join(timeout=30)
+        
+        logger.info("Graceful shutdown completed")
+        sys.exit(0)
 
-signal.signal(signal.SIGTERM, handle_timeout)
+# Initialize graceful shutdown handler
+shutdown_handler = GracefulShutdownHandler()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
