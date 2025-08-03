@@ -126,6 +126,16 @@ scheduler = None
 auth_manager = None
 scheduler_paused = load_scheduler_state()  # Load state on startup
 
+# Move component initialization to first request, not startup
+@app.before_first_request
+def initialize_on_first_request():
+    """Initialize components on first request to avoid startup delays"""
+    try:
+        initialize_components()
+        logger.info("✅ Components initialized on first request")
+    except Exception as e:
+        logger.error(f"Failed to initialize components on first request: {e}")
+
 def initialize_components():
     """Initialize sync components safely"""
     global sync_engine, scheduler, auth_manager
@@ -161,12 +171,11 @@ def initialize_components():
 
 @app.route('/health')
 def health_check():
-    """Health check for Render"""
+    """Health check for Render - must respond quickly"""
     return jsonify({
         "status": "healthy",
-        "timestamp": DateTimeUtils.get_central_time().isoformat(),
-        "service": "st-edward-calendar-sync",
-        "timezone": "America/Chicago"
+        "timestamp": datetime.utcnow().isoformat(),
+        "service": "st-edward-calendar-sync"
     }), 200
 
 @app.route('/health/detailed')
@@ -202,9 +211,6 @@ def detailed_health():
 def get_status():
     """Get current system status"""
     try:
-        if not auth_manager:
-            initialize_components()
-        
         status = {
             "authenticated": auth_manager.is_authenticated() if auth_manager else False,
             "sync_in_progress": False,
@@ -247,9 +253,6 @@ def get_status():
 def index():
     """Main dashboard"""
     try:
-        # Initialize components if needed
-        initialize_components()
-        
         # Start scheduler on first request (not during deployment)
         if scheduler and not scheduler.is_running() and not scheduler_paused:
             scheduler.start()
