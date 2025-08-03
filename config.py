@@ -20,7 +20,7 @@ TARGET_CALENDAR = os.environ.get('TARGET_CALENDAR', "St. Edward Public Calendar"
 
 # Azure AD Configuration
 CLIENT_ID = os.environ.get('CLIENT_ID', "e139467d-fdeb-40bb-be62-718b007c8e0a")
-TENANT_ID = os.environ.get('TENANT_ID', "8ccf96b2-b7eb-470b-a715-ec1696d83ebd")
+TENANT_ID = os.environ.get('TENANT_ID', "8ccf96b2-b7eb-470b-a715-ec1696d83eba")
 CLIENT_SECRET = os.environ.get('CLIENT_SECRET', '')
 REDIRECT_URI = os.environ.get('REDIRECT_URI', "https://stedward-calendar-sync.onrender.com/auth/callback")
 
