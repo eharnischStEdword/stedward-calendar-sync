@@ -700,6 +700,17 @@
         async function loadStatus() {
             try {
                 const response = await fetch('/status');
+                
+                // Check if response is JSON
+                const contentType = response.headers.get("content-type");
+                if (!contentType || !contentType.includes("application/json")) {
+                    // Not JSON - likely redirected to login
+                    if (response.status === 401 || response.status === 302) {
+                        window.location.href = '/';
+                    }
+                    return;
+                }
+                
                 const status = await response.json();
                 updateStatusDots(status);
                 
@@ -720,6 +731,10 @@
                 }
             } catch (error) {
                 console.error('Status load failed:', error);
+                // If error is due to auth, redirect
+                if (error.message.includes('JSON')) {
+                    window.location.href = '/';
+                }
             }
         }
 
