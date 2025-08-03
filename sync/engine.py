@@ -869,6 +869,16 @@ class SyncEngine:
             logger.info(f"  Source instances: {len(source_instances)}")
             logger.info(f"  Target instances: {len(target_instances)}")
 
+            # Debug: Log all Ladies Auxiliary instances
+            ladies_source = [i for i in source_instances if 'ladies auxiliary' in (i.get('subject') or '').lower()]
+            ladies_target = [i for i in target_instances if 'ladies auxiliary' in (i.get('subject') or '').lower()]
+            
+            logger.info(f"  Ladies Auxiliary instances - Source: {len(ladies_source)}, Target: {len(ladies_target)}")
+            for i, inst in enumerate(ladies_source):
+                logger.info(f"    Source {i+1}: {inst.get('subject')} - {inst.get('start', {}).get('dateTime', '')} - {inst.get('end', {}).get('dateTime', '')}")
+            for i, inst in enumerate(ladies_target):
+                logger.info(f"    Target {i+1}: {inst.get('subject')} - {inst.get('start', {}).get('dateTime', '')} - {inst.get('end', {}).get('dateTime', '')}")
+
             # Build lookup maps for comparison
             def _make_key(inst):
                 subj = (inst.get('subject') or '').strip().lower()
@@ -880,6 +890,12 @@ class SyncEngine:
 
             source_map = {_make_key(i): i for i in source_instances if not i.get('isCancelled', False)}
             target_map = {_make_key(i): i for i in target_instances if not i.get('isCancelled', False)}
+
+            # Debug: Log keys for Ladies Auxiliary
+            ladies_keys_source = [k for k in source_map.keys() if 'ladies auxiliary' in k]
+            ladies_keys_target = [k for k in target_map.keys() if 'ladies auxiliary' in k]
+            logger.info(f"  Ladies Auxiliary keys - Source: {ladies_keys_source}")
+            logger.info(f"  Ladies Auxiliary keys - Target: {ladies_keys_target}")
 
             updated_count = 0
 
