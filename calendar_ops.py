@@ -781,27 +781,12 @@ class CalendarWriter:
     
     def _prepare_event_data(self, source_event: Dict) -> Dict:
         """Prepare event data for creation/update"""
-        # Extract location for body content
-        source_location = source_event.get('location', {})
-        location_text = ""
-        
-        if source_location:
-            if isinstance(source_location, dict):
-                location_text = source_location.get('displayName', '')
-            else:
-                location_text = str(source_location)
-        
-        # Create body content with location information
-        body_content = ""
-        if location_text:
-            body_content = f"<p><strong>Location:</strong> {location_text}</p>"
-        
         # Build base event data
         event_data = {
             'subject': source_event.get('subject'),
             'categories': source_event.get('categories', []),
-            'body': {'contentType': 'html', 'content': body_content},
-            'location': {},  # Clear location for privacy
+            'body': {'contentType': 'html', 'content': ''},  # Clear body for privacy
+            'location': source_event.get('location', {}),  # KEEP location data
             'showAs': 'busy',  # Always busy for public calendar
             'isReminderOn': False,  # No reminders on public calendar
             'sensitivity': 'normal'  # Ensure not marked as private
