@@ -82,11 +82,7 @@
             box-shadow: 0 0 30px rgba(0, 89, 33, 0.5);
         }
 
-        @keyframes successPulse {
-            0% { transform: scale(1); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
-            50% { transform: scale(1.02); box-shadow: 0 20px 50px rgba(0, 89, 33, 0.3); }
-            100% { transform: scale(1); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
-        }
+
 
         .card-header {
             background: #00843D;
@@ -108,10 +104,7 @@
             animation: shimmer 1.5s ease-in-out;
         }
 
-        @keyframes shimmer {
-            0% { left: -100%; }
-            100% { left: 100%; }
-        }
+
 
         .card-header h1 {
             font-size: 1.8rem;
@@ -143,11 +136,7 @@
             animation: successGlow 2s ease-in-out;
         }
 
-        @keyframes successGlow {
-            0% { box-shadow: 0 0 0 rgba(0, 89, 33, 0); }
-            50% { box-shadow: 0 0 20px rgba(0, 89, 33, 0.4); }
-            100% { box-shadow: 0 0 0 rgba(0, 89, 33, 0); }
-        }
+
 
         .status-item {
             display: flex;
@@ -171,11 +160,7 @@
             animation: dotPulse 1.5s infinite;
         }
 
-        @keyframes dotPulse {
-            0% { box-shadow: 0 0 0 0 rgba(0, 89, 33, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(0, 89, 33, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(0, 89, 33, 0); }
-        }
+
 
         .messages-area {
             margin-bottom: 2rem;
@@ -211,10 +196,7 @@
             animation: sparkle 2s ease-in-out infinite;
         }
 
-        @keyframes sparkle {
-            0%, 100% { opacity: 0.5; transform: translateY(-50%) scale(1); }
-            50% { opacity: 1; transform: translateY(-50%) scale(1.2); }
-        }
+
 
         .message.warning { background: #fff3cd; border-color: #DAAA00; color: #856404; }
         .message.error { background: #f8d7da; border-color: #dc3545; color: #721c24; }
@@ -263,11 +245,7 @@
             animation: successBounce 0.6s ease-in-out;
         }
 
-        @keyframes successBounce {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-            100% { transform: scale(1); }
-        }
+
 
         .action-btn.secondary {
             background: #6c757d;
@@ -294,10 +272,7 @@
             background: #b89400;
         }
 
-        @keyframes pulse-warning {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(218, 170, 0, 0.7); }
-            50% { box-shadow: 0 0 0 10px rgba(218, 170, 0, 0); }
-        }
+
 
         .spinner {
             width: 20px;
@@ -308,9 +283,7 @@
             animation: spin 1s linear infinite;
         }
 
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
+
 
         .footer {
             text-align: center;
@@ -325,116 +298,11 @@
             margin-top: 0.25rem;
         }
 
-        /* Confetti Styles */
-        .confetti-container {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 1000;
-            overflow: hidden;
-        }
 
-        .confetti {
-            position: absolute;
-            width: 8px;
-            height: 8px;
-            animation: confettiFall 3s linear infinite;
-        }
 
-        .confetti:nth-child(odd) {
-            background: #005921;
-            border-radius: 50%;
-        }
 
-        .confetti:nth-child(even) {
-            background: #DAAA00;
-            transform: rotate(45deg);
-        }
 
-        .confetti:nth-child(3n) {
-            background: #00843D;
-            border-radius: 2px;
-        }
 
-        @keyframes confettiFall {
-            0% {
-                transform: translateY(-100vh) rotate(0deg);
-                opacity: 1;
-            }
-            100% {
-                transform: translateY(100vh) rotate(720deg);
-                opacity: 0;
-            }
-        }
-
-        /* Success Checkmark Animation */
-        .success-checkmark {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            z-index: 1001;
-            opacity: 0;
-            pointer-events: none;
-        }
-
-        .success-checkmark.show {
-            opacity: 1;
-            animation: checkmarkBounce 1.5s ease-in-out;
-        }
-
-        .checkmark-circle {
-            width: 80px;
-            height: 80px;
-            border-radius: 50%;
-            background: #005921;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 0 30px rgba(0, 89, 33, 0.5);
-        }
-
-        .checkmark {
-            color: white;
-            font-size: 40px;
-            font-weight: bold;
-        }
-
-        @keyframes checkmarkBounce {
-            0% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
-            50% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
-            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-        }
-
-        /* Particle burst effect */
-        .particle-burst {
-            position: fixed;
-            pointer-events: none;
-            z-index: 999;
-        }
-
-        .particle {
-            position: absolute;
-            width: 4px;
-            height: 4px;
-            background: #005921;
-            border-radius: 50%;
-            animation: particleBurst 1s ease-out forwards;
-        }
-
-        @keyframes particleBurst {
-            0% {
-                opacity: 1;
-                transform: scale(1);
-            }
-            100% {
-                opacity: 0;
-                transform: scale(0);
-            }
-        }
 
         @media (max-width: 768px) {
             .status-bar {
@@ -581,15 +449,9 @@
         <p style="margin-top: 0.5rem; opacity: 0.7;">Automated synchronization every 15 minutes</p>
     </footer>
 
-    <!-- Confetti Container -->
-    <div class="confetti-container" id="confetti-container"></div>
 
-    <!-- Success Checkmark -->
-    <div class="success-checkmark" id="success-checkmark">
-        <div class="checkmark-circle">
-            <div class="checkmark">✓</div>
-        </div>
-    </div>
+
+
 
     <script>
         let isOperationInProgress = false;
@@ -661,101 +523,7 @@
             }
         }
 
-        function createConfetti() {
-            const confettiContainer = document.getElementById('confetti-container');
-            const confettiCount = 50;
-            
-            for (let i = 0; i < confettiCount; i++) {
-                const confetti = document.createElement('div');
-                confetti.className = 'confetti';
-                confetti.style.left = Math.random() * 100 + '%';
-                confetti.style.animationDelay = Math.random() * 2 + 's';
-                confetti.style.animationDuration = (Math.random() * 2 + 2) + 's';
-                confettiContainer.appendChild(confetti);
-                
-                // Remove confetti after animation
-                setTimeout(() => {
-                    if (confetti.parentNode) {
-                        confetti.parentNode.removeChild(confetti);
-                    }
-                }, 4000);
-            }
-        }
 
-        function showSuccessCheckmark() {
-            const checkmark = document.getElementById('success-checkmark');
-            checkmark.classList.add('show');
-            
-            setTimeout(() => {
-                checkmark.classList.remove('show');
-            }, 1500);
-        }
-
-        function createParticleBurst(element) {
-            const rect = element.getBoundingClientRect();
-            const centerX = rect.left + rect.width / 2;
-            const centerY = rect.top + rect.height / 2;
-            
-            const burstContainer = document.createElement('div');
-            burstContainer.className = 'particle-burst';
-            burstContainer.style.left = centerX + 'px';
-            burstContainer.style.top = centerY + 'px';
-            document.body.appendChild(burstContainer);
-            
-            const particleCount = 12;
-            for (let i = 0; i < particleCount; i++) {
-                const particle = document.createElement('div');
-                particle.className = 'particle';
-                
-                const angle = (360 / particleCount) * i;
-                const distance = 50;
-                const x = Math.cos(angle * Math.PI / 180) * distance;
-                const y = Math.sin(angle * Math.PI / 180) * distance;
-                
-                particle.style.transform = `translate(${x}px, ${y}px)`;
-                burstContainer.appendChild(particle);
-            }
-            
-            setTimeout(() => {
-                document.body.removeChild(burstContainer);
-            }, 1000);
-        }
-
-        function triggerSuccessAnimations() {
-            // Confetti
-            createConfetti();
-            
-            // Success checkmark
-            showSuccessCheckmark();
-            
-            // Card pulse
-            const mainCard = document.getElementById('main-card');
-            mainCard.classList.add('success-pulse');
-            setTimeout(() => mainCard.classList.remove('success-pulse'), 2000);
-            
-            // Header shimmer
-            const cardHeader = document.getElementById('card-header');
-            cardHeader.classList.add('success-shimmer');
-            setTimeout(() => cardHeader.classList.remove('success-shimmer'), 1500);
-            
-            // Status bar glow
-            const statusBar = document.getElementById('status-bar');
-            statusBar.classList.add('success-glow');
-            setTimeout(() => statusBar.classList.remove('success-glow'), 2000);
-            
-            // Button bounce
-            const syncBtn = document.getElementById('sync-btn');
-            syncBtn.classList.add('success-bounce');
-            setTimeout(() => syncBtn.classList.remove('success-bounce'), 600);
-            
-            // Particle burst from sync button
-            createParticleBurst(syncBtn);
-            
-            // Status dot pulse
-            const syncDot = document.getElementById('sync-dot');
-            syncDot.classList.add('pulse');
-            setTimeout(() => syncDot.classList.remove('pulse'), 1500);
-        }
 
         function updateStatusDots(status) {
             // Update auth status
@@ -820,9 +588,6 @@
                 if (result.success) {
                     const msg = `✅ Sync completed! Added: ${result.added || 0}, Updated: ${result.updated || 0}, Deleted: ${result.deleted || 0}`;
                     showMessage(msg, 'success');
-                    
-                    // TRIGGER ALL THE SUCCESS ANIMATIONS! 🎉
-                    triggerSuccessAnimations();
                     
                     // Update last sync time if provided
                     const lastSyncElement = document.getElementById('last-sync-time');

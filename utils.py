@@ -11,12 +11,13 @@ import logging
 import os
 import random
 import time
+import threading
+import subprocess
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Dict, List, Optional, Any, Callable
 import pytz
 import requests
-from pybreaker import CircuitBreaker
 
 import config
 
@@ -70,6 +71,60 @@ class DateTimeUtils:
         except Exception as e:
             logging.error(f"Error parsing datetime {dt_str}: {e}")
             return None
+    
+    @staticmethod
+    def utc_to_central(utc_dt: datetime) -> datetime:
+        """Convert UTC datetime to Central Time"""
+        if utc_dt is None:
+            return None
+        
+        # If the datetime is naive (no timezone), assume it's UTC
+        if utc_dt.tzinfo is None:
+            utc_dt = pytz.UTC.localize(utc_dt)
+        elif utc_dt.tzinfo != pytz.UTC:
+            # Convert to UTC first if it has a different timezone
+            utc_dt = utc_dt.astimezone(pytz.UTC)
+        
+        central = pytz.timezone('America/Chicago')
+        return utc_dt.astimezone(central)
+    
+    @staticmethod
+    def central_to_utc(central_dt: datetime) -> datetime:
+        """Convert Central Time datetime to UTC"""
+        if central_dt is None:
+            return None
+        
+        # If the datetime is naive, assume it's Central Time
+        if central_dt.tzinfo is None:
+            central = pytz.timezone('America/Chicago')
+            central_dt = central.localize(central_dt)
+        
+        return central_dt.astimezone(pytz.UTC)
+    
+    @staticmethod
+    def iso_to_central_display(iso_string: str, include_timezone: bool = True) -> str:
+        """Convert ISO string to Central Time display format"""
+        if not iso_string:
+            return "Never"
+        
+        try:
+            # Parse ISO string
+            if iso_string.endswith('Z'):
+                dt = datetime.fromisoformat(iso_string.replace('Z', '+00:00'))
+            else:
+                dt = datetime.fromisoformat(iso_string)
+            
+            return DateTimeUtils.format_central_time(dt, include_timezone)
+        except:
+            return iso_string
+    
+    @staticmethod
+    def get_timezone_offset() -> str:
+        """Get current Central Time offset from UTC"""
+        central = pytz.timezone('America/Chicago')
+        now = datetime.now(central)
+        offset = now.strftime('%z')
+        return f"UTC{offset[:3]}:{offset[3:]}"
     
     @staticmethod
     def random_interval(min_minutes: int = 15, max_minutes: int = 23) -> int:
@@ -182,6 +237,219 @@ class RetryUtils:
                 return None
             return wrapper
         return decorator
+
+
+class CircuitBreaker:
+    """
+    Implements the Circuit Breaker pattern to prevent cascading failures
+    
+    The circuit breaker has three states:
+    - CLOSED: Normal operation, all requests pass through
+    - OPEN: Too many failures, all requests fail fast
+    - HALF_OPEN: Testing if the service has recovered
+    """
+    
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        recovery_timeout: int = 300,
+        expected_exception: type = Exception,
+        name: Optional[str] = None
+    ):
+        """
+        Initialize the circuit breaker
+        
+        Args:
+            failure_threshold: Number of failures before opening the circuit
+            recovery_timeout: Seconds to wait before trying half-open state
+            expected_exception: Exception type to catch (others pass through)
+            name: Optional name for logging
+        """
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.expected_exception = expected_exception
+        self.name = name or "CircuitBreaker"
+        
+        self._state = "closed"  # closed, open, half_open
+        self._failure_count = 0
+        self._last_failure_time: Optional[datetime] = None
+        self._success_count = 0
+        self._lock = threading.Lock()
+        
+        # Statistics
+        self._total_calls = 0
+        self._total_failures = 0
+        self._total_successes = 0
+        self._circuit_opened_count = 0
+    
+    @property
+    def state(self) -> str:
+        """Get the current state of the circuit breaker"""
+        with self._lock:
+            self._update_state()
+            return self._state
+    
+    def call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """
+        Call the protected function through the circuit breaker
+        
+        Args:
+            func: Function to call
+            *args: Positional arguments for the function
+            **kwargs: Keyword arguments for the function
+            
+        Returns:
+            Result of the function call
+            
+        Raises:
+            CircuitBreakerOpenError: If circuit is open
+            Exception: If function fails
+        """
+        with self._lock:
+            self._update_state()
+            self._total_calls += 1
+            
+            if self._state == "open":
+                error_msg = f"{self.name}: Circuit breaker is OPEN"
+                logger.warning(error_msg)
+                raise CircuitBreakerOpenError(error_msg)
+        
+        try:
+            # Execute the function
+            result = func(*args, **kwargs)
+            
+            # Record success
+            with self._lock:
+                self._on_success()
+            
+            return result
+            
+        except self.expected_exception as e:
+            # Record failure
+            with self._lock:
+                self._on_failure()
+            raise
+    
+    def _update_state(self):
+        """Update circuit breaker state based on current conditions"""
+        if self._state == "open":
+            # Check if we should transition to half-open
+            if self._last_failure_time and \
+               datetime.now() - self._last_failure_time > timedelta(seconds=self.recovery_timeout):
+                logger.info(f"{self.name}: Transitioning from OPEN to HALF_OPEN")
+                self._state = "half_open"
+                self._failure_count = 0
+                self._success_count = 0
+    
+    def _on_success(self):
+        """Handle successful function call"""
+        self._total_successes += 1
+        self._success_count += 1
+        
+        if self._state == "half_open":
+            # In half-open state, we need enough successes to close
+            if self._success_count >= 3:  # Require 3 successes to fully close
+                logger.info(f"{self.name}: Transitioning from HALF_OPEN to CLOSED")
+                self._state = "closed"
+                self._failure_count = 0
+                self._success_count = 0
+        elif self._state == "closed":
+            # Reset failure count on success in closed state
+            self._failure_count = 0
+    
+    def _on_failure(self):
+        """Handle failed function call"""
+        self._total_failures += 1
+        self._failure_count += 1
+        self._last_failure_time = datetime.now()
+        
+        if self._state == "half_open":
+            # Any failure in half-open state reopens the circuit
+            logger.warning(f"{self.name}: Failure in HALF_OPEN state, reopening circuit")
+            self._state = "open"
+            self._circuit_opened_count += 1
+            
+        elif self._state == "closed":
+            # Check if we've exceeded the failure threshold
+            if self._failure_count >= self.failure_threshold:
+                logger.error(
+                    f"{self.name}: Failure threshold ({self.failure_threshold}) exceeded, "
+                    f"opening circuit"
+                )
+                self._state = "open"
+                self._circuit_opened_count += 1
+    
+    def reset(self):
+        """Manually reset the circuit breaker to closed state"""
+        with self._lock:
+            logger.info(f"{self.name}: Manually resetting circuit breaker")
+            self._state = "closed"
+            self._failure_count = 0
+            self._success_count = 0
+            self._last_failure_time = None
+    
+    def get_statistics(self) -> dict:
+        """Get statistics about the circuit breaker"""
+        with self._lock:
+            self._update_state()
+            
+            success_rate = 0
+            if self._total_calls > 0:
+                success_rate = (self._total_successes / self._total_calls) * 100
+            
+            return {
+                'name': self.name,
+                'state': self._state,
+                'total_calls': self._total_calls,
+                'total_successes': self._total_successes,
+                'total_failures': self._total_failures,
+                'success_rate': round(success_rate, 2),
+                'current_failure_count': self._failure_count,
+                'circuit_opened_count': self._circuit_opened_count,
+                'last_failure_time': self._last_failure_time.isoformat() if self._last_failure_time else None
+            }
+
+
+class CircuitBreakerOpenError(Exception):
+    """Exception raised when circuit breaker is open"""
+    pass
+
+
+def circuit_breaker(
+    failure_threshold: int = 5,
+    recovery_timeout: int = 300,
+    expected_exception: type = Exception,
+    name: Optional[str] = None
+) -> Callable:
+    """
+    Decorator to apply circuit breaker pattern to a function
+    
+    Example:
+        @circuit_breaker(failure_threshold=3, recovery_timeout=60)
+        def call_external_api():
+            # API call that might fail
+            pass
+    """
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        breaker_name = name or f"CircuitBreaker-{func.__name__}"
+        breaker = CircuitBreaker(
+            failure_threshold=failure_threshold,
+            recovery_timeout=recovery_timeout,
+            expected_exception=expected_exception,
+            name=breaker_name
+        )
+        
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            return breaker.call(func, *args, **kwargs)
+        
+        # Add methods to access breaker
+        wrapper.reset = breaker.reset
+        wrapper.get_statistics = breaker.get_statistics
+        wrapper.circuit_breaker = breaker
+        
+        return wrapper
+    
+    return decorator
 
 # =============================================================================
 # LOGGING UTILITIES
@@ -350,6 +618,71 @@ def rate_limit(max_requests: int = None, window_hours: int = 1):
     return decorator
 
 # =============================================================================
+# VERSION MANAGEMENT
+# =============================================================================
+
+def get_version_info():
+    """Get version info automatically"""
+    now = datetime.utcnow()
+    version_info = {
+        "version": now.strftime("%Y.%m.%d"),
+        "build_number": 1,
+        "commit_hash": "unknown",
+        "build_date": now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "environment": "unknown"
+    }
+    
+    try:
+        # Try to get git info
+        result = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            version_info["commit_hash"] = result.stdout.strip()
+        
+        # Get commit count for build number
+        result = subprocess.run(['git', 'rev-list', '--count', 'HEAD'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            count = int(result.stdout.strip())
+            version_info["build_number"] = count
+            version_info["version"] = f"{now.strftime('%Y.%m.%d')}.{count}"
+        
+        # Get branch name
+        result = subprocess.run(['git', 'branch', '--show-current'], 
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            version_info["branch"] = branch
+            version_info["environment"] = "production" if branch == "main" else "development"
+    
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+        # Git not available
+        timestamp = int(now.timestamp())
+        version_info["version"] = f"{now.strftime('%Y.%m.%d')}.{timestamp}"
+        version_info["build_number"] = timestamp
+        logger.info("Git not available, using date-based version")
+    
+    # Add deployment info
+    if "RENDER" in os.environ:
+        version_info["deployment_platform"] = "Render.com"
+        version_info["service_name"] = os.environ.get("RENDER_SERVICE_NAME", "calendar-sync")
+        version_info["environment"] = "production"
+    else:
+        version_info["deployment_platform"] = "Local Development"
+        version_info["environment"] = "local"
+    
+    # Add display strings
+    version_info["version_string"] = f"v{version_info['version']}"
+    version_info["build_string"] = f"Build #{version_info['build_number']}"
+    version_info["full_version"] = f"Calendar Sync v{version_info['version']} (Build #{version_info['build_number']})"
+    
+    if version_info["commit_hash"] != "unknown":
+        version_info["full_version"] += f" [{version_info['commit_hash']}]"
+    
+    return version_info
+
+
+# =============================================================================
 # INITIALIZATION
 # =============================================================================
 
@@ -364,5 +697,5 @@ __all__ = [
     'DateTimeUtils', 'ValidationUtils', 'MetricsUtils',
     'ResilientAPIClient', 'RetryUtils', 'StructuredLogger',
     'CacheManager', 'require_auth', 'handle_api_errors', 'rate_limit',
-    'cache_manager', 'structured_logger'
+    'cache_manager', 'structured_logger', 'get_version_info'
 ] 

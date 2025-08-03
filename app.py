@@ -76,7 +76,7 @@ def initialize_components():
     
     if sync_engine is None:
         try:
-            from sync.engine import SyncEngine
+            from sync import SyncEngine
             sync_engine = SyncEngine(auth_manager)
             logger.info("✅ Sync engine initialized")
         except Exception as e:
@@ -85,7 +85,7 @@ def initialize_components():
     
     if scheduler is None and sync_engine is not None:
         try:
-            from sync.scheduler import SyncScheduler
+            from sync import SyncScheduler
             scheduler = SyncScheduler(sync_engine)
             # Don't start scheduler immediately - let it start on first request
             logger.info("✅ Scheduler initialized (will start on first request)")
@@ -458,7 +458,7 @@ def restart_scheduler():
             scheduler.stop()
         
         if sync_engine:
-            from sync.scheduler import SyncScheduler
+            from sync import SyncScheduler
             scheduler = SyncScheduler(sync_engine)
             scheduler.start()
             return jsonify({"message": "Scheduler restarted", "running": scheduler.is_running()})
