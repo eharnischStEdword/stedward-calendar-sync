@@ -855,6 +855,47 @@ def get_cache_stats():
         logger.error(f"Cache stats error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/debug/event-details/<event_subject>')
+def debug_event_details(event_subject):
+    """Debug specific event to see its raw data"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar events
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        
+        # Find matching events
+        matching_events = []
+        for event in all_events:
+            if event_subject.lower() in event.get('subject', '').lower():
+                matching_events.append({
+                    'subject': event.get('subject'),
+                    'isAllDay': event.get('isAllDay'),
+                    'start': event.get('start'),
+                    'end': event.get('end'),
+                    'type': event.get('type'),
+                    'showAs': event.get('showAs'),
+                    'categories': event.get('categories'),
+                    'raw_event': event  # Full raw data
+                })
+        
+        return jsonify({
+            'search_term': event_subject,
+            'found_count': len(matching_events),
+            'events': matching_events
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/debug/duplicates')
 def debug_duplicates():
     """Debug duplicate events in the target calendar"""

@@ -780,7 +780,7 @@ class CalendarWriter:
             raise
     
     def _prepare_event_data(self, source_event: Dict) -> Dict:
-        """Prepare event data for creation/update with proper all-day handling"""
+        """Prepare event data for creation/update with proper time handling"""
         # Extract location for body content
         source_location = source_event.get('location', {})
         location_text = ""
@@ -796,8 +796,8 @@ class CalendarWriter:
         if location_text:
             body_content = f"<p><strong>Location:</strong> {location_text}</p>"
         
-        # CRITICAL: Detect all-day events properly using the detection function
-        is_all_day = is_all_day_event(source_event)
+        # CRITICAL: Check if source explicitly marks this as all-day
+        source_is_all_day = source_event.get('isAllDay', False)
         
         # Build base event data
         event_data = {
@@ -805,15 +805,17 @@ class CalendarWriter:
             'categories': source_event.get('categories', []),
             'body': {'contentType': 'html', 'content': body_content},
             'location': {},  # Clear location for privacy
-            'isAllDay': is_all_day,
+            'isAllDay': source_is_all_day,  # Use source's all-day flag
             'showAs': 'busy',  # Always busy for public calendar
             'isReminderOn': False,  # No reminders on public calendar
             'sensitivity': 'normal'  # Ensure not marked as private
         }
         
-        # CRITICAL: Handle all-day events with proper date-only format
-        if is_all_day:
-            # For all-day events, Microsoft Graph expects date-only format in start/end
+        # Log what we're doing
+        logger.info(f"📅 Processing event '{source_event.get('subject')}' - isAllDay from source: {source_is_all_day}")
+        
+        if source_is_all_day:
+            # CRITICAL: Handle all-day events with proper date-only format
             start_dt = source_event.get('start', {})
             end_dt = source_event.get('end', {})
             
@@ -852,10 +854,21 @@ class CalendarWriter:
                 event_data['start'] = source_event.get('start', {})
                 event_data['end'] = source_event.get('end', {})
         else:
-            # Regular timed event - use dateTime format
-            event_data['start'] = source_event.get('start', {})
-            event_data['end'] = source_event.get('end', {})
-            logger.debug(f"⏰ Preparing timed event: {source_event.get('subject')}")
+            # CRITICAL: For timed events, preserve exact times with timezone
+            start_data = source_event.get('start', {})
+            end_data = source_event.get('end', {})
+            
+            # Ensure timezone is included
+            if 'timeZone' not in start_data:
+                start_data['timeZone'] = 'Central Standard Time'
+            if 'timeZone' not in end_data:
+                end_data['timeZone'] = 'Central Standard Time'
+            
+            event_data['start'] = start_data
+            event_data['end'] = end_data
+            
+            # Log the times for debugging
+            logger.info(f"⏰ Timed event '{source_event.get('subject')}' - Start: {start_data.get('dateTime')} End: {end_data.get('dateTime')}")
         
         # Add recurrence for series masters
         if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
