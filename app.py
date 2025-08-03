@@ -130,6 +130,39 @@ scheduler_paused = load_scheduler_state()  # Load state on startup
 _components_initialized = False
 _sync_ready = False
 
+def initialize_components():
+    """Initialize sync components safely"""
+    global sync_engine, scheduler, auth_manager
+    
+    if auth_manager is None:
+        try:
+            from auth import MicrosoftAuth
+            auth_manager = MicrosoftAuth()
+            logger.info("✅ Auth manager initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize auth manager: {e}")
+            return False
+    
+    if sync_engine is None:
+        try:
+            from sync import SyncEngine
+            sync_engine = SyncEngine(auth_manager)
+            logger.info("✅ Sync engine initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize sync engine: {e}")
+            # Continue without sync engine for now
+    
+    if scheduler is None and sync_engine is not None:
+        try:
+            from sync import SyncScheduler
+            scheduler = SyncScheduler(sync_engine)
+            # Don't start scheduler immediately - let it start on first request
+            logger.info("✅ Scheduler initialized (will start on first request)")
+        except Exception as e:
+            logger.error(f"Failed to initialize scheduler: {e}")
+    
+    return True
+
 def initialize_calendar_sync_background():
     """Initialize sync operations in background thread"""
     global _sync_ready
@@ -167,39 +200,6 @@ if not app.debug:
     init_thread = threading.Thread(target=initialize_calendar_sync_background, daemon=True)
     init_thread.start()
     logger.info("🚀 Started background sync initialization thread")
-
-def initialize_components():
-    """Initialize sync components safely"""
-    global sync_engine, scheduler, auth_manager
-    
-    if auth_manager is None:
-        try:
-            from auth import MicrosoftAuth
-            auth_manager = MicrosoftAuth()
-            logger.info("✅ Auth manager initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize auth manager: {e}")
-            return False
-    
-    if sync_engine is None:
-        try:
-            from sync import SyncEngine
-            sync_engine = SyncEngine(auth_manager)
-            logger.info("✅ Sync engine initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize sync engine: {e}")
-            # Continue without sync engine for now
-    
-    if scheduler is None and sync_engine is not None:
-        try:
-            from sync import SyncScheduler
-            scheduler = SyncScheduler(sync_engine)
-            # Don't start scheduler immediately - let it start on first request
-            logger.info("✅ Scheduler initialized (will start on first request)")
-        except Exception as e:
-            logger.error(f"Failed to initialize scheduler: {e}")
-    
-    return True
 
 @app.route('/health')
 def health_check():
