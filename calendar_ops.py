@@ -307,9 +307,18 @@ class CalendarReader:
             
             # Check event date
             try:
-                event_date_utc = DateTimeUtils.parse_graph_datetime(event.get('start', {}))
-                if not event_date_utc:
+                # Parse event date
+                event_date = DateTimeUtils.parse_graph_datetime(event.get('start', {}))
+                if not event_date:
                     continue
+
+                # Ensure both datetimes are timezone-aware for comparison
+                if event_date.tzinfo is None:
+                    # If naive, assume it's UTC
+                    event_date = pytz.UTC.localize(event_date)
+
+                # Convert to UTC for comparison
+                event_date_utc = event_date.astimezone(pytz.UTC)
 
                 # Skip old events (unless it's a recurring event that should always be synced)
                 if event_date_utc < cutoff_date:
