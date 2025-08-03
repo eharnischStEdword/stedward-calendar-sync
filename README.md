@@ -1,10 +1,10 @@
-# St. Edward Calendar Sync
+# Calendar Sync Service
 
-A secure, reliable calendar synchronization service for St. Edward Church & School that automatically syncs events from internal calendars to a public-facing calendar using Microsoft Graph API.
+A secure, reliable calendar synchronization service that automatically syncs events from internal calendars to a public-facing calendar using Microsoft Graph API.
 
 ## 🚀 Quick Start
 
-The application is deployed at: **https://stedward-calendar-sync.onrender.com**
+The application is deployed and running with automatic synchronization every 23 minutes.
 
 ### Health Check Endpoints
 - **Basic Health**: `GET /health` - Responds immediately for deployment health checks
@@ -17,7 +17,7 @@ The application is deployed at: **https://stedward-calendar-sync.onrender.com**
 The application has been consolidated from 36+ files to 8 core files for better maintainability:
 
 ```
-stedward-calendar-sync/
+calendar-sync-service/
 ├── app.py              # Main Flask application with routes
 ├── auth.py             # Microsoft OAuth authentication
 ├── calendar_ops.py     # Calendar reading/writing operations
@@ -79,13 +79,13 @@ stedward-calendar-sync/
 ### Health Endpoints
 ```bash
 # Basic health check (responds immediately)
-curl https://stedward-calendar-sync.onrender.com/health
+curl /health
 
 # Readiness check (sync services status)
-curl https://stedward-calendar-sync.onrender.com/ready
+curl /ready
 
 # Detailed system status
-curl https://stedward-calendar-sync.onrender.com/status
+curl /status
 ```
 
 ### Debug Endpoints
@@ -157,16 +157,6 @@ DRY_RUN_MODE=False             # Set to True for testing
 
 ### Common Issues
 
-#### **Chrome "Dangerous Site" Warning**
-- **Cause**: OAuth callback URL pattern flagged by Chrome Safe Browsing
-- **Solution**: Bot detection and safe responses implemented
-- **Status**: Enhanced security measures deployed
-
-#### **Deployment Timeouts**
-- **Cause**: Heavy initialization during startup
-- **Solution**: Background initialization and lightweight health checks
-- **Status**: Fixed with proper startup sequence
-
 #### **Authentication Failures**
 - **Check**: Token refresh and Microsoft Graph connectivity
 - **Debug**: Use `/debug` endpoint for detailed status
@@ -180,16 +170,16 @@ DRY_RUN_MODE=False             # Set to True for testing
 ### Debug Commands
 ```bash
 # Check system status
-curl https://stedward-calendar-sync.onrender.com/status
+curl /status
 
 # View recent metrics
-curl https://stedward-calendar-sync.onrender.com/metrics
+curl /metrics
 
 # Validate current sync
-curl -X POST https://stedward-calendar-sync.onrender.com/validate-sync
+curl -X POST /validate-sync
 
 # Check sync history
-curl https://stedward-calendar-sync.onrender.com/history
+curl /history
 ```
 
 ## 📈 Performance
@@ -211,8 +201,8 @@ curl https://stedward-calendar-sync.onrender.com/history
 ### Local Setup
 ```bash
 # Clone repository
-git clone https://github.com/eharnischStEdword/stedward-calendar-sync.git
-cd stedward-calendar-sync
+git clone <repository-url>
+cd calendar-sync-service
 
 # Install dependencies
 pip install -r requirements.txt
@@ -285,16 +275,8 @@ python app.py
 - **Metrics**: Performance tracking and alerting
 - **Audit Trail**: Security event logging
 
-### Contact
-For technical support or questions:
-- **Developer**: Eric Harnisch (eric@ericharnisch.com)
-- **Organization**: St. Edward Church & School
-- **Repository**: https://github.com/eharnischStEdword/stedward-calendar-sync
-
 ## 📄 License
 
 **© 2024–2025 Harnisch LLC. All Rights Reserved.**
 
-This software is licensed exclusively for use by **St. Edward Church & School (Nashville, TN)**. Unauthorized use, distribution, or modification is prohibited.
-
-For licensing inquiries, contact: eric@ericharnisch.com
+This software is licensed exclusively for use by the authorized organization. Unauthorized use, distribution, or modification is prohibited.
