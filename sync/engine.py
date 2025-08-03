@@ -146,6 +146,14 @@ class SyncEngine:
                     if 'operation_details' in result:
                         result['operation_details']['delete_success'] += cancelled_deleted
             
+            # Handle modified occurrences (exceptions to recurrence patterns)
+            if config.SYNC_OCCURRENCE_EXCEPTIONS:
+                modified_occurrences = self._handle_modified_occurrences(source_id, target_id)
+                if modified_occurrences:
+                    result['updated'] += modified_occurrences
+                    if 'operation_details' in result:
+                        result['operation_details']['update_success'] += modified_occurrences
+            
             # Update cache if change tracking is enabled
             if hasattr(self, 'change_tracker'):
                 self.change_tracker.update_cache(source_events)
@@ -388,6 +396,17 @@ class SyncEngine:
                         result['deleted'] += cancelled_deleted
                         if 'operation_details' in result:
                             result['operation_details']['delete_success'] += cancelled_deleted
+
+                # -----------------------------------------------------------------
+                # Handle modified occurrences (exceptions to recurrence patterns)
+                # -----------------------------------------------------------------
+                if config.SYNC_OCCURRENCE_EXCEPTIONS:
+                    modified_occurrences = self._handle_modified_occurrences(source_id, target_id)
+                    if modified_occurrences:
+                        # Update result counters
+                        result['updated'] += modified_occurrences
+                        if 'operation_details' in result:
+                            result['operation_details']['update_success'] += modified_occurrences
 
                 
                 # Add instance operation counts
@@ -826,6 +845,95 @@ class SyncEngine:
             return deleted_count
         except Exception as e:
             logger.error(f"Error while handling cancelled occurrences: {e}")
+            return 0
+    
+    def _handle_modified_occurrences(self, source_id: str, target_id: str) -> int:
+        """Handle modified occurrences (exceptions to recurrence patterns)
+        
+        Returns:
+            Number of occurrences successfully updated on the target.
+        """
+        try:
+            window_start = (get_central_time() - timedelta(days=1)).astimezone(pytz.UTC)
+            window_end = (get_central_time() + timedelta(days=config.OCCURRENCE_SYNC_DAYS)).astimezone(pytz.UTC)
+
+            # ISO format strings expected by Graph
+            start_str = window_start.isoformat()
+            end_str = window_end.isoformat()
+
+            # Fetch expanded instances (occurrences) within the window
+            source_instances = self.reader.get_calendar_instances(source_id, start_str, end_str) or []
+            target_instances = self.reader.get_calendar_instances(target_id, start_str, end_str) or []
+
+            logger.info(f"🔍 Checking for modified occurrences:")
+            logger.info(f"  Source instances: {len(source_instances)}")
+            logger.info(f"  Target instances: {len(target_instances)}")
+
+            # Build lookup maps for comparison
+            def _make_key(inst):
+                subj = (inst.get('subject') or '').strip().lower()
+                dt = inst.get('originalStart') or inst.get('start', {}).get('dateTime', '')
+                # Normalise datetime string (strip timezone markers to compare raw moment)
+                if dt.endswith('Z'):
+                    dt = dt[:-1]
+                return f"{subj}|{dt}"
+
+            source_map = {_make_key(i): i for i in source_instances if not i.get('isCancelled', False)}
+            target_map = {_make_key(i): i for i in target_instances if not i.get('isCancelled', False)}
+
+            updated_count = 0
+
+            # Check for modified occurrences (same subject, different times)
+            for source_key, source_inst in source_map.items():
+                if source_key in target_map:
+                    target_inst = target_map[source_key]
+                    
+                    # Check if this is a modified occurrence (different start/end times)
+                    source_start = source_inst.get('start', {}).get('dateTime', '')
+                    target_start = target_inst.get('start', {}).get('dateTime', '')
+                    source_end = source_inst.get('end', {}).get('dateTime', '')
+                    target_end = target_inst.get('end', {}).get('dateTime', '')
+                    
+                    if source_start != target_start or source_end != target_end:
+                        # This is a modified occurrence - update it
+                        series_id = target_inst.get('seriesMasterId')
+                        occ_date = target_inst.get('originalStart') or target_inst.get('start', {}).get('dateTime', '')
+                        
+                        if series_id and occ_date:
+                            logger.info(f"  🔄 Updating modified occurrence: {source_inst.get('subject')} on {occ_date}")
+                            logger.info(f"    Source: {source_start} - {source_end}")
+                            logger.info(f"    Target: {target_start} - {target_end}")
+                            
+                            # Prepare update data
+                            update_data = {
+                                'subject': source_inst.get('subject'),
+                                'start': source_inst.get('start'),
+                                'end': source_inst.get('end'),
+                                'body': source_inst.get('body'),
+                                'location': source_inst.get('location'),
+                                'categories': source_inst.get('categories', [])
+                            }
+                            
+                            if self.writer.update_occurrence(target_id, series_id, occ_date, update_data):
+                                updated_count += 1
+
+            # Check for missing occurrences (in source but not in target)
+            for source_key, source_inst in source_map.items():
+                if source_key not in target_map:
+                    # This occurrence exists in source but not in target
+                    # This could be a new exception to the recurrence pattern
+                    series_id = source_inst.get('seriesMasterId')
+                    if series_id:
+                        logger.info(f"  ➕ Found new occurrence exception: {source_inst.get('subject')} on {source_inst.get('start', {}).get('dateTime', '')}")
+                        # For now, log it - we'd need to create the occurrence
+                        # This is more complex and would require additional API calls
+
+            if updated_count:
+                logger.info(f"🔄 Updated {updated_count} modified occurrences to keep calendars in sync")
+
+            return updated_count
+        except Exception as e:
+            logger.error(f"Error while handling modified occurrences: {e}")
             return 0
     
     def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
