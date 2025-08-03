@@ -126,15 +126,19 @@ scheduler = None
 auth_manager = None
 scheduler_paused = load_scheduler_state()  # Load state on startup
 
-# Move component initialization to first request, not startup
-@app.before_first_request
-def initialize_on_first_request():
+# Global flag to track if components have been initialized
+_components_initialized = False
+
+def ensure_components_initialized():
     """Initialize components on first request to avoid startup delays"""
-    try:
-        initialize_components()
-        logger.info("✅ Components initialized on first request")
-    except Exception as e:
-        logger.error(f"Failed to initialize components on first request: {e}")
+    global _components_initialized
+    if not _components_initialized:
+        try:
+            initialize_components()
+            _components_initialized = True
+            logger.info("✅ Components initialized on first request")
+        except Exception as e:
+            logger.error(f"Failed to initialize components on first request: {e}")
 
 def initialize_components():
     """Initialize sync components safely"""
@@ -211,6 +215,9 @@ def detailed_health():
 def get_status():
     """Get current system status"""
     try:
+        # Initialize components on first request
+        ensure_components_initialized()
+        
         status = {
             "authenticated": auth_manager.is_authenticated() if auth_manager else False,
             "sync_in_progress": False,
@@ -253,6 +260,9 @@ def get_status():
 def index():
     """Main dashboard"""
     try:
+        # Initialize components on first request
+        ensure_components_initialized()
+        
         # Start scheduler on first request (not during deployment)
         if scheduler and not scheduler.is_running() and not scheduler_paused:
             scheduler.start()
@@ -323,6 +333,9 @@ def index():
 def trigger_sync():
     """Trigger manual sync"""
     try:
+        # Initialize components on first request
+        ensure_components_initialized()
+        
         if not sync_engine:
             return jsonify({"error": "Sync engine not initialized"}), 500
         
@@ -410,8 +423,7 @@ def auth_callback():
             return safe_response, 200, {'Content-Type': 'text/html; charset=utf-8'}
         
         # For legitimate OAuth requests, proceed with authentication
-        if not auth_manager:
-            initialize_components()
+        ensure_components_initialized()
         
         code = request.args.get('code')
         state = request.args.get('state')
