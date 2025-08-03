@@ -111,12 +111,10 @@ class MicrosoftAuth:
     def ensure_valid_token(self):
         """Ensure we have a valid access token"""
         if self._is_in_request_context():
-            # Web request - use session tokens
             access_token = session.get('access_token')
             refresh_token = session.get('refresh_token')
             token_expires_at = session.get('token_expires_at')
         else:
-            # Background thread - use environment tokens
             access_token = self.env_access_token
             refresh_token = self.env_refresh_token
             token_expires_at = os.environ.get('TOKEN_EXPIRES_AT')
@@ -125,21 +123,21 @@ class MicrosoftAuth:
             logger.warning("No refresh token available")
             return False
         
-        # If no access token or expired, refresh
-        if not access_token or self._is_token_expired(token_expires_at):
+        # Refresh if no access token OR within 10 minutes of expiry (was 5)
+        if not access_token or self._is_token_expired(token_expires_at, buffer_minutes=10):
             logger.info("Token expired or missing, refreshing...")
             return self.refresh_access_token()
         
         return True
-    
-    def _is_token_expired(self, expires_at_str):
-        """Check if token is expired"""
+
+    def _is_token_expired(self, expires_at_str, buffer_minutes=10):
+        """Check if token is expired with larger buffer"""
         if not expires_at_str:
             return True
         try:
             expires_at = datetime.fromisoformat(expires_at_str)
             now = DateTimeUtils.get_central_time()
-            return now >= (expires_at - timedelta(minutes=5))
+            return now >= (expires_at - timedelta(minutes=buffer_minutes))
         except:
             return True
     

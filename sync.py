@@ -1451,6 +1451,11 @@ class SyncScheduler:
         try:
             logger.info(f"Running scheduled sync (every 23 minutes) at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}")
             
+            # Proactively refresh token before sync
+            if not self.sync_engine.auth.ensure_valid_token():
+                logger.error("Failed to refresh token before scheduled sync")
+                return
+            
             # Check if authenticated before trying to sync
             if not self.sync_engine.auth.is_authenticated():
                 logger.warning(f"⚠️ Scheduled sync skipped - not authenticated at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}")
