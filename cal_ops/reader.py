@@ -295,15 +295,12 @@ class CalendarReader:
                     logger.info(f"🔍 Ladies Auxiliary event filtered - not public: {event.get('subject')} (categories: {categories})")
                 continue
             
-            # Skip tentative events
+            # Include tentative events but mark them appropriately
             show_as = event.get('showAs', 'busy')
-            if show_as != 'busy':
+            if show_as == 'tentative':
                 stats['tentative'] += 1
-                # Debug logging for specific events
-                if 'Ladies Auxiliary' in event.get('subject', ''):
-                    logger.info(f"🔍 Ladies Auxiliary event filtered - tentative: {event.get('subject')} (showAs: {show_as})")
-                logger.debug(f"Skipping tentative event: {event.get('subject')} (showAs: {show_as})")
-                continue
+                logger.info(f"📝 Including tentative event: {event.get('subject')} (showAs: {show_as})")
+                # Continue processing - don't skip tentative events
             
             # ALWAYS skip recurring instances to avoid duplicates
             event_type = event.get('type', 'singleInstance')
