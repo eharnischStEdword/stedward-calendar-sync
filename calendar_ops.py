@@ -23,34 +23,42 @@ def is_all_day_event(event):
     Detect if an event should be treated as all-day based on its timing characteristics.
     
     This function checks multiple conditions to identify all-day events:
-    - Events that span exactly 24 hours starting at midnight
     - Events explicitly marked as all-day in source data
     - Events with date-only formatting (no time components)
+    - Events that span exactly 24 hours starting at midnight (but only if explicitly marked)
     """
     try:
         # Check if source explicitly marks this as all-day
-        if hasattr(event, 'isAllDay') and event.get('isAllDay'):
+        if event.get('isAllDay', False):
+            logger.debug(f"Event '{event.get('subject', 'Unknown')}' marked as all-day by source")
             return True
             
         # Parse start and end times
         start_time = event.get('start', {})
         end_time = event.get('end', {})
         
-        # Handle different datetime formats from source calendar
+        # If using date-only format, it's definitely all-day
+        if 'date' in start_time and 'date' in end_time:
+            logger.debug(f"Event '{event.get('subject', 'Unknown')}' uses date-only format - treating as all-day")
+            return True
+            
+        # Handle datetime format - only treat as all-day if explicitly marked
         if 'dateTime' in start_time and 'dateTime' in end_time:
             start_dt = datetime.fromisoformat(start_time['dateTime'].replace('Z', '+00:00'))
             end_dt = datetime.fromisoformat(end_time['dateTime'].replace('Z', '+00:00'))
             
-            # Check if it spans exactly 24 hours and starts at midnight
+            # Only treat as all-day if it spans exactly 24 hours AND starts at midnight
+            # AND the source explicitly marked it as all-day
             duration = end_dt - start_dt
             is_24_hours = duration.total_seconds() == 86400  # 24 * 60 * 60
             starts_at_midnight = start_dt.hour == 0 and start_dt.minute == 0 and start_dt.second == 0
             
-            return is_24_hours and starts_at_midnight
-            
-        # If using date-only format, it's definitely all-day
-        elif 'date' in start_time and 'date' in end_time:
-            return True
+            if is_24_hours and starts_at_midnight and event.get('isAllDay', False):
+                logger.debug(f"Event '{event.get('subject', 'Unknown')}' is 24-hour event starting at midnight and marked as all-day")
+                return True
+            else:
+                logger.debug(f"Event '{event.get('subject', 'Unknown')}' is timed event: {start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}")
+                return False
             
         return False
         
@@ -788,8 +796,8 @@ class CalendarWriter:
         if location_text:
             body_content = f"<p><strong>Location:</strong> {location_text}</p>"
         
-        # CRITICAL: Detect all-day events properly
-        is_all_day = source_event.get('isAllDay', False)
+        # CRITICAL: Detect all-day events properly using the detection function
+        is_all_day = is_all_day_event(source_event)
         
         # Build base event data
         event_data = {
