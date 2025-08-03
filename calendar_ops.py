@@ -802,7 +802,7 @@ class CalendarWriter:
             'subject': source_event.get('subject'),
             'categories': source_event.get('categories', []),
             'body': {'contentType': 'html', 'content': body_content},
-            'location': {},  # Clear location for privacy
+            'location': source_event.get('location', {}),  # Preserve location data
             'showAs': 'busy',  # Always busy for public calendar
             'isReminderOn': False,  # No reminders on public calendar
             'sensitivity': 'normal'  # Ensure not marked as private
@@ -950,7 +950,14 @@ class CalendarWriter:
                                 logger.debug(f"✅ Batch created: {subject} (All-day: {is_all_day})")
                         else:
                             results['failed'] += 1
+                            # Get the original event data to log what failed
+                            event_idx = int(result.get('id')) - 1
+                            failed_event = batch[event_idx] if event_idx < len(batch) else None
                             error_msg = f"Event {result.get('id')}: Status {result.get('status')}"
+                            if failed_event:
+                                error_msg += f" - Subject: {failed_event.get('subject', 'Unknown')}"
+                            if result.get('body'):
+                                error_msg += f" - Error: {result.get('body', {}).get('error', {}).get('message', 'Unknown error')}"
                             results['errors'].append(error_msg)
                             logger.error(error_msg)
                 else:

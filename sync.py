@@ -1076,6 +1076,22 @@ class SyncEngine:
         """Check if an event needs updating - OPTIMIZED FOR PERFORMANCE"""
         subject = source_event.get('subject', 'Unknown')
         
+        # Skip update if only modification times are different and no actual content changed
+        # Store original modification times for comparison
+        source_modified_original = source_event.get('lastModifiedDateTime')
+        target_modified_original = target_event.get('lastModifiedDateTime')
+
+        # Temporarily set them to the same value for comparison
+        source_event_copy = source_event.copy()
+        target_event_copy = target_event.copy()
+        source_event_copy['lastModifiedDateTime'] = 'SAME'
+        target_event_copy['lastModifiedDateTime'] = 'SAME'
+
+        # If events are identical except for modification time, skip update
+        if source_event_copy == target_event_copy:
+            logger.debug(f"Skipping update for '{subject}' - only modification time differs")
+            return False
+        
         # Quick check: compare modification times first (fastest check)
         source_modified = source_event.get('lastModifiedDateTime')
         target_modified = target_event.get('lastModifiedDateTime')
@@ -1124,11 +1140,20 @@ class SyncEngine:
             logger.info(f"  ✅ LOCATION CHANGED for '{subject}': '{source_loc_str}' != '{target_loc_str}'")
             return True
         
-        # Compare body content
+        # Compare body content - only consider location changes
+        def extract_location_from_body(body_content):
+            import re
+            match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
+            return match.group(1).strip() if match else ''
+
         source_body = source_event.get('body', {}).get('content', '') if isinstance(source_event.get('body'), dict) else ''
         target_body = target_event.get('body', {}).get('content', '') if isinstance(target_event.get('body'), dict) else ''
-        
-        if source_body != target_body:
+
+        source_location_in_body = extract_location_from_body(source_body)
+        target_location_in_body = extract_location_from_body(target_body)
+
+        # Only consider body changed if location info is actually different
+        if source_location_in_body != target_location_in_body:
             logger.info(f"  ✅ BODY CONTENT CHANGED for '{subject}'")
             return True
         
