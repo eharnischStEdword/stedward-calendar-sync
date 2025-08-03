@@ -106,17 +106,17 @@ curl https://stedward-calendar-sync.onrender.com/status
 
 #### **Required for OAuth**
 ```bash
-CLIENT_ID=e139467d-fdeb-40bb-be62-718b007c8e0a
-CLIENT_SECRET=your_microsoft_app_secret
-TENANT_ID=8ccf96b2-b7eb-470b-a715-ec1696d83ebd
-REDIRECT_URI=https://stedward-calendar-sync.onrender.com/auth/callback
+CLIENT_ID=your_client_id_here
+CLIENT_SECRET=your_microsoft_app_secret_here
+TENANT_ID=your_tenant_id_here
+REDIRECT_URI=https://your-app-domain.onrender.com/auth/callback
 ```
 
 #### **Calendar Configuration**
 ```bash
-SHARED_MAILBOX=calendar@stedward.org
+SHARED_MAILBOX=your_shared_mailbox@yourdomain.org
 SOURCE_CALENDAR=Calendar
-TARGET_CALENDAR=St. Edward Public Calendar
+TARGET_CALENDAR=Public Calendar
 ```
 
 #### **Sync Settings**

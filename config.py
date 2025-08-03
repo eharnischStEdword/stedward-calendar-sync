@@ -14,15 +14,15 @@ ENVIRONMENT = os.environ.get('ENVIRONMENT', 'production')
 DEBUG = ENVIRONMENT == 'development'
 
 # Shared Mailbox Configuration
-SHARED_MAILBOX = os.environ.get('SHARED_MAILBOX', "calendar@stedward.org")
+SHARED_MAILBOX = os.environ.get('SHARED_MAILBOX', "your_shared_mailbox@yourdomain.org")
 SOURCE_CALENDAR = os.environ.get('SOURCE_CALENDAR', "Calendar")
-TARGET_CALENDAR = os.environ.get('TARGET_CALENDAR', "St. Edward Public Calendar")
+TARGET_CALENDAR = os.environ.get('TARGET_CALENDAR', "Public Calendar")
 
 # Azure AD Configuration
-CLIENT_ID = os.environ.get('CLIENT_ID', "e139467d-fdeb-40bb-be62-718b007c8e0a")
-TENANT_ID = os.environ.get('TENANT_ID', "8ccf96b2-b7eb-470b-a715-ec1696d83ebd")
-CLIENT_SECRET = os.environ.get('CLIENT_SECRET', '')
-REDIRECT_URI = os.environ.get('REDIRECT_URI', "https://stedward-calendar-sync.onrender.com/auth/callback")
+CLIENT_ID = os.environ.get('CLIENT_ID', "your_client_id_here")
+TENANT_ID = os.environ.get('TENANT_ID', "your_tenant_id_here")
+CLIENT_SECRET = os.environ.get('CLIENT_SECRET', 'your_client_secret_here')
+REDIRECT_URI = os.environ.get('REDIRECT_URI', "https://your-app-domain.onrender.com/auth/callback")
 
 # Application Settings
 SECRET_KEY = os.environ.get('SECRET_KEY', secrets.token_hex(32))
