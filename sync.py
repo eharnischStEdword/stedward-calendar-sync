@@ -756,7 +756,7 @@ class SyncEngine:
         }
         
         # Rate limiting
-        self.sync_request_times = []
+        self.sync_request_times = []  # Stores timestamps of sync requests within the last hour
         
         # Enhanced features
         self.structured_logger = structured_logger
@@ -783,6 +783,22 @@ class SyncEngine:
     def _do_sync(self) -> Dict:
         """Simple sync: Calendar A public events → Calendar B"""
         start_time = DateTimeUtils.get_central_time()
+        
+        # Track this sync request for rate limiting
+        current_time = DateTimeUtils.get_central_time()
+        self.sync_request_times.append(current_time)
+        
+        # Clean up old entries (older than 1 hour)
+        cutoff_time = current_time - timedelta(hours=1)
+        self.sync_request_times = [t for t in self.sync_request_times if t > cutoff_time]
+        
+        # Check rate limit
+        if len(self.sync_request_times) > config.MAX_SYNC_REQUESTS_PER_HOUR:
+            return {
+                "error": f"Rate limit exceeded. Maximum {config.MAX_SYNC_REQUESTS_PER_HOUR} syncs per hour.",
+                "rate_limit_remaining": 0,
+                "retry_after": 3600  # seconds
+            }
         
         # Check if already syncing
         with self.sync_lock:

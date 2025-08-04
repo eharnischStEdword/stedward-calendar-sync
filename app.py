@@ -269,7 +269,7 @@ def get_status():
             "scheduler_paused": scheduler_paused,
             "dry_run_mode": getattr(config, 'DRY_RUN_MODE', False),
             "circuit_breaker_state": "closed",
-            "rate_limit_remaining": 20,
+            "rate_limit_remaining": config.MAX_SYNC_REQUESTS_PER_HOUR,
             "total_syncs": 0,
             "timezone": "America/Chicago",
             "current_time": DateTimeUtils.get_central_time().isoformat() if hasattr(DateTimeUtils.get_central_time(), 'isoformat') else str(DateTimeUtils.get_central_time())
@@ -278,6 +278,9 @@ def get_status():
         if sync_engine:
             engine_status = sync_engine.get_status()
             status.update(engine_status)
+            
+            # Use actual rate limit from engine status
+            status["rate_limit_remaining"] = engine_status.get('rate_limit_remaining', config.MAX_SYNC_REQUESTS_PER_HOUR)
             
             # Format the last sync time for display
             if engine_status.get('last_sync_time'):
