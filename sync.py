@@ -892,6 +892,9 @@ class SyncEngine:
                 self.last_sync_time = DateTimeUtils.get_central_time()
                 self.last_sync_result = result
             
+            # Add successful sync to history
+            self.history.add_entry(result)
+            
             # Log all-day event summary
             if 'all_day_events' in result:
                 all_day_summary = result['all_day_events']
@@ -914,6 +917,9 @@ class SyncEngine:
             
             with self.sync_lock:
                 self.last_sync_result = error_result
+            
+            # Add failed sync to history
+            self.history.add_entry(error_result)
             
             logger.error(f"❌ Sync failed: {e}")
             return error_result
