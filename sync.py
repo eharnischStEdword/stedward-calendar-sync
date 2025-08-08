@@ -838,13 +838,19 @@ class SyncEngine:
             target_all_day_count = sum(1 for e in target_events if e.get('isAllDay', False))
             logger.info(f"📅 All-day events - Source: {source_all_day_count}, Target: {target_all_day_count}")
             
-            # Build target map for quick lookup
-            target_map = self._build_event_map(target_events)
+            # Build target map for quick lookup and collect duplicate targets to delete
+            target_map, duplicate_targets = self._build_event_map(target_events)
             
             # Determine operations needed
             to_add, to_update, to_delete = self._determine_sync_operations(
                 source_events, target_events, target_map, check_instances=False
             )
+
+            # Safely append duplicates detected in target to deletion list
+            if duplicate_targets:
+                logger.info(f"🧹 Found {len(duplicate_targets)} duplicate target events to clean up")
+                # Ensure we only add events that still exist and have an id
+                to_delete.extend([e for e in duplicate_targets if e.get('id')])
             
             logger.info(f"📋 SYNC PLAN: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
             
@@ -1011,31 +1017,39 @@ class SyncEngine:
         logger.debug(f"Single event signature: {signature}")
         return signature
     
-    def _build_event_map(self, events: List[Dict]) -> Dict[str, Dict]:
-        """Build a map of events by signature"""
-        event_map = {}
-        
+    def _build_event_map(self, events: List[Dict]) -> Tuple[Dict[str, Dict], List[Dict]]:
+        """Build a map of events by signature and collect duplicates to remove.
+
+        Returns a tuple of (event_map, duplicates_to_delete).
+        - event_map keeps a single canonical event per signature
+        - duplicates_to_delete contains extra events sharing the same signature
+        """
+        event_map: Dict[str, Dict] = {}
+        duplicates_to_delete: List[Dict] = []
+
         for event in events:
             signature = self._create_event_signature(event)
-            
+
             # Skip occurrences entirely
             if signature.startswith("skip:occurrence:"):
                 continue
-            
+
             if signature in event_map:
-                # Keep the newer event based on creation time
+                # Keep the newer event based on creation time; mark the other as duplicate
                 existing = event_map[signature]
                 existing_created = existing.get('createdDateTime', '')
                 new_created = event.get('createdDateTime', '')
                 if new_created > existing_created:
-                    logger.warning(f"Signature collision! Keeping newer event for '{signature}'")
+                    logger.warning(f"Duplicate detected for signature '{signature}' - keeping newer event")
+                    duplicates_to_delete.append(existing)
                     event_map[signature] = event
                 else:
-                    logger.warning(f"Signature collision! Keeping existing event for '{signature}'")
+                    logger.warning(f"Duplicate detected for signature '{signature}' - keeping existing event")
+                    duplicates_to_delete.append(event)
             else:
                 event_map[signature] = event
-        
-        return event_map
+
+        return event_map, duplicates_to_delete
     
     def _determine_sync_operations(
         self, 
