@@ -1040,11 +1040,11 @@ class SyncEngine:
                 existing_created = existing.get('createdDateTime', '')
                 new_created = event.get('createdDateTime', '')
                 if new_created > existing_created:
-                    logger.warning(f"Duplicate detected for signature '{signature}' - keeping newer event")
+                    logger.info(f"Duplicate detected for signature '{signature}' - keeping newer event")
                     duplicates_to_delete.append(existing)
                     event_map[signature] = event
                 else:
-                    logger.warning(f"Duplicate detected for signature '{signature}' - keeping existing event")
+                    logger.info(f"Duplicate detected for signature '{signature}' - keeping existing event")
                     duplicates_to_delete.append(event)
             else:
                 event_map[signature] = event
