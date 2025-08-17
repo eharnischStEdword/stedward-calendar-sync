@@ -20,6 +20,7 @@ import pytz
 import requests
 
 import config
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # CORE UTILITIES
@@ -114,7 +115,8 @@ class DateTimeUtils:
             else:
                 dt = datetime.fromisoformat(iso_string)
             
-            return DateTimeUtils.format_central_time(dt, include_timezone)
+            # format_central_time already includes timezone label; include_timezone is unused
+            return DateTimeUtils.format_central_time(dt)
         except:
             return iso_string
     

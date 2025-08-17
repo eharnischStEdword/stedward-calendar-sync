@@ -39,7 +39,7 @@ def update_sync_status(status_data):
 
 # Initialize Flask
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(32)
+app.secret_key = config.SECRET_KEY
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -556,14 +556,17 @@ def get_metrics():
     try:
         if not sync_engine:
             return jsonify({"error": "Sync engine not initialized"}), 500
-        
-        metrics = sync_engine.metrics.get_metrics_summary()
-        
-        # Add timezone info
-        metrics['timezone'] = 'America/Chicago'
-        metrics['report_time'] = DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
-        
-        return jsonify(metrics)
+
+        # Use available history statistics since metrics collector is not implemented
+        history_stats = sync_engine.history.get_statistics()
+
+        payload = {
+            "history": history_stats,
+            "timezone": "America/Chicago",
+            "report_time": DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        }
+
+        return jsonify(payload)
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -939,8 +942,8 @@ def debug_event_durations():
                     duration_hours = (end_dt - start_dt).total_seconds() / 3600
                     
                     # Convert to Central Time for display
-                    central_start = start_dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=-5)))  # CST
-                    central_end = end_dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=-5)))  # CST
+                    central_start = DateTimeUtils.utc_to_central(start_dt)
+                    central_end = DateTimeUtils.utc_to_central(end_dt)
                     
                     event_info = {
                         'subject': event.get('subject'),
