@@ -1150,8 +1150,11 @@ def bulletin_events():
         week_param = request.args.get('week', 'upcoming')
         
         # Get the public calendar ID
+        logger.info(f"Looking for calendar: {config.TARGET_CALENDAR}")
         public_calendar_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        logger.info(f"Calendar ID found: {public_calendar_id}")
         if not public_calendar_id:
+            logger.error(f"Public calendar not found: {config.TARGET_CALENDAR}")
             return jsonify({"error": "Public calendar not found"}), 404
         
         # Calculate date range based on week parameter
@@ -1216,6 +1219,9 @@ def bulletin_events():
         start_str = start_datetime.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
         end_str = end_datetime.astimezone(pytz.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
         
+        logger.info(f"Date range: {start_date} to {end_date}")
+        logger.info(f"API date range: {start_str} to {end_str}")
+        
         params = {
             'startDateTime': start_str,
             'endDateTime': end_str,
@@ -1238,6 +1244,7 @@ def bulletin_events():
             if response.status_code == 200:
                 data = response.json()
                 all_events = data.get('value', [])
+                logger.info(f"Fetched {len(all_events)} events from calendar")
                 
                 # Handle pagination if needed
                 next_link = data.get('@odata.nextLink')
@@ -1245,10 +1252,16 @@ def bulletin_events():
                     next_response = requests.get(next_link, headers=headers, timeout=30)
                     if next_response.status_code == 200:
                         next_data = next_response.json()
-                        all_events.extend(next_data.get('value', []))
+                        next_events = next_data.get('value', [])
+                        all_events.extend(next_events)
+                        logger.info(f"Added {len(next_events)} more events from pagination")
                         next_link = next_data.get('@odata.nextLink')
                     else:
                         break
+                
+                logger.info(f"Total events fetched: {len(all_events)}")
+                if all_events:
+                    logger.info(f"Sample event: {all_events[0].get('subject', 'No Subject')} at {all_events[0].get('start', {}).get('dateTime', 'No Time')}")
             else:
                 logger.error(f"Failed to get calendar view: {response.status_code} - {response.text}")
                 all_events = []
@@ -1260,6 +1273,7 @@ def bulletin_events():
         # Process events for bulletin
         from utils.formatting import normalize_location, is_omitted_from_bulletin
         
+        logger.info(f"Processing {len(all_events)} events for bulletin")
         bulletin_events = []
         for event in all_events:
             # Get event start time
@@ -1280,8 +1294,12 @@ def bulletin_events():
                         location_text = location_match.group(1).strip()
                 
                 # Check if this event should be omitted from bulletin
-                if is_omitted_from_bulletin(event.get('subject', 'No Title'), event_start, location_text):
+                subject = event.get('subject', 'No Title')
+                if is_omitted_from_bulletin(subject, event_start, location_text):
+                    logger.info(f"Omitting event from bulletin: {subject} at {event_start_central}")
                     continue  # Skip this event for bulletin display
+                else:
+                    logger.info(f"Including event in bulletin: {subject} at {event_start_central}")
                 
                 # Get event details
                 event_data = {
