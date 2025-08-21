@@ -806,7 +806,7 @@ class CalendarWriter:
             'subject': source_event.get('subject'),
             'categories': source_event.get('categories', []),
             'body': {'contentType': 'html', 'content': body_content},
-            'location': source_event.get('location', {}),  # Preserve location data
+            'location': {'displayName': normalized_location_text} if normalized_location_text else None,  # Apply normalized location
             'showAs': 'busy',  # Always busy for public calendar
             'isReminderOn': False,  # No reminders on public calendar
             'sensitivity': 'normal'  # Ensure not marked as private
