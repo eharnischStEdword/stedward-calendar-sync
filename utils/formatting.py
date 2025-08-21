@@ -4,18 +4,35 @@ from zoneinfo import ZoneInfo
 
 CENTRAL = ZoneInfo("America/Chicago")
 
-def normalize_location(location: str | None) -> str | None:
-    if not location:
-        return location
-    name = location.strip()
-
-    # Handle known variants
+def _normalize_location_token(name: str) -> str:
+    """Normalize a single location token (no separators)."""
     if name in ("Cafeteria Rental", "Cafeteria Rentals"):
         return "School Cafeteria"
     if name == "Little Carrell Room":
         return "Little Carell Room"  # fix the typo
-
     return name
+
+
+def normalize_location(location: str | None) -> str | None:
+    """Normalize location names; supports composite strings like 'Gym; Cafeteria Rentals'."""
+    if not location:
+        return location
+    name = location.strip()
+
+    # If composite, normalize each token and dedupe while preserving order
+    if ";" in name or "," in name:
+        parts = [p.strip() for p in name.replace(",", ";").split(";") if p.strip()]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for p in parts:
+            token = _normalize_location_token(p)
+            if token not in seen:
+                normalized.append(token)
+                seen.add(token)
+        return "; ".join(normalized)
+
+    # Single token
+    return _normalize_location_token(name)
 
 def is_omitted_from_bulletin(subject: str, starts_at_utc: datetime, location: str | None) -> bool:
     """
