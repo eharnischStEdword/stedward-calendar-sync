@@ -1317,10 +1317,14 @@ def bulletin_events():
 
             event_start_central = utc_to_central(start_utc)
 
-            # Extract location from body
+            # Prefer Graph location; fallback to body "Location:" snippet
+            location_text = ''
+            location_field = event.get('location', {})
+            if isinstance(location_field, dict):
+                location_text = (location_field.get('displayName') or '').strip()
+
             body_content = event.get('body', {}).get('content', '')
-            location_text = ""
-            if body_content and 'Location:' in body_content:
+            if not location_text and body_content and 'Location:' in body_content:
                 location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
                 if location_match:
                     location_text = location_match.group(1).strip()

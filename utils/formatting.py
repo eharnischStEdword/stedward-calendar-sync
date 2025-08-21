@@ -8,10 +8,13 @@ def normalize_location(location: str | None) -> str | None:
     if not location:
         return location
     name = location.strip()
-    if name == "Cafeteria Rental":
+
+    # Handle known variants
+    if name in ("Cafeteria Rental", "Cafeteria Rentals"):
         return "School Cafeteria"
     if name == "Little Carrell Room":
         return "Little Carell Room"  # fix the typo
+
     return name
 
 def is_omitted_from_bulletin(subject: str, starts_at_utc: datetime, location: str | None) -> bool:
@@ -32,8 +35,12 @@ def is_omitted_from_bulletin(subject: str, starts_at_utc: datetime, location: st
     def has(loc_expected: str | None = None) -> bool:
         if not loc_expected:
             return True
-        loc_norm = normalize_location(location or "")
-        return loc_norm == loc_expected
+        loc_norm = normalize_location(location or "") or ""
+        # Some events have multiple locations separated by ';' or ','; check tokens
+        tokens = [part.strip() for part in loc_norm.replace(',', ';').split(';') if part.strip()]
+        if not tokens:
+            tokens = [loc_norm]
+        return any(token == loc_expected for token in tokens)
 
     # -----------------------
     # SATURDAYS (wd=5)
