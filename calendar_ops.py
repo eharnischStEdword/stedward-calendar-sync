@@ -791,10 +791,14 @@ class CalendarWriter:
             else:
                 location_text = str(source_location)
         
+        # Apply location normalization for the target calendar
+        from utils.formatting import normalize_location
+        normalized_location_text = normalize_location(location_text)
+        
         # Create body content with ONLY location information (privacy: exclude source body)
         body_content = ""
-        if location_text:
-            body_content = f"<p><strong>Location:</strong> {location_text}</p>"
+        if normalized_location_text:
+            body_content = f"<p><strong>Location:</strong> {normalized_location_text}</p>"
         # Do NOT include source event body content for privacy
         
         # Build base event data

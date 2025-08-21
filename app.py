@@ -1258,6 +1258,8 @@ def bulletin_events():
             all_events = []
         
         # Process events for bulletin
+        from utils.formatting import normalize_location, is_omitted_from_bulletin
+        
         bulletin_events = []
         for event in all_events:
             # Get event start time
@@ -1269,12 +1271,24 @@ def bulletin_events():
                 event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
                 event_start_central = utc_to_central(event_start)
                 
+                # Extract location from body
+                body_content = event.get('body', {}).get('content', '')
+                location_text = ""
+                if body_content and 'Location:' in body_content:
+                    location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
+                    if location_match:
+                        location_text = location_match.group(1).strip()
+                
+                # Check if this event should be omitted from bulletin
+                if is_omitted_from_bulletin(event.get('subject', 'No Title'), event_start, location_text):
+                    continue  # Skip this event for bulletin display
+                
                 # Get event details
                 event_data = {
                     'subject': event.get('subject', 'No Title'),
                     'start': event_start_central,
                     'end': None,
-                    'location': '',
+                    'location': normalize_location(location_text),  # Apply location normalization
                     'is_all_day': event.get('isAllDay', False)
                 }
                 
@@ -1283,13 +1297,6 @@ def bulletin_events():
                 if event_end_str:
                     event_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
                     event_data['end'] = utc_to_central(event_end)
-                
-                # Extract location from body
-                body_content = event.get('body', {}).get('content', '')
-                if body_content and 'Location:' in body_content:
-                    location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
-                    if location_match:
-                        event_data['location'] = location_match.group(1).strip()
                 
                 bulletin_events.append(event_data)
                 
