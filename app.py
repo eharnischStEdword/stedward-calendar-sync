@@ -1272,55 +1272,86 @@ def bulletin_events():
         
         # Process events for bulletin
         from utils.formatting import normalize_location, is_omitted_from_bulletin
-        
+
+        def graph_datetime_to_utc(dt_dict):
+            """
+            Convert a Microsoft Graph dateTime dict to timezone-aware UTC datetime.
+            Handles cases where dateTime has no 'Z' and timeZone is 'Central Standard Time'.
+            """
+            try:
+                dt_str = (dt_dict or {}).get('dateTime', '')
+                if not dt_str:
+                    return None
+                tz_name = (dt_dict or {}).get('timeZone', 'UTC') or 'UTC'
+
+                # Normalize ISO string; handle Z → +00:00
+                iso = dt_str.replace('Z', '+00:00')
+                dt = datetime.fromisoformat(iso)
+
+                # If already timezone-aware, convert to UTC
+                import pytz as _pytz
+                if dt.tzinfo is not None:
+                    return dt.astimezone(_pytz.UTC)
+
+                # Map Graph TZ to pytz
+                if tz_name == 'UTC':
+                    return _pytz.UTC.localize(dt)
+                if tz_name == 'Central Standard Time':
+                    central = _pytz.timezone('America/Chicago')
+                    return central.localize(dt).astimezone(_pytz.UTC)
+
+                # Fallback: assume UTC if unknown
+                return _pytz.UTC.localize(dt)
+            except Exception as _e:
+                logger.warning(f"Failed to parse Graph datetime: {dt_dict} ({_e})")
+                return None
+
         logger.info(f"Processing {len(all_events)} events for bulletin")
         bulletin_events = []
         for event in all_events:
-            # Get event start time
-            event_start_str = event.get('start', {}).get('dateTime', '')
-            if not event_start_str:
+            # Convert start/end to UTC and Central
+            start_utc = graph_datetime_to_utc(event.get('start'))
+            if start_utc is None:
+                logger.info("Skipping event with invalid start time")
                 continue
-            
+
+            event_start_central = utc_to_central(start_utc)
+
+            # Extract location from body
+            body_content = event.get('body', {}).get('content', '')
+            location_text = ""
+            if body_content and 'Location:' in body_content:
+                location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
+                if location_match:
+                    location_text = location_match.group(1).strip()
+
+            # Check if this event should be omitted from bulletin
+            subject = event.get('subject', 'No Title')
             try:
-                event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
-                event_start_central = utc_to_central(event_start)
-                
-                # Extract location from body
-                body_content = event.get('body', {}).get('content', '')
-                location_text = ""
-                if body_content and 'Location:' in body_content:
-                    location_match = re.search(r'<strong>Location:</strong>\s*([^<]+)', body_content)
-                    if location_match:
-                        location_text = location_match.group(1).strip()
-                
-                # Check if this event should be omitted from bulletin
-                subject = event.get('subject', 'No Title')
-                if is_omitted_from_bulletin(subject, event_start, location_text):
+                if is_omitted_from_bulletin(subject, start_utc, location_text):
                     logger.info(f"Omitting event from bulletin: {subject} at {event_start_central}")
-                    continue  # Skip this event for bulletin display
-                else:
-                    logger.info(f"Including event in bulletin: {subject} at {event_start_central}")
-                
-                # Get event details
-                event_data = {
-                    'subject': event.get('subject', 'No Title'),
-                    'start': event_start_central,
-                    'end': None,
-                    'location': normalize_location(location_text),  # Apply location normalization
-                    'is_all_day': event.get('isAllDay', False)
-                }
-                
-                # Get end time
-                event_end_str = event.get('end', {}).get('dateTime', '')
-                if event_end_str:
-                    event_end = datetime.fromisoformat(event_end_str.replace('Z', '+00:00'))
-                    event_data['end'] = utc_to_central(event_end)
-                
-                bulletin_events.append(event_data)
-                
+                    continue
             except Exception as e:
-                logger.warning(f"Error processing event: {e}")
-                continue
+                # If omission check fails, default to include rather than drop
+                logger.warning(f"Omission check error for '{subject}': {e} — including in bulletin")
+
+            logger.info(f"Including event in bulletin: {subject} at {event_start_central}")
+
+            # Build event details
+            event_data = {
+                'subject': subject,
+                'start': event_start_central,
+                'end': None,
+                'location': normalize_location(location_text),
+                'is_all_day': event.get('isAllDay', False)
+            }
+
+            # End time (optional)
+            end_utc = graph_datetime_to_utc(event.get('end'))
+            if end_utc is not None:
+                event_data['end'] = utc_to_central(end_utc)
+
+            bulletin_events.append(event_data)
         
         # Sort events by start time
         bulletin_events.sort(key=lambda x: x['start'])
