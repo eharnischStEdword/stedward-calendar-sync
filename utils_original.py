@@ -537,10 +537,18 @@ class CacheManager:
     
     def __init__(self, cache_dir: str = '/data'):
         self.cache_dir = cache_dir
-        os.makedirs(cache_dir, exist_ok=True)
+        self._cache_available = True
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            logger.warning(f"Cache directory not available: {e}. Cache will be disabled.")
+            self._cache_available = False
     
     def get(self, key: str) -> Optional[Dict]:
         """Get cached data"""
+        if not self._cache_available:
+            return None
+            
         cache_file = os.path.join(self.cache_dir, f"{key}.json")
         try:
             if os.path.exists(cache_file):
@@ -558,6 +566,9 @@ class CacheManager:
     
     def set(self, key: str, value: Any, ttl_hours: int = None):
         """Set cached data with TTL"""
+        if not self._cache_available:
+            return
+            
         ttl_hours = ttl_hours or config.CACHE_TTL_HOURS
         cache_file = os.path.join(self.cache_dir, f"{key}.json")
         try:
@@ -572,6 +583,9 @@ class CacheManager:
     
     def clear(self, key: str):
         """Clear cached data"""
+        if not self._cache_available:
+            return
+            
         cache_file = os.path.join(self.cache_dir, f"{key}.json")
         try:
             if os.path.exists(cache_file):
