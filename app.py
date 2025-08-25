@@ -1331,10 +1331,18 @@ def bulletin_events():
 
             # Check if this event should be omitted from bulletin
             subject = event.get('subject', 'No Title')
+            
+            # Debug logging for Mass events
+            if 'Mass' in subject:
+                logger.info(f"DEBUG Mass event: '{subject}' at {event_start_central} (weekday: {event_start_central.weekday()}, time: {event_start_central.strftime('%H:%M')})")
+            
             try:
-                if is_omitted_from_bulletin(subject, start_utc, location_text):
+                omission_result = is_omitted_from_bulletin(subject, start_utc, location_text)
+                if omission_result:
                     logger.info(f"Omitting event from bulletin: {subject} at {event_start_central}")
                     continue
+                elif 'Mass' in subject:
+                    logger.info(f"DEBUG Mass event NOT omitted: '{subject}' at {event_start_central}")
             except Exception as e:
                 # If omission check fails, default to include rather than drop
                 logger.warning(f"Omission check error for '{subject}': {e} — including in bulletin")
