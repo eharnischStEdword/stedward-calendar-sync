@@ -358,6 +358,7 @@ class CalendarReader:
         stats = {
             'total_events': len(all_events),
             'non_public': 0,
+            'not_busy': 0,
             'recurring_instances': 0,
             'past_events': 0,
             'future_events': 0,
@@ -385,10 +386,12 @@ class CalendarReader:
                 logger.debug(f"Skipping non-public event: {event.get('subject')} (categories: {categories})")
                 continue
 
-            # Note: We no longer filter by showAs status - if it has a Public tag, it should sync
-            # regardless of whether it's marked as busy, free, or tentative
+            # CRITICAL: Also check if event is marked as Busy
             show_as = event.get('showAs', 'busy')
-            logger.debug(f"📝 Public event found: {event.get('subject')} (showAs: {show_as})")
+            if show_as != 'busy':
+                stats['not_busy'] += 1
+                logger.info(f"📝 Skipping non-busy public event: {event.get('subject')} (showAs: {show_as})")
+                continue
             
             # ALWAYS skip recurring instances to avoid duplicates
             event_type = event.get('type', 'singleInstance')

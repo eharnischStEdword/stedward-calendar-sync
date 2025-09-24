@@ -1781,6 +1781,77 @@ def debug_missing_public_events():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/current-sync-status')
+def debug_current_sync_status():
+    """Debug: Check current sync status and what's actually in the public calendar"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get public calendar ID
+        public_id = sync_engine.reader.find_calendar_id(config.PUBLIC_CALENDAR)
+        if not public_id:
+            return jsonify({"error": "Public calendar not found"}), 404
+        
+        # Get all events from both calendars
+        source_events = sync_engine.reader.get_calendar_events(source_id)
+        public_events = sync_engine.reader.get_calendar_events(public_id)
+        
+        # Find public events in source
+        source_public_events = []
+        for event in source_events:
+            if 'Public' in event.get('categories', []):
+                source_public_events.append({
+                    'subject': event.get('subject'),
+                    'start_date': event.get('start', {}).get('dateTime', 'No date')[:10],
+                    'showAs': event.get('showAs'),
+                    'type': event.get('type'),
+                    'isCancelled': event.get('isCancelled', False)
+                })
+        
+        # Find events in public calendar
+        public_calendar_events = []
+        for event in public_events:
+            public_calendar_events.append({
+                'subject': event.get('subject'),
+                'start_date': event.get('start', {}).get('dateTime', 'No date')[:10],
+                'showAs': event.get('showAs'),
+                'type': event.get('type'),
+                'isCancelled': event.get('isCancelled', False)
+            })
+        
+        # Find missing events
+        public_subjects = {event['subject'] for event in public_calendar_events}
+        missing_events = []
+        for event in source_public_events:
+            if event['subject'] not in public_subjects:
+                missing_events.append(event)
+        
+        return jsonify({
+            'source_public_events': source_public_events,
+            'public_calendar_events': public_calendar_events,
+            'missing_events': missing_events,
+            'total_source_public': len(source_public_events),
+            'total_public_calendar': len(public_calendar_events),
+            'total_missing': len(missing_events),
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug current sync status error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
