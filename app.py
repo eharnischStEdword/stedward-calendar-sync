@@ -1341,6 +1341,82 @@ def debug_mass_events_summary():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/public-sync-issue')
+def debug_public_sync_issue():
+    """Debug: Find out why so many public events aren't syncing"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get all events from source calendar
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        if not all_events:
+            return jsonify({"error": "Could not retrieve source events"}), 500
+        
+        # Get what the sync actually finds as public
+        public_events = sync_engine.reader.get_public_events(source_id)
+        
+        # Analyze the gap
+        public_event_subjects = {event.get('subject') for event in public_events} if public_events else set()
+        
+        # Find events that SHOULD be public but aren't syncing
+        missing_public_events = []
+        for event in all_events:
+            categories = event.get('categories', [])
+            subject = event.get('subject', 'No Subject')
+            
+            # Skip if already syncing
+            if subject in public_event_subjects:
+                continue
+                
+            # Look for events that should probably be public
+            subject_lower = subject.lower()
+            should_be_public_keywords = [
+                'mass', 'liturgy', 'worship', 'school', 'education', 'class',
+                'parish', 'community', 'fellowship', 'ministry', 'outreach',
+                'celebration', 'festival', 'feast', 'baptism', 'confirmation',
+                'wedding', 'funeral', 'memorial', 'adoration', 'rosary',
+                'retreat', 'mission', 'youth', 'children', 'family', 'choir',
+                'music', 'concert', 'fundraiser', 'benefit', 'charity',
+                'volunteer', 'service', 'food drive', 'clothing drive',
+                'blood drive', 'health fair', 'open house', 'tour'
+            ]
+            
+            has_public_keyword = any(keyword in subject_lower for keyword in should_be_public_keywords)
+            
+            if has_public_keyword and 'Public' not in categories:
+                missing_public_events.append({
+                    'subject': subject,
+                    'start_date': event.get('start', {}).get('dateTime', 'No date')[:10],
+                    'categories': categories,
+                    'showAs': event.get('showAs'),
+                    'type': event.get('type'),
+                    'isCancelled': event.get('isCancelled', False)
+                })
+        
+        return jsonify({
+            'total_source_events': len(all_events),
+            'public_events_syncing': len(public_events) if public_events else 0,
+            'events_missing_public_tag': len(missing_public_events),
+            'missing_events_sample': missing_public_events[:20],  # First 20
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug public sync issue error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
