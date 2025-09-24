@@ -1729,6 +1729,58 @@ def debug_mass_daily_sync_status():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/missing-public-events')
+def debug_missing_public_events():
+    """Debug: Show events with Public tags that aren't syncing"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get all events from source calendar
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        if not all_events:
+            return jsonify({"error": "Could not retrieve source events"}), 500
+        
+        # Get public events using the actual sync method
+        public_events = sync_engine.reader.get_public_events(source_id)
+        public_event_subjects = {event.get('subject') for event in public_events} if public_events else set()
+        
+        # Find events with Public tags that aren't syncing
+        missing_public_events = []
+        for event in all_events:
+            if 'Public' in event.get('categories', []):
+                subject = event.get('subject', 'No Subject')
+                if subject not in public_event_subjects:
+                    missing_public_events.append({
+                        'subject': subject,
+                        'start_date': event.get('start', {}).get('dateTime', 'No date')[:10],
+                        'categories': event.get('categories', []),
+                        'showAs': event.get('showAs'),
+                        'type': event.get('type'),
+                        'isCancelled': event.get('isCancelled', False)
+                    })
+        
+        return jsonify({
+            'missing_public_events': missing_public_events,
+            'total_missing': len(missing_public_events),
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug missing public events error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
