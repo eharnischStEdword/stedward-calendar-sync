@@ -1417,6 +1417,146 @@ def debug_public_sync_issue():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/sync-breakdown')
+def debug_sync_breakdown():
+    """Debug: Show exactly what's happening in the sync filtering process"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get all events from source calendar
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        if not all_events:
+            return jsonify({"error": "Could not retrieve source events"}), 500
+        
+        # Manually run through the same filtering logic as get_public_events
+        stats = {
+            'total_events': len(all_events),
+            'cancelled': 0,
+            'no_public_tag': 0,
+            'not_busy': 0,
+            'recurring_instances': 0,
+            'past_events': 0,
+            'future_events': 0,
+            'date_parse_errors': 0,
+            'passed_all_filters': 0
+        }
+        
+        filtered_out_events = []
+        
+        # Create timezone-aware cutoff dates (same as in calendar_ops.py)
+        from datetime import timedelta
+        import pytz
+        central_tz = pytz.timezone('America/Chicago')
+        now_central = DateTimeUtils.get_central_time()
+        cutoff_date = (now_central - timedelta(days=config.SYNC_CUTOFF_DAYS)).astimezone(pytz.UTC)
+        future_cutoff = (now_central + timedelta(days=365)).astimezone(pytz.UTC)
+        
+        for event in all_events:
+            subject = event.get('subject', 'No Subject')
+            categories = event.get('categories', [])
+            show_as = event.get('showAs', 'busy')
+            event_type = event.get('type', 'singleInstance')
+            
+            # Track why each event is filtered out
+            filter_reason = None
+            
+            # Skip cancelled events entirely
+            if event.get('isCancelled', False):
+                stats['cancelled'] += 1
+                filter_reason = "cancelled"
+            
+            # Check if public
+            elif 'Public' not in categories:
+                stats['no_public_tag'] += 1
+                filter_reason = "no_public_tag"
+            
+            # CRITICAL: Also check if event is marked as Busy
+            elif show_as != 'busy':
+                stats['not_busy'] += 1
+                filter_reason = f"not_busy (showAs: {show_as})"
+            
+            # ALWAYS skip recurring instances to avoid duplicates
+            elif event_type == 'occurrence':
+                stats['recurring_instances'] += 1
+                filter_reason = "recurring_instance"
+            
+            # Check event date
+            else:
+                try:
+                    # Parse event date
+                    event_date = DateTimeUtils.parse_graph_datetime(event.get('start', {}))
+                    if not event_date:
+                        stats['date_parse_errors'] += 1
+                        filter_reason = "date_parse_error"
+                    else:
+                        # Ensure both datetimes are timezone-aware for comparison
+                        if event_date.tzinfo is None:
+                            # If naive, assume it's UTC
+                            event_date = pytz.UTC.localize(event_date)
+
+                        # Convert to UTC for comparison
+                        event_date_utc = event_date.astimezone(pytz.UTC)
+
+                        # Skip old events (unless it's a recurring event that should always be synced)
+                        if event_date_utc < cutoff_date:
+                            # Special override for recurring events - always include them regardless of age
+                            if event.get('type') == 'seriesMaster':
+                                stats['passed_all_filters'] += 1
+                                filter_reason = "passed_all_filters"
+                            else:
+                                stats['past_events'] += 1
+                                filter_reason = f"past_event (date: {event_date_utc}, cutoff: {cutoff_date})"
+
+                        # Skip events too far in the future (but allow recurring events to extend further)
+                        elif event_date_utc > future_cutoff:
+                            # Special override for recurring events - allow them to extend further into the future
+                            if event.get('type') == 'seriesMaster':
+                                stats['passed_all_filters'] += 1
+                                filter_reason = "passed_all_filters"
+                            else:
+                                stats['future_events'] += 1
+                                filter_reason = f"future_event (date: {event_date_utc}, cutoff: {future_cutoff})"
+                        else:
+                            stats['passed_all_filters'] += 1
+                            filter_reason = "passed_all_filters"
+                            
+                except Exception as e:
+                    stats['date_parse_errors'] += 1
+                    filter_reason = f"date_parse_error: {str(e)}"
+            
+            # Record why this event was filtered out
+            if filter_reason != "passed_all_filters":
+                filtered_out_events.append({
+                    'subject': subject,
+                    'start_date': event.get('start', {}).get('dateTime', 'No date')[:10],
+                    'categories': categories,
+                    'showAs': show_as,
+                    'type': event_type,
+                    'filter_reason': filter_reason
+                })
+        
+        return jsonify({
+            'filtering_stats': stats,
+            'filtered_out_events': filtered_out_events[:30],  # First 30
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug sync breakdown error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
