@@ -1275,6 +1275,72 @@ def debug_recurring_events():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/mass-events-summary')
+def debug_mass_events_summary():
+    """Debug: Simple summary of Mass events and their types"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get all events from source calendar
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        if not all_events:
+            return jsonify({"error": "Could not retrieve source events"}), 500
+        
+        # Focus only on Mass events
+        mass_events = []
+        for event in all_events:
+            if 'mass' in event.get('subject', '').lower():
+                mass_events.append({
+                    'subject': event.get('subject'),
+                    'type': event.get('type', 'singleInstance'),
+                    'has_public': 'Public' in event.get('categories', []),
+                    'start_date': event.get('start', {}).get('dateTime', 'No date')[:10],  # Just the date part
+                    'showAs': event.get('showAs'),
+                    'isCancelled': event.get('isCancelled', False)
+                })
+        
+        # Count by type
+        type_counts = {}
+        for event in mass_events:
+            event_type = event['type']
+            type_counts[event_type] = type_counts.get(event_type, 0) + 1
+        
+        # Count by date range (Sept-Nov vs after Nov 22)
+        sept_nov_count = 0
+        after_nov_count = 0
+        
+        for event in mass_events:
+            start_date = event['start_date']
+            if start_date >= '2024-09-22' and start_date <= '2024-11-22':
+                sept_nov_count += 1
+            elif start_date > '2024-11-22':
+                after_nov_count += 1
+        
+        return jsonify({
+            'total_mass_events': len(mass_events),
+            'type_counts': type_counts,
+            'sept_nov_mass_events': sept_nov_count,
+            'after_nov_mass_events': after_nov_count,
+            'sample_mass_events': mass_events[:10],  # Just first 10
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug mass events summary error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
