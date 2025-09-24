@@ -1852,6 +1852,65 @@ def debug_current_sync_status():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/quick-debug')
+def quick_debug():
+    """Quick debug without full authentication - just check what we can see"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated", "auth_status": "failed"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get all events from source calendar
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        if not all_events:
+            return jsonify({"error": "Could not retrieve source events"}), 500
+        
+        # Quick analysis
+        public_events = []
+        busy_public_events = []
+        
+        for event in all_events:
+            if 'Public' in event.get('categories', []):
+                subject = event.get('subject', 'No Subject')
+                show_as = event.get('showAs', 'busy')
+                start_date = event.get('start', {}).get('dateTime', 'No date')[:10]
+                
+                public_events.append({
+                    'subject': subject,
+                    'start_date': start_date,
+                    'showAs': show_as
+                })
+                
+                if show_as == 'busy':
+                    busy_public_events.append({
+                        'subject': subject,
+                        'start_date': start_date,
+                        'showAs': show_as
+                    })
+        
+        return jsonify({
+            'total_events': len(all_events),
+            'public_events': len(public_events),
+            'busy_public_events': len(busy_public_events),
+            'sample_public_events': public_events[:5],
+            'sample_busy_public': busy_public_events[:5],
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Quick debug error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
