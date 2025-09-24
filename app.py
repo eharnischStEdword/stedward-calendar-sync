@@ -1134,6 +1134,62 @@ def debug_categories():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/sync-filter')
+def debug_sync_filter():
+    """Debug: Show what happens during the actual sync filtering process"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get public events using the actual sync method
+        public_events = sync_engine.reader.get_public_events(source_id)
+        
+        # Also get all events for comparison
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        
+        # Analyze what got filtered out
+        public_event_subjects = {event.get('subject') for event in public_events} if public_events else set()
+        
+        filtered_out = []
+        for event in all_events:
+            if event.get('subject') not in public_event_subjects:
+                categories = event.get('categories', [])
+                if 'Public' in categories:
+                    # This is a public event that got filtered out!
+                    filtered_out.append({
+                        'subject': event.get('subject'),
+                        'start': event.get('start', {}).get('dateTime', 'No date'),
+                        'categories': categories,
+                        'showAs': event.get('showAs'),
+                        'isCancelled': event.get('isCancelled', False),
+                        'type': event.get('type'),
+                        'reason': 'Public event filtered out during sync'
+                    })
+        
+        return jsonify({
+            'total_events': len(all_events),
+            'public_events_found': len(public_events) if public_events else 0,
+            'public_events_list': public_events[:10] if public_events else [],  # First 10
+            'filtered_out_public_events': filtered_out,
+            'filtered_out_count': len(filtered_out),
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug sync filter error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
