@@ -194,12 +194,31 @@ class CalendarReader:
     
     @RetryUtils.retry_with_backoff(max_retries=3, base_delay=1)
     def get_calendar_events(self, calendar_id: str, select_fields: List[str] = None) -> Optional[List[Dict]]:
-        """Get all events from a specific calendar with retry logic"""
+        """Get all events from a specific calendar including recurring event occurrences"""
         headers = self.auth.get_headers()
         if not headers:
             return None
         
-        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events"
+        # Use calendarView to get expanded recurring events
+        from datetime import datetime, timedelta
+        import pytz
+        
+        # Get events from 1 year ago to 1 year in future
+        now = datetime.now(pytz.UTC)
+        start_date = (now - timedelta(days=365)).isoformat()
+        end_date = (now + timedelta(days=365)).isoformat()
+        
+        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/calendarView"
+        
+        # Add date range parameters
+        params = {
+            'startDateTime': start_date,
+            'endDateTime': end_date,
+            '$top': 100
+        }
+        
+        if select_fields:
+            params['$select'] = ','.join(select_fields)
         
         # Default fields to retrieve
         if not select_fields:
@@ -216,13 +235,12 @@ class CalendarReader:
         
         # Handle pagination
         while url and page_counter < max_pages:
-            params = {
-                '$top': 100,  # Reduced from 500 for better performance
-                '$select': ','.join(select_fields)
-            }
-            
             try:
-                response = requests.get(url, headers=headers, params=params if not all_events else None, timeout=30)
+                # For first request, use params. For pagination, just follow the nextLink
+                if all_events:
+                    response = requests.get(url, headers=headers, timeout=30)
+                else:
+                    response = requests.get(url, headers=headers, params=params, timeout=30)
                 
                 if response.status_code == 401:
                     # Try refreshing token
@@ -348,11 +366,54 @@ class CalendarReader:
     
     def get_public_events(self, calendar_id: str, include_instances: bool = False) -> Optional[List[Dict]]:
         """Get only public events from a calendar"""
-        # ALWAYS use regular events to avoid duplicates, ignore include_instances parameter
+        # Get all events including expanded recurring occurrences
         all_events = self.get_calendar_events(calendar_id)
-            
+        
         if not all_events:
             return None
+        
+        # IMPORTANT: Filter out duplicate seriesMasters when we have occurrences
+        # Group events by seriesMasterId to identify duplicates
+        series_masters = {}
+        occurrences = []
+        single_events = []
+        
+        for event in all_events:
+            event_type = event.get('type', 'singleInstance')
+            series_master_id = event.get('seriesMasterId')
+            
+            if event_type == 'seriesMaster':
+                # Track series masters
+                series_masters[event['id']] = event
+            elif event_type == 'occurrence':
+                # Collect occurrences
+                occurrences.append(event)
+            else:
+                # Single instance events
+                single_events.append(event)
+        
+        # If we have occurrences for a series, don't include the seriesMaster
+        series_with_occurrences = set()
+        for occ in occurrences:
+            if occ.get('seriesMasterId'):
+                series_with_occurrences.add(occ['seriesMasterId'])
+        
+        # Build final event list
+        filtered_events = []
+        
+        # Add single events
+        filtered_events.extend(single_events)
+        
+        # Add occurrences
+        filtered_events.extend(occurrences)
+        
+        # Only add seriesMasters if they have no occurrences in our window
+        for master_id, master_event in series_masters.items():
+            if master_id not in series_with_occurrences:
+                filtered_events.append(master_event)
+        
+        # Now apply the Public/Busy filtering
+        all_events = filtered_events  # Use filtered list for rest of processing
         
         public_events = []
         stats = {
@@ -391,12 +452,6 @@ class CalendarReader:
             if show_as != 'busy':
                 stats['not_busy'] += 1
                 logger.info(f"📝 Skipping non-busy public event: {event.get('subject')} (showAs: {show_as})")
-                continue
-            
-            # ALWAYS skip recurring instances to avoid duplicates
-            event_type = event.get('type', 'singleInstance')
-            if event_type == 'occurrence':
-                stats['recurring_instances'] += 1
                 continue
             
             # Check event date
