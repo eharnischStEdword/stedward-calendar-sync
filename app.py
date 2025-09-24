@@ -2079,6 +2079,120 @@ def debug_graph_api_test_2():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/test-single-event/<event_subject>')
+def test_single_event(event_subject):
+    """Test why a specific event isn't syncing"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get all events from source
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        
+        # Find matching event
+        matching_events = []
+        for event in all_events:
+            if event_subject.lower() in (event.get('subject') or '').lower():
+                matching_events.append({
+                    'subject': event.get('subject'),
+                    'type': event.get('type'),
+                    'categories': event.get('categories', []),
+                    'showAs': event.get('showAs'),
+                    'start': event.get('start'),
+                    'end': event.get('end'),
+                    'isAllDay': event.get('isAllDay'),
+                    'isCancelled': event.get('isCancelled'),
+                    'seriesMasterId': event.get('seriesMasterId'),
+                    'has_public': 'Public' in event.get('categories', []),
+                    'is_busy': event.get('showAs') == 'busy',
+                    'would_sync': 'Public' in event.get('categories', []) and event.get('showAs') == 'busy'
+                })
+        
+        # Now check what's in the public calendar
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        target_events = []
+        if target_id:
+            all_target = sync_engine.reader.get_calendar_events(target_id)
+            for event in all_target:
+                if event_subject.lower() in (event.get('subject') or '').lower():
+                    target_events.append({
+                        'subject': event.get('subject'),
+                        'type': event.get('type'),
+                        'start': event.get('start')
+                    })
+        
+        return jsonify({
+            'search_term': event_subject,
+            'source_events_found': len(matching_events),
+            'source_events': matching_events,
+            'target_events_found': len(target_events),
+            'target_events': target_events,
+            'diagnosis': {
+                'should_sync': len([e for e in matching_events if e['would_sync']]),
+                'blocked_by_category': len([e for e in matching_events if not e['has_public']]),
+                'blocked_by_showas': len([e for e in matching_events if not e['is_busy']])
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/debug/verify-config')
+def verify_config():
+    """Verify configuration matches actual calendar names"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get all calendars
+        calendars = sync_engine.reader.get_calendars()
+        
+        # Find configured calendars
+        source_found = False
+        target_found = False
+        calendar_list = []
+        
+        for cal in calendars:
+            cal_name = cal.get('name')
+            calendar_list.append(cal_name)
+            
+            if cal_name == config.SOURCE_CALENDAR:
+                source_found = True
+            if cal_name == config.TARGET_CALENDAR:
+                target_found = True
+        
+        return jsonify({
+            'configuration': {
+                'SOURCE_CALENDAR': config.SOURCE_CALENDAR,
+                'TARGET_CALENDAR': config.TARGET_CALENDAR,
+                'SHARED_MAILBOX': config.SHARED_MAILBOX
+            },
+            'validation': {
+                'source_calendar_found': source_found,
+                'target_calendar_found': target_found
+            },
+            'available_calendars': calendar_list,
+            'issues': {
+                'source_not_found': not source_found,
+                'target_not_found': not target_found,
+                'possible_typo': not source_found or not target_found
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""

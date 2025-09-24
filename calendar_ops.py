@@ -415,6 +415,25 @@ class CalendarReader:
         # Now apply the Public/Busy filtering
         all_events = filtered_events  # Use filtered list for rest of processing
         
+        # Diagnostic logging
+        logger.info(f"📊 DIAGNOSTIC: Retrieved {len(all_events)} total events from calendar")
+
+        # Log event type breakdown
+        event_types = {}
+        for event in all_events:
+            event_type = event.get('type', 'unknown')
+            event_types[event_type] = event_types.get(event_type, 0) + 1
+        logger.info(f"📊 Event types breakdown: {event_types}")
+
+        # Log first 5 events for inspection
+        for i, event in enumerate(all_events[:5]):
+            logger.info(f"Sample event {i+1}:")
+            logger.info(f"  Subject: {event.get('subject')}")
+            logger.info(f"  Type: {event.get('type')}")
+            logger.info(f"  Categories: {event.get('categories', [])}")
+            logger.info(f"  ShowAs: {event.get('showAs')}")
+            logger.info(f"  Start: {event.get('start')}")
+        
         public_events = []
         stats = {
             'total_events': len(all_events),
@@ -438,20 +457,21 @@ class CalendarReader:
             # Skip cancelled events entirely
             if event.get('isCancelled', False):
                 stats['cancelled'] += 1
+                logger.info(f"❌ REJECTED (cancelled): {event.get('subject')}")
                 continue
             
             # Check if public
             categories = event.get('categories', [])
             if 'Public' not in categories:
                 stats['non_public'] += 1
-                logger.debug(f"Skipping non-public event: {event.get('subject')} (categories: {categories})")
+                logger.info(f"❌ REJECTED (not public): {event.get('subject')} - Categories: {categories}")
                 continue
 
             # CRITICAL: Also check if event is marked as Busy
             show_as = event.get('showAs', 'busy')
             if show_as != 'busy':
                 stats['not_busy'] += 1
-                logger.info(f"📝 Skipping non-busy public event: {event.get('subject')} (showAs: {show_as})")
+                logger.info(f"❌ REJECTED (not busy): {event.get('subject')} - ShowAs: {show_as}")
                 continue
             
             # Check event date

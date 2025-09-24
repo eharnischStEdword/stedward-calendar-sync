@@ -1,0 +1,13 @@
+- Keep the Flask layer thin: routing, input validation, orchestration only. Move business logic to sync/ and cal_ops/.
+- Use an application factory; avoid importing app at module top-level.
+- Group routes with Blueprints if route surface expands; keep endpoints minimal and named exports only.
+- Add custom error handlers that return JSON with a stable schema (type, message, details, correlation_id).
+- Use before_request for correlation IDs and request-scoped logging context; use after_request for response headers.
+- Never perform long-running sync work in request threads; trigger sync and return quickly (respect Render’s 15-min cadence).
+- Log via app.logger; prefer info for lifecycle, warning for recoverable issues, error for failures.
+- All configuration must come from Flask config (loaded from environment via config.py); never hardcode secrets or IDs.
+- Do not introduce Flask-Login/JWT/ORM/Marshmallow here; this service is a sync API, not an end-user app.
+- Response rules:
+  - JSON only; no HTML.
+  - Explicit status codes (2xx for success, 4xx for client errors, 5xx for unexpected).
+  - Include "dry_run": true/false when applicable in responses.

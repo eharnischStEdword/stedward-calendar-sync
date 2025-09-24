@@ -1,0 +1,25 @@
+# Repository Operations
+- Use GitHub web UI only for edits per project policy. No terminal-only instructions in PRs or reviews.
+- Reference exact files and functions (sync/engine.py, cal_ops/reader.py, cal_ops/writer.py, config.py, auth/microsoft_auth.py) when proposing changes.
+
+# Testing
+- Use pytest. Add unit tests for:
+  - Signature generation (single + recurring).
+  - Timezone conversion correctness (UTC <-> America/Chicago).
+  - Filtering (Public AND Busy).
+  - Dry-run summaries vs real changes parity.
+- Provide fixtures for sample Graph events covering DST changes and recurrence variants.
+- Tests must not call live Graph; use recorded/sample payloads.
+
+# CI & Quality
+- Run lint/type checks (flake8/ruff, mypy) locally or via CI. New code must be typed.
+- Fail CI on missing type hints or introduced prints.
+
+# Deployment
+- All operational settings come from env via config.py. No hardcoded IDs, secrets, or URLs.
+- Log a clear startup banner showing effective config (with secrets redacted).
+- On token refresh, log the event (no token contents) and required operator actions (if any).
+
+# Incident Safety
+- If MASTER_CALENDAR_PROTECTION is missing/false at runtime, abort all write paths and surface an error in /status.
+- On repeated write failures to target, auto-switch to dry_run for next cycle and log a HIGH severity alert.

@@ -1,0 +1,62 @@
+# Purpose
+- One-way synchronization from master "Calendar" (source) to "St. Edward Public Calendar" (target).
+- Master/source is STRICTLY read-only.
+
+# Non-Negotiable Safety
+- NEVER write to the source calendar. All write paths must check MASTER_CALENDAR_PROTECTION before proceeding.
+- Only sync events that are BOTH Public AND Busy. If either flag is missing/false, do not propagate.
+- Do NOT sync individual instances of recurring events; operate on series masters only to avoid duplicates.
+- Do not delete or overwrite target events unless their corresponding source signature no longer exists.
+- All changes must support DRY RUN mode and expose a summary of would-change vs did-change.
+
+# Time & Timezone
+- Read/normalize datetimes in UTC in cal_ops/reader.py ONLY (centralized). Do not re-implement conversion elsewhere.
+- Display times in America/Chicago in API responses/logs when needed; store and compare in UTC.
+- Always handle DST transitions; compare using aware datetimes.
+
+# Event Identity & Matching
+- Generate stable signatures:
+  - Single: single:{subject}:{date}:{time}
+  - Recurring: recurring:{subject}:{pattern_hash}:{start_time}
+- Compare signatures to detect creates/updates/deletes.
+- Never mutate signatures post-write unless the source event actually changed.
+
+# Data Flow (Separation of Concerns)
+- cal_ops/reader.py: ONLY Graph reads + normalization (timezone, filtering at source as needed).
+- sync/engine.py: Core diffing, signature matching, decision engine (create/update/delete).
+- cal_ops/writer.py: Writes to TARGET ONLY; enforce MASTER_CALENDAR_PROTECTION at entry.
+- config.py: Central place for feature flags, IDs, environment toggles (e.g., DRY_RUN, SCHEDULER_ENABLED).
+- auth/microsoft_auth.py: Auth; rotate/refresh; never leak tokens to logs.
+
+# Duplicates & Recurrence
+- Prevent duplicates by never syncing occurrences; only series masters.
+- If the source recurrence pattern changes, treat as update to the series master (recompute pattern_hash).
+
+# Logging & Observability
+- Log every sync cycle with a correlation_id, counts of {read, filtered, to_create, to_update, to_delete}, and dry_run flag.
+- Log warnings for partial failures and continue when safe; fail-fast for integrity risks (e.g., missing protection flag).
+- Never log OAuth tokens, user identifiers beyond what’s necessary, or raw Graph payloads.
+
+# API Endpoints (Behavioral Contracts)
+- POST /sync: kick manual sync. Accept {dry_run?: bool}. Must return a JSON summary and not exceed safe execution time.
+- GET /status: health and last sync summary (timestamps in UTC and Central).
+- POST /scheduler/toggle: flips scheduler state (persist via env/config; reflect in /status).
+- GET /debug: safe diagnostics (redact secrets).
+
+# Change Management
+- Make one change at a time; after any change, run a dry run and verify diffs are expected.
+- Add tests for new edge cases (timezone boundaries, recurrence edits, subject changes).
+- Prefer feature flags in config.py for risky changes; default disabled.
+
+# External Service Limits
+- Be defensive against Graph throttling: implement backoff and bounded retries in reader/writer layers.
+- Page reads and writes; never assume small result sets.
+- Enforce timeouts and raise clear errors with actionable messages.
+
+# Deployment & Runtime
+- Service must be stateless; do not rely on local disk beyond ephemeral temp files.
+- Respect the 15-minute Render scheduler; do not introduce tasks that can exceed the window without safeguards.
+- Keep dependency set minimal; avoid heavy frameworks not already used.
+
+# Guardrail (single line for LLMs/tools)
+- Protect against data corruption: master is read-only, only Public+Busy propagate, dry-run first, never sync occurrences, enforce MASTER_CALENDAR_PROTECTION.

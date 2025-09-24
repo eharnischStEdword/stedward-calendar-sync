@@ -1,0 +1,16 @@
+- Prefer functional, declarative programming; avoid classes unless a library (e.g., Flask views) requires them.
+- Use type hints on all public function signatures. Include return types.
+- Use descriptive, boolean-style variable names with auxiliaries (is_active, has_permission, should_sync).
+- Prefer small, single-responsibility functions. Extract helpers over adding branching.
+- Handle invalid inputs and edge cases first using guard clauses; return early to avoid deep nesting.
+- Keep the "happy path" last for readability.
+- Avoid unnecessary else blocks after returns.
+- Do not duplicate logic: factor shared steps into utils or helpers.
+- Keep pure functions pure: no hidden I/O or mutation. Pass dependencies explicitly (RORO pattern).
+- Use pathlib for paths; avoid os.path when possible.
+- Use logging instead of print; never log secrets or OAuth tokens.
+- Prefer f-strings for formatting; avoid + concatenation.
+- Use UTC for internal datetime objects; timezone-aware datetimes only.
+- Validate inputs at module boundaries (API handlers, CLI entrypoints).
+- Keep module/file names lowercase_with_underscores.
+- Do not introduce new global mutable state; pass context explicitly.
