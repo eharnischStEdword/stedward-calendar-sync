@@ -1669,6 +1669,66 @@ def debug_specific_event(event_subject):
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/mass-daily-sync-status')
+def debug_mass_daily_sync_status():
+    """Debug: Check which Mass- Daily events are actually syncing"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get public events using the actual sync method
+        public_events = sync_engine.reader.get_public_events(source_id)
+        
+        # Find Mass- Daily events in the public events
+        mass_daily_public = []
+        if public_events:
+            for event in public_events:
+                if 'Mass- Daily' in event.get('subject', ''):
+                    mass_daily_public.append({
+                        'subject': event.get('subject'),
+                        'start_date': event.get('start', {}).get('dateTime', 'No date')[:10],
+                        'categories': event.get('categories', []),
+                        'showAs': event.get('showAs'),
+                        'type': event.get('type')
+                    })
+        
+        # Also get all Mass- Daily events from source for comparison
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        mass_daily_all = []
+        for event in all_events:
+            if 'Mass- Daily' in event.get('subject', ''):
+                mass_daily_all.append({
+                    'subject': event.get('subject'),
+                    'start_date': event.get('start', {}).get('dateTime', 'No date')[:10],
+                    'categories': event.get('categories', []),
+                    'showAs': event.get('showAs'),
+                    'type': event.get('type'),
+                    'has_public_tag': 'Public' in event.get('categories', [])
+                })
+        
+        return jsonify({
+            'mass_daily_in_public_calendar': mass_daily_public,
+            'mass_daily_in_source_calendar': mass_daily_all,
+            'total_mass_daily_source': len(mass_daily_all),
+            'total_mass_daily_public': len(mass_daily_public),
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug mass daily sync status error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
