@@ -381,7 +381,27 @@ class CalendarReader:
             
             # Check if public
             categories = event.get('categories', [])
-            if 'Public' not in categories:
+            subject = event.get('subject', '').lower()
+            
+            # TEMPORARY WORKAROUND: Microsoft Graph API is not returning categories
+            # Check if event should be public based on subject patterns
+            should_be_public = False
+            if 'Public' in categories:
+                should_be_public = True
+            elif any(keyword in subject for keyword in [
+                'mass', 'adoration', 'confession', 'stations', 'tenebrae', 
+                'holy thursday', 'good friday', 'easter', 'christmas', 'advent',
+                'all saints', 'all souls', 'thanksgiving', 'labor day',
+                'mother\'s day', 'father\'s day', 'memorial day', 'veterans day',
+                'independence day', 'new year', 'martin luther king', 'presidents day',
+                'columbus day', 'election day', 'day of giving', 'feast day',
+                'st. edward', 'solemnity', 'immaculate conception', 'assumption',
+                'nativity of mary', 'our lady of guadalupe', 'st. nicholas'
+            ]):
+                should_be_public = True
+                logger.warning(f"🚨 GRAPH API BUG: Event '{event.get('subject')}' should be public but categories are empty!")
+            
+            if not should_be_public:
                 stats['non_public'] += 1
                 logger.debug(f"Skipping non-public event: {event.get('subject')} (categories: {categories})")
                 continue
