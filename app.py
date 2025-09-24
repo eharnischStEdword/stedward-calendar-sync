@@ -1557,6 +1557,118 @@ def debug_sync_breakdown():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/specific-event/<event_subject>')
+def debug_specific_event(event_subject):
+    """Debug: Check why a specific event isn't syncing"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get all events from source calendar
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        if not all_events:
+            return jsonify({"error": "Could not retrieve source events"}), 500
+        
+        # Find the specific event
+        matching_events = []
+        for event in all_events:
+            if event_subject.lower() in event.get('subject', '').lower():
+                matching_events.append(event)
+        
+        if not matching_events:
+            return jsonify({"error": f"No events found matching '{event_subject}'"}), 404
+        
+        # Check each matching event
+        results = []
+        for event in matching_events:
+            subject = event.get('subject', 'No Subject')
+            categories = event.get('categories', [])
+            show_as = event.get('showAs', 'busy')
+            event_type = event.get('type', 'singleInstance')
+            is_cancelled = event.get('isCancelled', False)
+            start_date = event.get('start', {}).get('dateTime', 'No date')
+            
+            # Check each filter condition
+            checks = {
+                'has_public_tag': 'Public' in categories,
+                'is_busy': show_as == 'busy',
+                'not_cancelled': not is_cancelled,
+                'not_occurrence': event_type != 'occurrence',
+                'has_valid_date': bool(start_date and start_date != 'No date')
+            }
+            
+            # Check date filtering
+            date_check = "unknown"
+            if start_date and start_date != 'No date':
+                try:
+                    from datetime import timedelta
+                    import pytz
+                    event_date = DateTimeUtils.parse_graph_datetime(event.get('start', {}))
+                    if event_date:
+                        if event_date.tzinfo is None:
+                            event_date = pytz.UTC.localize(event_date)
+                        event_date_utc = event_date.astimezone(pytz.UTC)
+                        
+                        now_central = DateTimeUtils.get_central_time()
+                        cutoff_date = (now_central - timedelta(days=config.SYNC_CUTOFF_DAYS)).astimezone(pytz.UTC)
+                        future_cutoff = (now_central + timedelta(days=365)).astimezone(pytz.UTC)
+                        
+                        if event_date_utc < cutoff_date:
+                            date_check = f"too_old (date: {event_date_utc}, cutoff: {cutoff_date})"
+                        elif event_date_utc > future_cutoff:
+                            date_check = f"too_future (date: {event_date_utc}, cutoff: {future_cutoff})"
+                        else:
+                            date_check = "valid_date"
+                    else:
+                        date_check = "date_parse_error"
+                except Exception as e:
+                    date_check = f"date_error: {str(e)}"
+            
+            checks['date_check'] = date_check
+            
+            # Overall result
+            should_sync = all([
+                checks['has_public_tag'],
+                checks['is_busy'], 
+                checks['not_cancelled'],
+                checks['not_occurrence'],
+                checks['has_valid_date'],
+                date_check == "valid_date"
+            ])
+            
+            results.append({
+                'subject': subject,
+                'start_date': start_date,
+                'categories': categories,
+                'showAs': show_as,
+                'type': event_type,
+                'isCancelled': is_cancelled,
+                'checks': checks,
+                'should_sync': should_sync,
+                'raw_event': event
+            })
+        
+        return jsonify({
+            'search_term': event_subject,
+            'matching_events': results,
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug specific event error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
