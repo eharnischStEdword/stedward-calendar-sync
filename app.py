@@ -1190,6 +1190,91 @@ def debug_sync_filter():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/recurring-events')
+def debug_recurring_events():
+    """Debug: Analyze recurring events and their types"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get all events from source calendar
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        if not all_events:
+            return jsonify({"error": "Could not retrieve source events"}), 500
+        
+        # Analyze recurring events
+        recurring_events = []
+        occurrence_events = []
+        series_master_events = []
+        
+        for event in all_events:
+            event_type = event.get('type', 'singleInstance')
+            categories = event.get('categories', [])
+            subject = event.get('subject', 'No Subject')
+            
+            event_info = {
+                'subject': subject,
+                'type': event_type,
+                'categories': categories,
+                'start': event.get('start', {}).get('dateTime', 'No date'),
+                'seriesMasterId': event.get('seriesMasterId'),
+                'recurrence': event.get('recurrence'),
+                'showAs': event.get('showAs'),
+                'isCancelled': event.get('isCancelled', False)
+            }
+            
+            if event_type == 'occurrence':
+                occurrence_events.append(event_info)
+            elif event_type == 'seriesMaster':
+                series_master_events.append(event_info)
+            elif event_type == 'singleInstance':
+                # Check if it has recurrence data (might be a recurring event)
+                if event.get('recurrence'):
+                    recurring_events.append(event_info)
+        
+        # Focus on Mass events specifically
+        mass_events = []
+        for event in all_events:
+            if 'mass' in event.get('subject', '').lower():
+                mass_events.append({
+                    'subject': event.get('subject'),
+                    'type': event.get('type', 'singleInstance'),
+                    'categories': event.get('categories', []),
+                    'start': event.get('start', {}).get('dateTime', 'No date'),
+                    'seriesMasterId': event.get('seriesMasterId'),
+                    'recurrence': event.get('recurrence'),
+                    'showAs': event.get('showAs'),
+                    'isCancelled': event.get('isCancelled', False)
+                })
+        
+        return jsonify({
+            'total_events': len(all_events),
+            'occurrence_events': len(occurrence_events),
+            'series_master_events': len(series_master_events),
+            'recurring_single_instances': len(recurring_events),
+            'occurrence_events_list': occurrence_events[:20],  # First 20
+            'series_master_events_list': series_master_events,
+            'recurring_single_instances_list': recurring_events[:20],  # First 20
+            'mass_events_list': mass_events,
+            'mass_events_count': len(mass_events),
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug recurring events error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
