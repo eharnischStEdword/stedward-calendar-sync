@@ -401,41 +401,36 @@ class CalendarReader:
             
             # Check event date
             try:
-                # Parse event date
-                event_date = DateTimeUtils.parse_graph_datetime(event.get('start', {}))
-                if not event_date:
-                    continue
-
-                # Ensure both datetimes are timezone-aware for comparison
-                if event_date.tzinfo is None:
-                    # If naive, assume it's UTC
-                    event_date = pytz.UTC.localize(event_date)
-
-                # Convert to UTC for comparison
-                event_date_utc = event_date.astimezone(pytz.UTC)
-
-                # Skip old events (unless it's a recurring event that should always be synced)
-                if event_date_utc < cutoff_date:
-                    # Special override for recurring events - always include them regardless of age
-                    if event.get('type') == 'seriesMaster':
-                        logger.info(f"🔄 Including old recurring event: {event.get('subject')} (started: {event_date_utc})")
-                    else:
-                        stats['past_events'] += 1
-                        # Debug logging for specific events
-                        if 'Ladies Auxiliary' in event.get('subject', ''):
-                            logger.info(f"🔍 Ladies Auxiliary event filtered - too old: {event.get('subject')} (date: {event_date_utc}, cutoff: {cutoff_date})")
+                event_type = event.get('type', 'singleInstance')
+                
+                # For recurring events (seriesMaster), don't filter by date at all
+                # The recurrence pattern will determine which occurrences show up
+                if event_type == 'seriesMaster':
+                    # Always include recurring series masters regardless of start date
+                    logger.debug(f"Including recurring series: {event.get('subject')}")
+                    # Skip date filtering for seriesMaster
+                else:
+                    # For single events, check the date
+                    event_date = DateTimeUtils.parse_graph_datetime(event.get('start', {}))
+                    if not event_date:
                         continue
 
-                # Skip events too far in the future (but allow recurring events to extend further)
-                if event_date_utc > future_cutoff:
-                    # Special override for recurring events - allow them to extend further into the future
-                    if event.get('type') == 'seriesMaster':
-                        logger.info(f"🔄 Including recurring event despite future date: {event.get('subject')} (extends to: {event_date_utc})")
-                    else:
+                    # Ensure both datetimes are timezone-aware for comparison
+                    if event_date.tzinfo is None:
+                        # If naive, assume it's UTC
+                        event_date = pytz.UTC.localize(event_date)
+
+                    # Convert to UTC for comparison
+                    event_date_utc = event_date.astimezone(pytz.UTC)
+
+                    # Skip old single events
+                    if event_date_utc < cutoff_date:
+                        stats['past_events'] += 1
+                        continue
+
+                    # Skip events too far in the future (for single events only)
+                    if event_date_utc > future_cutoff:
                         stats['future_events'] += 1
-                        # Debug logging for specific events
-                        if 'Ladies Auxiliary' in event.get('subject', ''):
-                            logger.info(f"🔍 Ladies Auxiliary event filtered - too far in future: {event.get('subject')} (date: {event_date_utc}, cutoff: {future_cutoff})")
                         continue
             except Exception as e:
                 logger.warning(f"Could not parse date for event {event.get('subject')}: {e}")
