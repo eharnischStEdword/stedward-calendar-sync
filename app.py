@@ -1069,6 +1069,331 @@ def debug_duplicates():
             "traceback": traceback.format_exc()
         }), 500
 
+
+@app.route('/debug/categories')
+def debug_categories():
+    """Debug: Show raw event data including categories from source calendar"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get all events from source calendar
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        if not all_events:
+            return jsonify({"error": "Could not retrieve source events"}), 500
+        
+        # Analyze categories
+        events_with_categories = []
+        events_without_categories = []
+        public_events = []
+        
+        for event in all_events:
+            categories = event.get('categories', [])
+            subject = event.get('subject', 'No Subject')
+            
+            event_info = {
+                'subject': subject,
+                'categories': categories,
+                'showAs': event.get('showAs'),
+                'isCancelled': event.get('isCancelled', False),
+                'type': event.get('type'),
+                'start': event.get('start', {}).get('dateTime', 'No date'),
+                'raw_event': event  # Include full raw data for debugging
+            }
+            
+            if categories:
+                events_with_categories.append(event_info)
+                if 'Public' in categories:
+                    public_events.append(event_info)
+            else:
+                events_without_categories.append(event_info)
+        
+        return jsonify({
+            'total_events': len(all_events),
+            'events_with_categories': len(events_with_categories),
+            'events_without_categories': len(events_without_categories),
+            'events_with_public_tag': len(public_events),
+            'events_with_categories_list': events_with_categories,
+            'events_without_categories_list': events_without_categories,
+            'public_events_list': public_events,
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug categories error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+@app.route('/admin')
+def admin_interface():
+    """Web interface for debugging category reading issues"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return redirect('/')
+        
+        return '''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Admin - Category Debug Tool</title>
+            <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
+            <style>
+                body { 
+                    font-family: Arial, sans-serif; 
+                    margin: 20px; 
+                    background: #f5f5f5; 
+                    line-height: 1.6;
+                }
+                .container { 
+                    max-width: 1200px; 
+                    margin: 0 auto; 
+                    background: white; 
+                    padding: 30px; 
+                    border-radius: 10px; 
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+                }
+                h1 { 
+                    color: #005921; 
+                    border-bottom: 2px solid #005921;
+                    padding-bottom: 10px;
+                }
+                .section {
+                    margin: 30px 0;
+                    padding: 20px;
+                    background: #f8f9fa;
+                    border-radius: 8px;
+                    border-left: 4px solid #005921;
+                }
+                .btn {
+                    background: #005921;
+                    color: white;
+                    padding: 12px 24px;
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    font-size: 16px;
+                    margin: 10px 5px;
+                }
+                .btn:hover {
+                    background: #004a1e;
+                }
+                .btn-secondary {
+                    background: #6c757d;
+                }
+                .btn-secondary:hover {
+                    background: #5a6268;
+                }
+                .loading {
+                    display: none;
+                    text-align: center;
+                    padding: 20px;
+                }
+                .results {
+                    margin-top: 20px;
+                    padding: 20px;
+                    background: white;
+                    border-radius: 5px;
+                    border: 1px solid #ddd;
+                }
+                .event-item {
+                    padding: 10px;
+                    margin: 5px 0;
+                    background: #f8f9fa;
+                    border-radius: 4px;
+                    border-left: 3px solid #28a745;
+                }
+                .event-item.no-categories {
+                    border-left-color: #dc3545;
+                }
+                .event-item.has-public {
+                    border-left-color: #28a745;
+                }
+                .summary-stats {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                    gap: 15px;
+                    margin: 20px 0;
+                }
+                .stat-card {
+                    background: white;
+                    padding: 15px;
+                    border-radius: 8px;
+                    text-align: center;
+                    border: 1px solid #ddd;
+                }
+                .stat-number {
+                    font-size: 24px;
+                    font-weight: bold;
+                    color: #005921;
+                }
+                .stat-label {
+                    color: #666;
+                    font-size: 14px;
+                }
+                .back-link { 
+                    display: inline-block; 
+                    margin-top: 20px; 
+                    padding: 10px 20px;
+                    background: #6c757d;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 5px;
+                }
+                .back-link:hover { 
+                    background: #5a6268;
+                }
+                .raw-data {
+                    background: #f8f9fa;
+                    padding: 10px;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    font-size: 12px;
+                    max-height: 200px;
+                    overflow-y: auto;
+                    margin-top: 10px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🔍 Category Debug Tool</h1>
+                <p>This tool helps debug why events with "Public" categories in Outlook aren't being synced to the public calendar.</p>
+                
+                <div class="section">
+                    <h3>Problem:</h3>
+                    <p>Events like "Mass- Daily" are already tagged with "Public" category in Outlook, but they're not appearing on the public calendar. This tool shows what categories the sync application is actually reading from Microsoft Graph.</p>
+                </div>
+                
+                <div class="section">
+                    <h3>Actions:</h3>
+                    <button class="btn" onclick="debugCategories()">🔍 Debug Category Reading</button>
+                    <button class="btn btn-secondary" onclick="location.reload()">🔄 Refresh</button>
+                </div>
+                
+                <div class="loading" id="loading">
+                    <p>⏳ Reading events from source calendar...</p>
+                </div>
+                
+                <div id="results"></div>
+                
+                <a href="/" class="back-link">← Back to Dashboard</a>
+            </div>
+            
+            <script>
+                async function debugCategories() {
+                    const loading = document.getElementById('loading');
+                    const results = document.getElementById('results');
+                    
+                    loading.style.display = 'block';
+                    results.innerHTML = '';
+                    
+                    try {
+                        const response = await fetch('/debug/categories');
+                        const data = await response.json();
+                        
+                        if (data.error) {
+                            throw new Error(data.error);
+                        }
+                        
+                        displayResults(data);
+                        
+                    } catch (error) {
+                        results.innerHTML = `<div class="results"><h3>❌ Error</h3><p>${error.message}</p></div>`;
+                    } finally {
+                        loading.style.display = 'none';
+                    }
+                }
+                
+                function displayResults(data) {
+                    const results = document.getElementById('results');
+                    
+                    let html = `
+                        <div class="results">
+                            <h3>📊 Category Analysis Results</h3>
+                            
+                            <div class="summary-stats">
+                                <div class="stat-card">
+                                    <div class="stat-number">${data.total_events}</div>
+                                    <div class="stat-label">Total Events</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-number">${data.events_with_categories}</div>
+                                    <div class="stat-label">Events with Categories</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-number">${data.events_without_categories}</div>
+                                    <div class="stat-label">Events without Categories</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-number">${data.events_with_public_tag}</div>
+                                    <div class="stat-label">Events with Public Tag</div>
+                                </div>
+                            </div>
+                            
+                            <h4>📋 Events with Public Category:</h4>
+                    `;
+                    
+                    if (data.public_events_list.length > 0) {
+                        data.public_events_list.forEach(event => {
+                            html += `
+                                <div class="event-item has-public">
+                                    <strong>${event.subject}</strong><br>
+                                    <small>Date: ${event.start}</small><br>
+                                    <small>Categories: ${event.categories.join(', ')}</small><br>
+                                    <small>ShowAs: ${event.showAs}</small><br>
+                                    <small>Cancelled: ${event.isCancelled}</small><br>
+                                    <small>Type: ${event.type}</small>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        html += '<p><strong>❌ No events found with "Public" category!</strong></p>';
+                    }
+                    
+                    html += `
+                            <h4>📋 Events without Categories:</h4>
+                    `;
+                    
+                    if (data.events_without_categories_list.length > 0) {
+                        data.events_without_categories_list.slice(0, 10).forEach(event => {
+                            html += `
+                                <div class="event-item no-categories">
+                                    <strong>${event.subject}</strong><br>
+                                    <small>Date: ${event.start}</small><br>
+                                    <small>ShowAs: ${event.showAs}</small><br>
+                                    <small>Cancelled: ${event.isCancelled}</small>
+                                </div>
+                            `;
+                        });
+                        if (data.events_without_categories_list.length > 10) {
+                            html += `<p><em>... and ${data.events_without_categories_list.length - 10} more events without categories</em></p>`;
+                        }
+                    } else {
+                        html += '<p>✅ All events have categories</p>';
+                    }
+                    
+                    html += '</div>';
+                    results.innerHTML = html;
+                }
+            </script>
+        </body>
+        </html>
+        '''
+        
+    except Exception as e:
+        logger.error(f"Admin interface error: {e}")
+        return f"Error: {str(e)}", 500
+
 def signal_handler(sig, frame):
     """Handle shutdown signals"""
     logger.info("Received shutdown signal, cleaning up...")
