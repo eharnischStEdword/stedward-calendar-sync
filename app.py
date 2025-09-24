@@ -1995,6 +1995,90 @@ def debug_graph_api_test():
             "traceback": traceback.format_exc()
         }), 500
 
+@app.route('/debug/graph-api-test-2')
+def debug_graph_api_test_2():
+    """Test Microsoft Graph API again - check for consistency"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Test Graph API directly with minimal fields
+        headers = auth_manager.get_headers()
+        if not headers:
+            return jsonify({"error": "No auth headers"}), 401
+        
+        # Get just a few events with categories field
+        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{source_id}/events"
+        params = {
+            '$select': 'subject,start,categories,showAs,type,isCancelled',
+            '$top': 10,
+            '$orderby': 'start/dateTime desc'
+        }
+        
+        import requests
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        
+        if response.status_code != 200:
+            return jsonify({
+                "error": f"Graph API error: {response.status_code}",
+                "response": response.text
+            }), 500
+        
+        events = response.json().get('value', [])
+        
+        # Analyze categories
+        category_analysis = {
+            'total_events': len(events),
+            'events_with_categories': 0,
+            'events_without_categories': 0,
+            'public_events': 0,
+            'sample_events': []
+        }
+        
+        for event in events:
+            categories = event.get('categories', [])
+            has_categories = len(categories) > 0
+            has_public = 'Public' in categories
+            
+            if has_categories:
+                category_analysis['events_with_categories'] += 1
+            else:
+                category_analysis['events_without_categories'] += 1
+            
+            if has_public:
+                category_analysis['public_events'] += 1
+            
+            # Sample events
+            if len(category_analysis['sample_events']) < 5:
+                category_analysis['sample_events'].append({
+                    'subject': event.get('subject'),
+                    'categories': categories,
+                    'showAs': event.get('showAs'),
+                    'type': event.get('type'),
+                    'start': event.get('start', {}).get('dateTime', 'No date')[:10]
+                })
+        
+        return jsonify({
+            'graph_api_test_2': category_analysis,
+            'api_response_status': response.status_code,
+            'generated_time': DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
+        })
+        
+    except Exception as e:
+        logger.error(f"Graph API test 2 error: {e}")
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
