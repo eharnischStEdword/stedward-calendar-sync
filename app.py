@@ -2284,8 +2284,9 @@ def debug_october_full():
         }
         
         # Get raw events for October
-        start = "2024-10-01T00:00:00-05:00"
-        end = "2024-10-31T23:59:59-05:00"
+        current_year = datetime.now().year
+        start = f"{current_year}-10-01T00:00:00-05:00"
+        end = f"{current_year}-10-31T23:59:59-05:00"
         
         # Direct API call to see what Graph returns
         headers = auth_manager.get_headers()
@@ -2312,7 +2313,7 @@ def debug_october_full():
         october_events = []
         for event in raw_events:
             event_date = event.get('start', {}).get('dateTime', '')[:10]
-            if not ('2024-10-01' <= event_date <= '2024-10-31'):
+            if not (f'{current_year}-10-01' <= event_date <= f'{current_year}-10-31'):
                 continue
                 
             pipeline_stats['after_date_filter'] += 1
@@ -2388,7 +2389,7 @@ def verify_pagination():
         all_events = sync_engine.reader.get_calendar_events(source_id)
         
         # Count October events
-        october_events = [e for e in all_events if e.get('start', {}).get('dateTime', '').startswith('2024-10')]
+        october_events = [e for e in all_events if e.get('start', {}).get('dateTime', '').startswith(f'{current_year}-10')]
         
         return jsonify({
             'total_events_fetched': len(all_events),

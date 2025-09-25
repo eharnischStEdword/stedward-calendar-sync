@@ -295,8 +295,9 @@ class CalendarReader:
                         sample_dates[date] = sample_dates.get(date, 0) + 1
                 
                 # Show October specifically
-                october_count = sum(count for date, count in sample_dates.items() if date.startswith('2024-10'))
-                logger.info(f"📊 October 2024 events fetched: {october_count}")
+                current_year = datetime.now().year
+                october_count = sum(count for date, count in sample_dates.items() if date.startswith(f'{current_year}-10'))
+                logger.info(f"📊 October {current_year} events fetched: {october_count}")
             
             return all_events
             
