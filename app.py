@@ -1320,9 +1320,13 @@ def debug_mass_events_summary():
         
         for event in mass_events:
             start_date = event['start_date']
-            if start_date >= '2024-09-22' and start_date <= '2024-11-22':
+            current_year = datetime.now().year
+            problem_start = f"{current_year}-09-21"
+            problem_end = f"{current_year}-11-22"
+            
+            if start_date >= problem_start and start_date <= problem_end:
                 sept_nov_count += 1
-            elif start_date > '2024-11-22':
+            elif start_date > problem_end:
                 after_nov_count += 1
         
         return jsonify({
@@ -2212,9 +2216,13 @@ def debug_problem_range():
         all_events = sync_engine.reader.get_calendar_events(source_id)
         
         problem_events = []
+        current_year = datetime.now().year
+        problem_start = f"{current_year}-09-21"
+        problem_end = f"{current_year}-11-22"
+        
         for event in all_events:
             date_str = event.get('start', {}).get('dateTime', '')[:10]
-            if '2024-09-22' <= date_str <= '2024-11-21':
+            if problem_start <= date_str <= problem_end:
                 problem_events.append({
                     'subject': event.get('subject'),
                     'date': date_str,

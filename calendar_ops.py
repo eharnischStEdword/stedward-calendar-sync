@@ -435,9 +435,13 @@ class CalendarReader:
         filtered_events.extend(occurrences)
         
         # DIAGNOSTIC: Log occurrences in problem date range
+        current_year = datetime.now().year
+        problem_start = f"{current_year}-09-21"
+        problem_end = f"{current_year}-11-22"
+        
         for occ in occurrences:
             event_date = occ.get('start', {}).get('dateTime', '')[:10]
-            if '2024-09-22' <= event_date <= '2024-11-21':
+            if problem_start <= event_date <= problem_end:
                 logger.warning(f"⚠️ OCCURRENCE in problem range: {occ.get('subject')} on {event_date}")
                 logger.warning(f"   Categories: {occ.get('categories', [])}")
                 logger.warning(f"   ShowAs: {occ.get('showAs')}")
@@ -503,7 +507,7 @@ class CalendarReader:
                 stats['non_public'] += 1
                 # Special logging for problem date range
                 event_date = event.get('start', {}).get('dateTime', '')[:10]
-                if '2024-09-22' <= event_date <= '2024-11-21':
+                if problem_start <= event_date <= problem_end:
                     logger.warning(f"⚠️ PROBLEM RANGE EVENT REJECTED (not public): {event.get('subject')} on {event_date} - Categories: {categories}")
                 else:
                     logger.info(f"❌ REJECTED (not public): {event.get('subject')} - Categories: {categories}")
@@ -515,7 +519,7 @@ class CalendarReader:
                 stats['not_busy'] += 1
                 # Special logging for problem date range
                 event_date = event.get('start', {}).get('dateTime', '')[:10]
-                if '2024-09-22' <= event_date <= '2024-11-21':
+                if problem_start <= event_date <= problem_end:
                     logger.warning(f"⚠️ PROBLEM RANGE EVENT REJECTED (not busy): {event.get('subject')} on {event_date} - ShowAs: {show_as}")
                 else:
                     logger.info(f"❌ REJECTED (not busy): {event.get('subject')} - ShowAs: {show_as}")
@@ -566,7 +570,7 @@ class CalendarReader:
             
             # Log events that make it through filtering, especially in problem range
             event_date = event.get('start', {}).get('dateTime', '')[:10]
-            if '2024-09-22' <= event_date <= '2024-11-21':
+            if problem_start <= event_date <= problem_end:
                 logger.warning(f"✅ PROBLEM RANGE EVENT PASSED FILTERS: {event.get('subject')} on {event_date} - Type: {event.get('type')}")
             
             public_events.append(event)
@@ -585,7 +589,11 @@ class CalendarReader:
         event_date_str = event.get('start', {}).get('dateTime', '')[:10]
         
         # Check if this is in our problem range
-        if '2024-09-22' <= event_date_str <= '2024-11-21':
+        current_year = datetime.now().year
+        problem_start = f"{current_year}-09-21"
+        problem_end = f"{current_year}-11-22"
+        
+        if problem_start <= event_date_str <= problem_end:
             # Check if it meets our sync criteria
             categories = event.get('categories', [])
             show_as = event.get('showAs', 'busy')
