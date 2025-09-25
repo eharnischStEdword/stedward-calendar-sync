@@ -17,8 +17,8 @@ async def clear_target_calendar():
         return
     
     print(f"Fetching all events from target calendar...")
-    # Get ALL events (5 years to be sure)
-    all_events = await ops.get_calendar_events(target_id, days_back=1825)
+    # Get ALL events (2 years to be sure)
+    all_events = await ops.get_calendar_events(target_id, days_back=730)
     
     print(f"Found {len(all_events)} events to delete")
     

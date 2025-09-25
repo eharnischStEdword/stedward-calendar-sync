@@ -200,17 +200,17 @@ class CalendarReader:
             if not headers:
                 return None
             
-            # Calculate date range - MUST stay within 1825 day limit
+            # Calculate date range - MUST stay within 730 day limit
             from datetime import datetime, timedelta
             import pytz
             
             central_tz = pytz.timezone('America/Chicago')
             now_central = DateTimeUtils.get_central_time()
             
-            # Microsoft Graph limit is 1825 days total
-            # Let's do 4 years back, 1 year forward = 1460 + 365 = 1825 days exactly
-            start_date = now_central - timedelta(days=1460)  # 4 years back
-            end_date = now_central + timedelta(days=365)     # 1 year forward
+            # Microsoft Graph limit is 1825 days total, but we'll use 730 days (2 years)
+            # Let's do 1 year back, 1 year forward = 365 + 365 = 730 days
+            start_date = now_central - timedelta(days=365)  # 1 year back
+            end_date = now_central + timedelta(days=365)    # 1 year forward
             
             # Convert to UTC for API call
             start_utc = start_date.astimezone(pytz.UTC)
@@ -223,10 +223,10 @@ class CalendarReader:
             day_span = (end_utc - start_utc).days
             logger.info(f"📅 Date range: {day_span} days from {start_time[:10]} to {end_time[:10]}")
             
-            if day_span > 1825:
-                logger.error(f"⚠️ Date range {day_span} days exceeds API limit of 1825 days!")
+            if day_span > 730:
+                logger.error(f"⚠️ Date range {day_span} days exceeds our limit of 730 days!")
                 # Adjust to stay within limit
-                end_date = start_date + timedelta(days=1825)
+                end_date = start_date + timedelta(days=730)
                 end_utc = end_date.astimezone(pytz.UTC)
                 end_time = end_utc.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
                 logger.info(f"📅 Adjusted end date to stay within limit: {end_time[:10]}")
@@ -244,7 +244,7 @@ class CalendarReader:
             all_events = []
             request_count = 0
             
-            logger.info(f"📅 Fetching calendar events (within 1825-day limit)")
+            logger.info(f"📅 Fetching calendar events (within 730-day limit)")
             
             while endpoint:
                 request_count += 1

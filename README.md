@@ -121,7 +121,7 @@ TARGET_CALENDAR=Public Calendar
 
 #### **Sync Settings**
 ```bash
-SYNC_CUTOFF_DAYS=1825          # 5 years of events
+SYNC_CUTOFF_DAYS=730            # 2 years of events
 SYNC_INTERVAL_MIN=23           # Sync every 23 minutes
 DRY_RUN_MODE=False             # Set to True for testing
 ```
