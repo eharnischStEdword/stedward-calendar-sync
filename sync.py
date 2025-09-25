@@ -33,7 +33,9 @@ class ChangeTracker:
         self.cache_file = cache_file
         self.event_cache = {}  # signature -> event_data
         self.last_sync_time = None
-        self._load_cache()
+        # DISABLED FOR DEBUGGING - Force empty cache
+        logger.warning("⚠️ CACHE DISABLED FOR DEBUGGING - Starting with empty cache")
+        # self._load_cache()
     
     def _load_cache(self):
         """Load cached event data from disk"""
@@ -832,6 +834,29 @@ class SyncEngine:
                 return {"error": "Failed to retrieve target calendar events"}
             
             logger.info(f"📊 Retrieved {len(source_events)} source events and {len(target_events)} target events")
+            
+            # DIAGNOSTIC: Detailed sync analysis
+            logger.info(f"🔍 Sync Analysis:")
+            logger.info(f"  Source events (filtered): {len(source_events)}")
+            logger.info(f"  Target events (from calendar): {len(target_events)}")
+            logger.info(f"  Cached events: {len(self.change_tracker.event_cache)}")
+
+            # When comparing signatures
+            source_sigs = set([self._create_event_signature(e) for e in source_events])
+            target_sigs = set([self._create_event_signature(e) for e in target_events])
+            cached_sigs = set([self._create_event_signature(e) for e in self.change_tracker.event_cache.values()])
+
+            logger.info(f"  Source signatures: {len(source_sigs)}")
+            logger.info(f"  Target signatures: {len(target_sigs)}")
+            logger.info(f"  Cached signatures: {len(cached_sigs)}")
+
+            # What's the overlap?
+            logger.info(f"  Source ∩ Target: {len(source_sigs & target_sigs)}")
+            logger.info(f"  Source ∩ Cached: {len(source_sigs & cached_sigs)}")
+
+            # What should be added?
+            to_add_theoretical = source_sigs - target_sigs - cached_sigs
+            logger.info(f"  Events to add (not in target or cache): {len(to_add_theoretical)}")
             
             # Log all-day event statistics
             source_all_day_count = sum(1 for e in source_events if e.get('isAllDay', False))
