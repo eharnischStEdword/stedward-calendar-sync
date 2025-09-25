@@ -200,16 +200,17 @@ class CalendarReader:
             if not headers:
                 return None
             
-            # Calculate date range
+            # Calculate date range - MUST stay within 1825 day limit
             from datetime import datetime, timedelta
             import pytz
             
             central_tz = pytz.timezone('America/Chicago')
             now_central = DateTimeUtils.get_central_time()
             
-            # 5 years back, 1 year forward
-            start_date = now_central - timedelta(days=config.SYNC_CUTOFF_DAYS)
-            end_date = now_central + timedelta(days=365)
+            # Microsoft Graph limit is 1825 days total
+            # Let's do 4 years back, 1 year forward = 1460 + 365 = 1825 days exactly
+            start_date = now_central - timedelta(days=1460)  # 4 years back
+            end_date = now_central + timedelta(days=365)     # 1 year forward
             
             # Convert to UTC for API call
             start_utc = start_date.astimezone(pytz.UTC)
@@ -217,6 +218,18 @@ class CalendarReader:
             
             start_time = start_utc.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
             end_time = end_utc.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            
+            # Calculate actual day span for logging
+            day_span = (end_utc - start_utc).days
+            logger.info(f"📅 Date range: {day_span} days from {start_time[:10]} to {end_time[:10]}")
+            
+            if day_span > 1825:
+                logger.error(f"⚠️ Date range {day_span} days exceeds API limit of 1825 days!")
+                # Adjust to stay within limit
+                end_date = start_date + timedelta(days=1825)
+                end_utc = end_date.astimezone(pytz.UTC)
+                end_time = end_utc.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+                logger.info(f"📅 Adjusted end date to stay within limit: {end_time[:10]}")
             
             # Use calendarView to expand recurring events
             endpoint = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/calendarView"
@@ -231,7 +244,7 @@ class CalendarReader:
             all_events = []
             request_count = 0
             
-            logger.info(f"📅 Fetching calendar events from {start_time[:10]} to {end_time[:10]}")
+            logger.info(f"📅 Fetching calendar events (within 1825-day limit)")
             
             while endpoint:
                 request_count += 1
