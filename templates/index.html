@@ -415,6 +415,18 @@
                         <button id="clearButton" class="btn btn-danger" onclick="clearTargetCalendar()" disabled>
                             🚨 Clear Target Calendar
                         </button>
+                        
+                        <div class="mt-3">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="confirmClearSynced" onchange="toggleClearSyncedButton()">
+                                <label class="form-check-label" for="confirmClearSynced">
+                                    I understand this will DELETE ONLY events created by sync
+                                </label>
+                            </div>
+                            <button id="clearSyncedButton" class="btn btn-warning" onclick="clearSyncedEventsOnly()" disabled>
+                                🧹 Clear Synced Events Only
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -848,6 +860,12 @@
             button.disabled = !checkbox.checked;
         }
 
+        function toggleClearSyncedButton() {
+            const checkbox = document.getElementById('confirmClearSynced');
+            const button = document.getElementById('clearSyncedButton');
+            button.disabled = !checkbox.checked;
+        }
+
         async function clearTargetCalendar() {
             if (!confirm('FINAL WARNING: This will delete ALL events from the target calendar. Are you absolutely sure?')) {
                 return;
@@ -870,6 +888,30 @@
             
             document.getElementById('confirmClear').checked = false;
             toggleClearButton();
+        }
+
+        async function clearSyncedEventsOnly() {
+            if (!confirm('This will delete ONLY events created by sync. Are you sure?')) {
+                return;
+            }
+            
+            const button = document.getElementById('clearSyncedButton');
+            button.disabled = true;
+            button.innerHTML = '⏳ Clearing synced events...';
+            
+            try {
+                const response = await fetch('/clear-synced-only', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                alert(`Synced events cleared: ${data.deleted} events removed`);
+                location.reload();
+            } catch (error) {
+                alert('Error clearing synced events: ' + error);
+            }
+            
+            document.getElementById('confirmClearSynced').checked = false;
+            toggleClearSyncedButton();
         }
     </script>
 </body>

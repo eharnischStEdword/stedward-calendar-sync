@@ -1012,8 +1012,35 @@ class CalendarWriter:
         # Add isAllDay if true
         if event.get('isAllDay'):
             api_event['isAllDay'] = True
+        
+        # Create unique identifier from source event
+        source_id = event.get('id', '')
+        sync_marker = f"<!-- SYNC_ID:{source_id} -->"
+        
+        # Add to body content
+        if 'body' not in api_event:
+            api_event['body'] = {'contentType': 'HTML', 'content': ''}
+            
+        api_event['body']['content'] = sync_marker + api_event['body'].get('content', '')
             
         return api_event
+    
+    def clear_synced_events_only(self, calendar_id):
+        """Delete only events that were created by sync (have SYNC_MARKER in body)"""
+        events = self.get_calendar_events(calendar_id)
+        deleted = 0
+        
+        for event in events:
+            # Only delete if it has our sync marker
+            body_content = event.get('body', {}).get('content', '')
+            if 'SYNC_ID:' in body_content or 'Auto-synced from' in body_content:
+                try:
+                    self.delete_event(calendar_id, event['id'])
+                    deleted += 1
+                except:
+                    pass
+        
+        return deleted
     
     def _prepare_event_data(self, source_event: Dict) -> Dict:
         """Prepare event data for creation/update - DEPRECATED, use _prepare_event_for_api"""

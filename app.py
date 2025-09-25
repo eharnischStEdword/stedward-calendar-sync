@@ -455,6 +455,36 @@ def clear_target():
         logger.error(f"Clear target error: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/clear-synced-only', methods=['POST'])
+def clear_synced_only():
+    """Clear only events that were created by sync"""
+    try:
+        # Initialize components on first request
+        ensure_components_initialized()
+        
+        if not sync_engine:
+            return jsonify({'success': False, 'message': 'Sync engine not initialized'}), 500
+            
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        
+        # Target calendar
+        target_id = sync_engine.reader.find_calendar_id("St. Edward Public Calendar")
+        if not target_id:
+            return jsonify({'success': False, 'message': 'Target calendar not found'}), 404
+        
+        # Clear only synced events
+        deleted = sync_engine.writer.clear_synced_events_only(target_id)
+        
+        return jsonify({
+            'success': True,
+            'deleted': deleted,
+            'message': f'Cleared {deleted} synced events'
+        })
+    except Exception as e:
+        logger.error(f"Clear synced only error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/sync/status')
 def sync_status():
     """Get current sync status from file"""
