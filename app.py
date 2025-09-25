@@ -2250,6 +2250,118 @@ def debug_problem_range():
         logger.error(f"Problem range debug error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/debug/october-full-analysis')
+def debug_october_full():
+    """Complete analysis of October sync pipeline"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Track events through the entire pipeline
+        pipeline_stats = {
+            'raw_fetch': 0,
+            'after_date_filter': 0,
+            'public_category': 0,
+            'busy_status': 0,
+            'public_and_busy': 0,
+            'filtered_occurrences': 0,
+            'final_count': 0
+        }
+        
+        # Get raw events for October
+        start = "2024-10-01T00:00:00-05:00"
+        end = "2024-10-31T23:59:59-05:00"
+        
+        # Direct API call to see what Graph returns
+        headers = auth_manager.get_headers()
+        if not headers:
+            return jsonify({"error": "No auth headers"}), 401
+        
+        endpoint = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{source_id}/calendarView"
+        params = {
+            "startDateTime": start,
+            "endDateTime": end,
+            "$top": 999,
+            "$select": "id,subject,start,end,categories,showAs,type,seriesMasterId,isCancelled"
+        }
+        
+        import requests
+        response = requests.get(endpoint, headers=headers, params=params)
+        if response.status_code != 200:
+            return jsonify({"error": f"API call failed: {response.status_code}", "response": response.text}), 500
+        
+        raw_events = response.json().get('value', [])
+        pipeline_stats['raw_fetch'] = len(raw_events)
+        
+        # Analyze each event
+        october_events = []
+        for event in raw_events:
+            event_date = event.get('start', {}).get('dateTime', '')[:10]
+            if not ('2024-10-01' <= event_date <= '2024-10-31'):
+                continue
+                
+            pipeline_stats['after_date_filter'] += 1
+            
+            categories = event.get('categories', [])
+            has_public = 'Public' in categories
+            show_as = event.get('showAs', 'busy')
+            is_busy = show_as == 'busy'
+            event_type = event.get('type', 'singleInstance')
+            
+            if has_public:
+                pipeline_stats['public_category'] += 1
+            if is_busy:
+                pipeline_stats['busy_status'] += 1
+            if has_public and is_busy:
+                pipeline_stats['public_and_busy'] += 1
+            if event_type == 'occurrence':
+                pipeline_stats['filtered_occurrences'] += 1
+            
+            october_events.append({
+                'subject': event.get('subject'),
+                'date': event_date,
+                'categories': categories,
+                'showAs': show_as,
+                'type': event_type,
+                'has_public': has_public,
+                'is_busy': is_busy,
+                'would_sync': has_public and is_busy and event_type != 'occurrence'
+            })
+        
+        # Count final events that would sync
+        pipeline_stats['final_count'] = sum(1 for e in october_events if e['would_sync'])
+        
+        # Sample events that should sync but might not be
+        should_sync_sample = [e for e in october_events if e['has_public'] and e['is_busy']][:10]
+        blocked_sample = [e for e in october_events if not e['would_sync']][:10]
+        
+        return jsonify({
+            'pipeline_stats': pipeline_stats,
+            'total_october_events': len(october_events),
+            'should_sync_sample': should_sync_sample,
+            'blocked_sample': blocked_sample,
+            'summary': {
+                'raw_from_api': pipeline_stats['raw_fetch'],
+                'have_public_category': pipeline_stats['public_category'],
+                'are_busy': pipeline_stats['busy_status'],
+                'meet_both_criteria': pipeline_stats['public_and_busy'],
+                'blocked_as_occurrences': pipeline_stats['filtered_occurrences'],
+                'will_sync': pipeline_stats['final_count']
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"October analysis error: {e}")
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
