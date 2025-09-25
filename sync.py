@@ -996,6 +996,15 @@ class SyncEngine:
             logger.warning(f"Failed to normalize datetime '{dt_str}': {e}")
             return dt_str
     
+    def _is_synced_event(self, event: Dict) -> bool:
+        """Check if this event was created by our sync system"""
+        # Check for our custom property that marks synced events
+        if 'SingleValueExtendedProperties' in event:
+            for prop in event.get('SingleValueExtendedProperties', []):
+                if prop.get('Value') == 'StEdwardSync':
+                    return True
+        return False
+    
     def _create_event_signature(self, event: Dict) -> str:
         """Create unique signature for an event"""
         subject = self._normalize_subject(event.get('subject', ''))
@@ -1096,28 +1105,36 @@ class SyncEngine:
         to_add = []
         to_update = []
         
-        # Make a copy of target_map for tracking deletions
-        remaining_targets = target_map.copy()
+        # CRITICAL FIX: Only compare against events that were synced by our system
+        synced_target_events = [event for event in target_events if self._is_synced_event(event)]
+        synced_target_map = {}
+        for event in synced_target_events:
+            sig = self._create_event_signature(event)
+            synced_target_map[sig] = event
         
-        logger.info(f"🔍 Analyzing {len(source_events)} source events against {len(target_map)} target events")
+        # Make a copy of synced_target_map for tracking deletions
+        remaining_targets = synced_target_map.copy()
+        
+        logger.info(f"🔍 Analyzing {len(source_events)} source events against {len(synced_target_map)} SYNCED target events (out of {len(target_map)} total)")
         
         # DIAGNOSTIC: Signature Analysis
         logger.info(f"🔍 Signature Analysis:")
         logger.info(f"  Source events with signatures: {len(source_events)}")
-        logger.info(f"  Target events with signatures: {len(target_map)}")
+        logger.info(f"  Total target events: {len(target_map)}")
+        logger.info(f"  Synced target events: {len(synced_target_map)}")
 
         # Log sample signatures
-        if source_events and target_map:
+        if source_events and synced_target_map:
             source_sample = []
             target_sample = []
             for i, event in enumerate(source_events[:5]):
                 sig = self._create_event_signature(event)
                 source_sample.append(f"{event.get('subject', 'No Subject')[:20]} -> {sig[:50]}")
-            for i, (sig, event) in enumerate(list(target_map.items())[:5]):
+            for i, (sig, event) in enumerate(list(synced_target_map.items())[:5]):
                 target_sample.append(f"{event.get('subject', 'No Subject')[:20]} -> {sig[:50]}")
             
             logger.info(f"  Sample source signatures: {source_sample}")
-            logger.info(f"  Sample target signatures: {target_sample}")
+            logger.info(f"  Sample synced target signatures: {target_sample}")
 
         # Find matching signatures
         source_signatures = set()
@@ -1126,14 +1143,14 @@ class SyncEngine:
             if not sig.startswith("skip:occurrence:"):
                 source_signatures.add(sig)
         
-        target_signatures = set(target_map.keys())
-        matching_sigs = source_signatures & target_signatures
+        synced_target_signatures = set(synced_target_map.keys())
+        matching_sigs = source_signatures & synced_target_signatures
         logger.info(f"  Matching signatures found: {len(matching_sigs)}")
         if matching_sigs:
             logger.info(f"  First 5 matches: {list(matching_sigs)[:5]}")
 
         # Find events that should be added
-        should_add = source_signatures - target_signatures
+        should_add = source_signatures - synced_target_signatures
         logger.info(f"  Signatures that should be added: {len(should_add)}")
         if should_add:
             logger.info(f"  First 5 to add: {list(should_add)[:5]}")

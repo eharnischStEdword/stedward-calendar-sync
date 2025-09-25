@@ -1033,6 +1033,14 @@ class CalendarWriter:
         if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
             event_data['recurrence'] = source_event.get('recurrence')
         
+        # CRITICAL: Add custom property to mark this as a synced event
+        event_data['SingleValueExtendedProperties'] = [
+            {
+                "PropertyId": "String {00000000-0000-0000-0000-000000000001} Name SyncSource",
+                "Value": "StEdwardSync"
+            }
+        ]
+        
         return event_data
     
     def _get_next_day(self, date_string):
