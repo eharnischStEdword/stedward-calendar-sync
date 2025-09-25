@@ -2362,6 +2362,38 @@ def debug_october_full():
         import traceback
         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
+@app.route('/debug/verify-pagination-fix')
+def verify_pagination():
+    """Verify pagination is working"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+            
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Now test the fixed method
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        
+        # Count October events
+        october_events = [e for e in all_events if e.get('start', {}).get('dateTime', '').startswith('2024-10')]
+        
+        return jsonify({
+            'total_events_fetched': len(all_events),
+            'october_events_count': len(october_events),
+            'october_subjects': [e.get('subject') for e in october_events[:20]],
+            'success': len(october_events) > 10,
+            'pagination_working': len(all_events) > 100
+        })
+        
+    except Exception as e:
+        logger.error(f"Verification error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""

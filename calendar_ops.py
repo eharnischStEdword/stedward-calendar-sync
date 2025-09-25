@@ -194,90 +194,104 @@ class CalendarReader:
     
     @RetryUtils.retry_with_backoff(max_retries=3, base_delay=1)
     def get_calendar_events(self, calendar_id: str, select_fields: List[str] = None) -> Optional[List[Dict]]:
-        """Get all events from a specific calendar including recurring event occurrences"""
-        headers = self.auth.get_headers()
-        if not headers:
-            return None
-        
-        # Use calendarView to get expanded recurring events
-        from datetime import datetime, timedelta
-        import pytz
-        
-        # Get events from 1 year ago to 1 year in future
-        now = datetime.now(pytz.UTC)
-        start_date = (now - timedelta(days=365)).isoformat()
-        end_date = (now + timedelta(days=365)).isoformat()
-        
-        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/calendarView"
-        
-        # Add date range parameters
-        params = {
-            'startDateTime': start_date,
-            'endDateTime': end_date,
-            '$top': 100
-        }
-        
-        if select_fields:
-            params['$select'] = ','.join(select_fields)
-        
-        # Default fields to retrieve
-        if not select_fields:
-            select_fields = [
-                'id', 'subject', 'start', 'end', 'categories', 
-                'location', 'isAllDay', 'showAs', 'type', 
-                'recurrence', 'seriesMasterId', 'body', 'createdDateTime',
-                'lastModifiedDateTime'
-            ]
-        
-        all_events = []
-        page_counter = 0
-        max_pages = 50  # Safety guard to avoid infinite pagination loops
-        
-        # Handle pagination
-        while url and page_counter < max_pages:
-            try:
-                # For first request, use params. For pagination, just follow the nextLink
-                if all_events:
-                    response = requests.get(url, headers=headers, timeout=30)
+        """Get all calendar events with proper pagination"""
+        try:
+            headers = self.auth.get_headers()
+            if not headers:
+                return None
+            
+            # Calculate date range
+            from datetime import datetime, timedelta
+            import pytz
+            
+            central_tz = pytz.timezone('America/Chicago')
+            now_central = DateTimeUtils.get_central_time()
+            
+            # 5 years back, 1 year forward
+            start_date = now_central - timedelta(days=config.SYNC_CUTOFF_DAYS)
+            end_date = now_central + timedelta(days=365)
+            
+            # Convert to UTC for API call
+            start_utc = start_date.astimezone(pytz.UTC)
+            end_utc = end_date.astimezone(pytz.UTC)
+            
+            start_time = start_utc.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            end_time = end_utc.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            
+            # Use calendarView to expand recurring events
+            endpoint = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/calendarView"
+            
+            params = {
+                "startDateTime": start_time,
+                "endDateTime": end_time,
+                "$select": "id,subject,body,start,end,categories,showAs,type,seriesMasterId,isCancelled,recurrence,sensitivity,isAllDay,responseStatus,organizer",
+                "$top": 100  # Fetch in chunks of 100
+            }
+            
+            all_events = []
+            request_count = 0
+            
+            logger.info(f"📅 Fetching calendar events from {start_time[:10]} to {end_time[:10]}")
+            
+            while endpoint:
+                request_count += 1
+                logger.info(f"  Fetching page {request_count}...")
+                
+                # Make request
+                if request_count == 1:
+                    response = requests.get(endpoint, headers=headers, params=params, timeout=30)
                 else:
-                    response = requests.get(url, headers=headers, params=params, timeout=30)
+                    # For subsequent pages, use the @odata.nextLink URL directly
+                    response = requests.get(endpoint, headers=headers, timeout=30)
                 
                 if response.status_code == 401:
                     # Try refreshing token
                     if self.auth.refresh_access_token():
                         headers = self.auth.get_headers()
-                        response = requests.get(url, headers=headers, params=params if not all_events else None, timeout=30)
+                        response = requests.get(endpoint, headers=headers, params=params if request_count == 1 else None, timeout=30)
                     else:
                         logger.error("Authentication failed during event retrieval")
                         return None
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    events = data.get('value', [])
-                    all_events.extend(events)
-                    page_counter += 1
+                if not response.ok:
+                    logger.error(f"Failed to fetch events: {response.status_code} - {response.text}")
+                    break
                     
-                    # Check for next page
-                    url = data.get('@odata.nextLink')
-                    if url:
-                        logger.info(f"Fetching next page of events (current total: {len(all_events)})")
-                else:
-                    logger.error(f"Failed to get events: {response.status_code}")
-                    logger.error(f"Response: {response.text}")
-                    return None
+                data = response.json()
+                events = data.get('value', [])
+                all_events.extend(events)
+                
+                logger.info(f"  Retrieved {len(events)} events (total so far: {len(all_events)})")
+                
+                # Check for next page
+                endpoint = data.get('@odata.nextLink')
+                
+                # Safety limit to prevent infinite loops
+                if request_count > 50:
+                    logger.warning("Hit pagination safety limit of 50 pages")
+                    break
             
-            except requests.exceptions.Timeout:
-                logger.error("Request timeout while getting events")
-                raise
-            except requests.exceptions.ConnectionError:
-                logger.error("Connection error while getting events")
-                raise
-            except Exception as e:
-                logger.error(f"Error getting events: {e}")
-                raise
-        
-        logger.info(f"Retrieved total of {len(all_events)} events from calendar {calendar_id}")
-        return all_events
+            logger.info(f"✅ Total events fetched: {len(all_events)}")
+            
+            # Log sample of events for debugging
+            if all_events:
+                sample_dates = {}
+                for event in all_events:
+                    date = event.get('start', {}).get('dateTime', '')[:10]
+                    if date:
+                        sample_dates[date] = sample_dates.get(date, 0) + 1
+                
+                # Show October specifically
+                october_count = sum(count for date, count in sample_dates.items() if date.startswith('2024-10'))
+                logger.info(f"📊 October 2024 events fetched: {october_count}")
+            
+            return all_events
+            
+        except Exception as e:
+            logger.error(f"Error fetching calendar events: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
     
     @RetryUtils.retry_with_backoff(max_retries=3, base_delay=1)
     def get_calendar_instances(self, calendar_id: str, start_date: str, end_date: str) -> Optional[List[Dict]]:
