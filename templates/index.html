@@ -397,6 +397,27 @@
                     </div>
                 </div>
 
+                <!-- Clear Target Calendar Section -->
+                <div class="card mb-4 border-danger">
+                    <div class="card-header bg-danger text-white">
+                        <h5 class="mb-0">🚨 Danger Zone</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-danger">
+                            <strong>Warning!</strong> This will permanently delete ALL events from the target calendar.
+                        </div>
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="confirmClear" onchange="toggleClearButton()">
+                            <label class="form-check-label" for="confirmClear">
+                                I understand this will DELETE ALL events from St. Edward Public Calendar
+                            </label>
+                        </div>
+                        <button id="clearButton" class="btn btn-danger" onclick="clearTargetCalendar()" disabled>
+                            🚨 Clear Target Calendar
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Event Search - Full Width -->
                 <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; border: 1px solid #e9ecef; margin-bottom: 2rem;">
                     <h3 style="margin: 0 0 1rem 0; color: #005921; font-size: 1.2rem; font-weight: 600;">🔍 Search Events</h3>
@@ -820,6 +841,36 @@
                 }
             }, 60000);
         });
+
+        function toggleClearButton() {
+            const checkbox = document.getElementById('confirmClear');
+            const button = document.getElementById('clearButton');
+            button.disabled = !checkbox.checked;
+        }
+
+        async function clearTargetCalendar() {
+            if (!confirm('FINAL WARNING: This will delete ALL events from the target calendar. Are you absolutely sure?')) {
+                return;
+            }
+            
+            const button = document.getElementById('clearButton');
+            button.disabled = true;
+            button.innerHTML = '⏳ Clearing calendar...';
+            
+            try {
+                const response = await fetch('/clear-target', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                alert(`Calendar cleared: ${data.deleted} events removed`);
+                location.reload();
+            } catch (error) {
+                alert('Error clearing calendar: ' + error);
+            }
+            
+            document.getElementById('confirmClear').checked = false;
+            toggleClearButton();
+        }
     </script>
 </body>
 </html>

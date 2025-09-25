@@ -409,6 +409,52 @@ def trigger_sync():
         logger.error(f"Sync trigger error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/clear-target', methods=['POST'])
+def clear_target():
+    """Clear all events from target calendar"""
+    try:
+        # Initialize components on first request
+        ensure_components_initialized()
+        
+        if not sync_engine:
+            return jsonify({'success': False, 'message': 'Sync engine not initialized'}), 500
+            
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({'success': False, 'message': 'Not authenticated'}), 401
+        
+        # Target calendar
+        target_id = sync_engine.reader.find_calendar_id("St. Edward Public Calendar")
+        if not target_id:
+            return jsonify({'success': False, 'message': 'Target calendar not found'}), 404
+        
+        # Get all events (2 years back)
+        events = sync_engine.reader.get_calendar_events(target_id)
+        
+        deleted = 0
+        failed = 0
+        for event in events:
+            try:
+                event_id = event.get('id')
+                if event_id:
+                    success = sync_engine.writer.delete_event(target_id, event_id)
+                    if success:
+                        deleted += 1
+                    else:
+                        failed += 1
+            except Exception as e:
+                logger.error(f"Failed to delete event {event.get('id', 'unknown')}: {e}")
+                failed += 1
+        
+        return jsonify({
+            'success': True,
+            'deleted': deleted,
+            'failed': failed,
+            'message': f'Cleared {deleted} events'
+        })
+    except Exception as e:
+        logger.error(f"Clear target error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @app.route('/sync/status')
 def sync_status():
     """Get current sync status from file"""
