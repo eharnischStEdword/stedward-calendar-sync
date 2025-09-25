@@ -504,6 +504,11 @@ class CalendarReader:
                     # Always include recurring series masters regardless of start date
                     logger.debug(f"Including recurring series: {event.get('subject')}")
                     # Skip date filtering for seriesMaster
+                elif event_type == 'occurrence':
+                    # Allow orphaned occurrences to sync (Ladies Auxiliary events need this)
+                    logger.info(f"✅ Allowing occurrence through: {event.get('subject')} on {event.get('start', {}).get('dateTime', '')[:10]}")
+                    stats['processed_occurrences'] = stats.get('processed_occurrences', 0) + 1
+                    # Skip date filtering for occurrences - let them sync
                 else:
                     # For single events, check the date
                     event_date = DateTimeUtils.parse_graph_datetime(event.get('start', {}))
