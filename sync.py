@@ -1046,8 +1046,18 @@ class SyncEngine:
             return signature
         
         elif event_type == 'occurrence':
-            # Skip occurrences entirely when not syncing them
-            return f"skip:occurrence:{subject}"
+            # NEW: Include seriesMasterId for occurrences to prevent duplicates
+            series_master_id = event.get('seriesMasterId', '')
+            if series_master_id:
+                # Include the seriesMasterId in the signature to make it unique
+                signature = f"occurrence:{subject}:{series_master_id}:{start_normalized}"
+                logger.debug(f"Occurrence signature: {signature}")
+                return signature
+            else:
+                # Fallback for occurrences without seriesMasterId
+                signature = f"occurrence:{subject}:{start_normalized}"
+                logger.debug(f"Occurrence signature (no master): {signature}")
+                return signature
         
         # For single events - include time to distinguish events on same day
         if 'T' in start_normalized:
@@ -1073,10 +1083,7 @@ class SyncEngine:
         for event in events:
             signature = self._create_event_signature(event)
 
-            # Skip occurrences entirely
-            if signature.startswith("skip:occurrence:"):
-                continue
-
+            # Process all events now (including occurrences)
             if signature in event_map:
                 # Keep the newer event based on creation time; mark the other as duplicate
                 existing = event_map[signature]

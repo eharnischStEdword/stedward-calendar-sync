@@ -431,8 +431,31 @@ class CalendarReader:
         # Add single events
         filtered_events.extend(single_events)
         
-        # Add occurrences
-        filtered_events.extend(occurrences)
+        # CRITICAL FIX: Handle orphaned occurrences
+        # Group occurrences by their seriesMasterId
+        occurrences_by_master = {}
+        for occ in occurrences:
+            master_id = occ.get('seriesMasterId')
+            if master_id:
+                if master_id not in occurrences_by_master:
+                    occurrences_by_master[master_id] = []
+                occurrences_by_master[master_id].append(occ)
+        
+        # Add series masters that exist
+        for master_id, master_event in series_masters.items():
+            filtered_events.append(master_event)
+        
+        # Add orphaned occurrences (those without a series master in our window)
+        for occ in occurrences:
+            master_id = occ.get('seriesMasterId')
+            # If we don't have the series master, this is an orphaned occurrence
+            if master_id and master_id not in series_masters:
+                # Check if it meets sync criteria before adding
+                categories = occ.get('categories', [])
+                show_as = occ.get('showAs', 'busy')
+                if 'Public' in categories and show_as == 'busy':
+                    filtered_events.append(occ)
+                    logger.info(f"✅ Including orphaned occurrence: {occ.get('subject')} on {occ.get('start', {}).get('dateTime', '')[:10]}")
         
         # DIAGNOSTIC: Log occurrences in problem date range
         current_year = datetime.now().year
@@ -448,17 +471,26 @@ class CalendarReader:
                 logger.warning(f"   SeriesMasterId: {occ.get('seriesMasterId')}")
                 logger.warning(f"   Would sync: {'Public' in occ.get('categories', []) and occ.get('showAs') == 'busy'}")
         
-        # Only add seriesMasters if they have no occurrences in our window
-        for master_id, master_event in series_masters.items():
-            if master_id not in series_with_occurrences:
-                filtered_events.append(master_event)
-        
         # Now apply the Public/Busy filtering
         all_events = filtered_events  # Use filtered list for rest of processing
         
         # Diagnostic logging
         logger.info(f"📊 DIAGNOSTIC: Retrieved {len(all_events)} total events from calendar")
-
+        
+        # Debug logging for recurring events
+        logger.info(f"📊 Recurring Event Analysis:")
+        logger.info(f"  Total events fetched: {len(all_events)}")
+        logger.info(f"  Series masters: {len(series_masters)}")
+        logger.info(f"  Occurrences: {len(occurrences)}")
+        logger.info(f"  Series with occurrences in window: {len(series_with_occurrences)}")
+        
+        # Log orphaned occurrences
+        orphaned_count = 0
+        for occ in occurrences:
+            if occ.get('seriesMasterId') not in series_masters:
+                orphaned_count += 1
+        logger.info(f"  Orphaned occurrences: {orphaned_count}")
+        
         # Log event type breakdown
         event_types = {}
         for event in all_events:
@@ -529,17 +561,21 @@ class CalendarReader:
             try:
                 event_type = event.get('type', 'singleInstance')
                 
-                # For recurring events (seriesMaster), don't filter by date at all
-                # The recurrence pattern will determine which occurrences show up
+                # Handle different event types appropriately
                 if event_type == 'seriesMaster':
-                    # Always include recurring series masters regardless of start date
+                    # Always include recurring series masters
                     logger.debug(f"Including recurring series: {event.get('subject')}")
-                    # Skip date filtering for seriesMaster
                 elif event_type == 'occurrence':
-                    # Allow orphaned occurrences to sync (Ladies Auxiliary events need this)
-                    logger.info(f"✅ Allowing occurrence through: {event.get('subject')} on {event.get('start', {}).get('dateTime', '')[:10]}")
-                    stats['processed_occurrences'] = stats.get('processed_occurrences', 0) + 1
-                    # Skip date filtering for occurrences - let them sync
+                    # Check if this occurrence has a series master in our data
+                    series_master_id = event.get('seriesMasterId')
+                    if series_master_id and series_master_id in series_masters:
+                        # Skip this occurrence - we'll handle it via the series master
+                        logger.debug(f"Skipping occurrence (has series master): {event.get('subject')}")
+                        continue
+                    else:
+                        # This is an orphaned occurrence - include it
+                        logger.info(f"✅ Including orphaned occurrence: {event.get('subject')} on {event.get('start', {}).get('dateTime', '')[:10]}")
+                        stats['orphaned_occurrences'] = stats.get('orphaned_occurrences', 0) + 1
                 else:
                     # For single events, check the date
                     event_date = DateTimeUtils.parse_graph_datetime(event.get('start', {}))
