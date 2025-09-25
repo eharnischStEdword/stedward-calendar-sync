@@ -1048,6 +1048,16 @@ class CalendarWriter:
                 'requests': batch_requests
             }
             
+            # DEBUG: Log the first event being sent
+            if batch_requests:
+                import json
+                logger.info(f"🔍 BATCH REQUEST DEBUG - First event:")
+                logger.info(f"   Subject: {batch_requests[0]['body'].get('subject', 'No Subject')}")
+                logger.info(f"   Start: {batch_requests[0]['body'].get('start', {})}")
+                logger.info(f"   End: {batch_requests[0]['body'].get('end', {})}")
+                logger.info(f"   Body Content: {batch_requests[0]['body'].get('body', {}).get('content', '')[:100]}...")
+                logger.info(f"   Categories: {batch_requests[0]['body'].get('categories', [])}")
+            
             try:
                 response = requests.post(batch_url, headers=headers, json=batch_payload, timeout=60)
                 
