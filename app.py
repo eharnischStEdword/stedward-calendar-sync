@@ -2451,6 +2451,9 @@ def debug_october_full():
 def verify_pagination():
     """Verify pagination is working"""
     try:
+        from datetime import datetime
+        current_year = datetime.now().year
+        
         if not auth_manager or not auth_manager.is_authenticated():
             return jsonify({"error": "Not authenticated"}), 401
         
