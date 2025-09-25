@@ -969,67 +969,50 @@ class CalendarWriter:
             logger.error(f"❌ Error updating occurrence: {e}")
             raise
     
-    def _prepare_event_for_api(self, event: Dict) -> Dict:
-        """Prepare event data in the correct format for Microsoft Graph API"""
-        # Strip microseconds from timestamps
-        start_data = event.get('start', {})
-        end_data = event.get('end', {})
+    def _prepare_event_for_api(self, event):
+        """Prepare event data specifically for Graph API requirements"""
+        # Get clean timestamps without microseconds
+        if 'start' in event and 'dateTime' in event['start']:
+            start_dt = event['start']['dateTime'].replace('Z', '').split('.')[0]
+        else:
+            start_dt = event.get('start', {}).get('dateTime', '')
+            
+        if 'end' in event and 'dateTime' in event['end']:
+            end_dt = event['end']['dateTime'].replace('Z', '').split('.')[0]
+        else:
+            end_dt = event.get('end', {}).get('dateTime', '')
         
-        start_str = start_data.get('dateTime', '')
-        end_str = end_data.get('dateTime', '')
-        
-        # Remove microseconds if present
-        if '.' in start_str:
-            start_str = start_str.split('.')[0]
-        if '.' in end_str:
-            end_str = end_str.split('.')[0]
-        
-        # Extract location for body content
-        source_location = event.get('location', {})
-        location_text = ""
-        
-        if source_location:
-            if isinstance(source_location, dict):
-                location_text = source_location.get('displayName', '')
-            else:
-                location_text = str(source_location)
-        
-        # Apply location normalization for the target calendar
-        from utils.formatting import normalize_location
-        normalized_location_text = normalize_location(location_text)
-        
-        # Create body content with ONLY location information (privacy: exclude source body)
-        body_content = ""
-        if normalized_location_text:
-            body_content = f"<p><strong>Location:</strong> {normalized_location_text}</p>"
-        
-        return {
+        # Build the properly formatted event
+        api_event = {
             'subject': event.get('subject', ''),
-            'body': {
-                'contentType': 'HTML',
-                'content': body_content
-            },
             'start': {
-                'dateTime': start_str,
-                'timeZone': 'America/Chicago'
+                'dateTime': start_dt,
+                'timeZone': 'UTC'  # Since times are already in UTC with Z suffix
             },
             'end': {
-                'dateTime': end_str,
-                'timeZone': 'America/Chicago'
+                'dateTime': end_dt,
+                'timeZone': 'UTC'
             },
             'showAs': event.get('showAs', 'busy'),
-            'categories': event.get('categories', []),
-            'isAllDay': event.get('isAllDay', False),
-            'location': {'displayName': normalized_location_text} if normalized_location_text else None,
-            'isReminderOn': False,
-            'sensitivity': 'normal',
-            'SingleValueExtendedProperties': [
-                {
-                    "PropertyId": "String {00000000-0000-0000-0000-000000000001} Name SyncSource",
-                    "Value": "StEdwardSync"
-                }
-            ]
+            'categories': event.get('categories', [])
         }
+        
+        # Add body if present
+        if 'body' in event:
+            api_event['body'] = {
+                'contentType': 'HTML',
+                'content': event['body'].get('content', '')
+            }
+        
+        # Add location if present
+        if 'location' in event and event['location']:
+            api_event['location'] = {'displayName': event['location'].get('displayName', '')}
+        
+        # Add isAllDay if true
+        if event.get('isAllDay'):
+            api_event['isAllDay'] = True
+            
+        return api_event
     
     def _prepare_event_data(self, source_event: Dict) -> Dict:
         """Prepare event data for creation/update - DEPRECATED, use _prepare_event_for_api"""
