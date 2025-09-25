@@ -2394,6 +2394,60 @@ def verify_pagination():
         logger.error(f"Verification error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/debug/test-single-event/<subject>')
+def debug_test_single_event(subject):
+    """Test why a specific event isn't syncing"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source events
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        source_events = sync_engine.reader.get_public_events(source_id)
+        
+        # Find events matching subject
+        matching = [e for e in source_events if subject.lower() in e.get('subject', '').lower()]
+        
+        # Get target events
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        target_events = sync_engine.reader.get_calendar_events(target_id)
+        
+        # Generate signatures
+        results = []
+        for event in matching[:5]:  # First 5 matches
+            sig = sync_engine._create_event_signature(event)
+            
+            # Check if signature exists in target
+            target_match = None
+            for t_event in target_events:
+                if sync_engine._create_event_signature(t_event) == sig:
+                    target_match = t_event
+                    break
+            
+            results.append({
+                'source_subject': event.get('subject'),
+                'source_start': event.get('start'),
+                'signature': sig,
+                'exists_in_target': target_match is not None,
+                'target_match': {
+                    'subject': target_match.get('subject'),
+                    'start': target_match.get('start')
+                } if target_match else None
+            })
+        
+        return jsonify({
+            'test_subject': subject,
+            'found_in_source': len(matching),
+            'results': results
+        })
+        
+    except Exception as e:
+        logger.error(f"Test single event error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""

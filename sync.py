@@ -976,6 +976,15 @@ class SyncEngine:
         subject = self._normalize_subject(event.get('subject', ''))
         event_type = event.get('type', 'singleInstance')
         
+        # DIAGNOSTIC: Log signature inputs for common events
+        original_subject = event.get('subject', 'No Subject')
+        if any(name in original_subject for name in ['Mass', 'Adoration', 'Confession', 'Ladies Auxiliary']):
+            logger.debug(f"  Signature inputs for '{original_subject}':")
+            logger.debug(f"    Subject: {subject}")
+            logger.debug(f"    Type: {event_type}")
+            logger.debug(f"    Start: {event.get('start')}")
+            logger.debug(f"    End: {event.get('end')}")
+        
         # Get normalized start time
         start_raw = event.get('start', {}).get('dateTime', '')
         start_normalized = self._normalize_datetime(start_raw)
@@ -1066,6 +1075,43 @@ class SyncEngine:
         remaining_targets = target_map.copy()
         
         logger.info(f"🔍 Analyzing {len(source_events)} source events against {len(target_map)} target events")
+        
+        # DIAGNOSTIC: Signature Analysis
+        logger.info(f"🔍 Signature Analysis:")
+        logger.info(f"  Source events with signatures: {len(source_events)}")
+        logger.info(f"  Target events with signatures: {len(target_map)}")
+
+        # Log sample signatures
+        if source_events and target_map:
+            source_sample = []
+            target_sample = []
+            for i, event in enumerate(source_events[:5]):
+                sig = self._create_event_signature(event)
+                source_sample.append(f"{event.get('subject', 'No Subject')[:20]} -> {sig[:50]}")
+            for i, (sig, event) in enumerate(list(target_map.items())[:5]):
+                target_sample.append(f"{event.get('subject', 'No Subject')[:20]} -> {sig[:50]}")
+            
+            logger.info(f"  Sample source signatures: {source_sample}")
+            logger.info(f"  Sample target signatures: {target_sample}")
+
+        # Find matching signatures
+        source_signatures = set()
+        for event in source_events:
+            sig = self._create_event_signature(event)
+            if not sig.startswith("skip:occurrence:"):
+                source_signatures.add(sig)
+        
+        target_signatures = set(target_map.keys())
+        matching_sigs = source_signatures & target_signatures
+        logger.info(f"  Matching signatures found: {len(matching_sigs)}")
+        if matching_sigs:
+            logger.info(f"  First 5 matches: {list(matching_sigs)[:5]}")
+
+        # Find events that should be added
+        should_add = source_signatures - target_signatures
+        logger.info(f"  Signatures that should be added: {len(should_add)}")
+        if should_add:
+            logger.info(f"  First 5 to add: {list(should_add)[:5]}")
         
         for source_event in source_events:
             signature = self._create_event_signature(source_event)
