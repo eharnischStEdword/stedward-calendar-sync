@@ -933,10 +933,23 @@ class CalendarWriter:
             logger.error(f"❌ Error updating occurrence: {e}")
             raise
     
-    def _prepare_event_data(self, source_event: Dict) -> Dict:
-        """Prepare event data for creation/update"""
+    def _prepare_event_for_api(self, event: Dict) -> Dict:
+        """Prepare event data in the correct format for Microsoft Graph API"""
+        # Strip microseconds from timestamps
+        start_data = event.get('start', {})
+        end_data = event.get('end', {})
+        
+        start_str = start_data.get('dateTime', '')
+        end_str = end_data.get('dateTime', '')
+        
+        # Remove microseconds if present
+        if '.' in start_str:
+            start_str = start_str.split('.')[0]
+        if '.' in end_str:
+            end_str = end_str.split('.')[0]
+        
         # Extract location for body content
-        source_location = source_event.get('location', {})
+        source_location = event.get('location', {})
         location_text = ""
         
         if source_location:
@@ -953,103 +966,38 @@ class CalendarWriter:
         body_content = ""
         if normalized_location_text:
             body_content = f"<p><strong>Location:</strong> {normalized_location_text}</p>"
-        # Do NOT include source event body content for privacy
         
-        # Build base event data
-        event_data = {
-            'subject': source_event.get('subject'),
-            'categories': source_event.get('categories', []),
-            'body': {'contentType': 'html', 'content': body_content},
-            'location': {'displayName': normalized_location_text} if normalized_location_text else None,  # Apply normalized location
-            'showAs': 'busy',  # Always busy for public calendar
-            'isReminderOn': False,  # No reminders on public calendar
-            'sensitivity': 'normal'  # Ensure not marked as private
+        return {
+            'subject': event.get('subject', ''),
+            'body': {
+                'contentType': 'HTML',
+                'content': body_content
+            },
+            'start': {
+                'dateTime': start_str,
+                'timeZone': 'America/Chicago'
+            },
+            'end': {
+                'dateTime': end_str,
+                'timeZone': 'America/Chicago'
+            },
+            'showAs': event.get('showAs', 'busy'),
+            'categories': event.get('categories', []),
+            'isAllDay': event.get('isAllDay', False),
+            'location': {'displayName': normalized_location_text} if normalized_location_text else None,
+            'isReminderOn': False,
+            'sensitivity': 'normal',
+            'SingleValueExtendedProperties': [
+                {
+                    "PropertyId": "String {00000000-0000-0000-0000-000000000001} Name SyncSource",
+                    "Value": "StEdwardSync"
+                }
+            ]
         }
-        
-        # Calculate event duration for diagnostic purposes
-        subject = source_event.get('subject', 'Unknown')
-        start_data = source_event.get('start', {})
-        end_data = source_event.get('end', {})
-        source_is_all_day = source_event.get('isAllDay', False)
-        
-        # DIAGNOSTIC: Log long events for review
-        start_str = start_data.get('dateTime', '')
-        end_str = end_data.get('dateTime', '')
-        
-        if start_str and end_str and not source_is_all_day:
-            try:
-                start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
-                end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
-                duration_hours = (end_dt - start_dt).total_seconds() / 3600
-                
-                # Log events longer than 8 hours for review
-                if duration_hours > 8:
-                    # Convert to Central Time for display
-                    central_start = start_dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=-5)))  # CST
-                    central_end = end_dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=-5)))  # CST
-                    logger.info(f"📏 Long event detected: '{subject}'")
-                    logger.info(f"   Duration: {duration_hours:.1f} hours")
-                    logger.info(f"   Central Time: {central_start.strftime('%I:%M %p')} to {central_end.strftime('%I:%M %p')}")
-                    logger.info(f"   This may be intentional (e.g., all-day adoration) or a data entry error")
-            except Exception as e:
-                logger.debug(f"Could not calculate duration for {subject}: {e}")
-        
-        # Simple logic: Use source's isAllDay flag directly
-        event_data['isAllDay'] = source_is_all_day
-        
-        if source_is_all_day:
-            # All-day event handling
-            start_dt = source_event.get('start', {})
-            end_dt = source_event.get('end', {})
-            
-            # Extract just the date part
-            if 'dateTime' in start_dt:
-                start_date = start_dt['dateTime'].split('T')[0]
-            elif 'date' in start_dt:
-                start_date = start_dt['date']
-            else:
-                logger.error(f"No valid start date for all-day event: {subject}")
-                start_date = None
-                
-            if 'dateTime' in end_dt:
-                end_date = end_dt['dateTime'].split('T')[0]
-            elif 'date' in end_dt:
-                end_date = end_dt['date']
-            else:
-                logger.error(f"No valid end date for all-day event: {subject}")
-                end_date = None
-            
-            if start_date and end_date:
-                # For all-day events, use dateTime format with timezone
-                event_data['start'] = {
-                    'dateTime': f"{start_date}T00:00:00.0000000",
-                    'timeZone': 'Central Standard Time'
-                }
-                event_data['end'] = {
-                    'dateTime': f"{end_date}T00:00:00.0000000",
-                    'timeZone': 'Central Standard Time'
-                }
-            else:
-                event_data['start'] = source_event.get('start', {})
-                event_data['end'] = source_event.get('end', {})
-        else:
-            # Timed event handling - preserve original data
-            event_data['start'] = start_data
-            event_data['end'] = end_data
-        
-        # Add recurrence for series masters
-        if source_event.get('type') == 'seriesMaster' and source_event.get('recurrence'):
-            event_data['recurrence'] = source_event.get('recurrence')
-        
-        # CRITICAL: Add custom property to mark this as a synced event
-        event_data['SingleValueExtendedProperties'] = [
-            {
-                "PropertyId": "String {00000000-0000-0000-0000-000000000001} Name SyncSource",
-                "Value": "StEdwardSync"
-            }
-        ]
-        
-        return event_data
+    
+    def _prepare_event_data(self, source_event: Dict) -> Dict:
+        """Prepare event data for creation/update - DEPRECATED, use _prepare_event_for_api"""
+        return self._prepare_event_for_api(source_event)
     
     def _get_next_day(self, date_string):
         """Get the next day for all-day event end date"""
@@ -1090,7 +1038,7 @@ class CalendarWriter:
                     'id': str(idx + 1),
                     'method': 'POST',
                     'url': f'/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events',
-                    'body': self._prepare_event_data(event),
+                    'body': self._prepare_event_for_api(event),
                     'headers': {
                         'Content-Type': 'application/json'
                     }
