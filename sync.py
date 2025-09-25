@@ -1162,7 +1162,27 @@ class SyncEngine:
         if should_add:
             logger.info(f"  First 5 to add: {list(should_add)[:5]}")
         
-        for source_event in source_events:
+        # SIMPLE DUPLICATE DETECTION: Check for existing events by subject + date/time
+        logger.info(f"🔍 Simple duplicate detection:")
+        existing = set()
+        for event in target_events:
+            key = f"{event.get('subject', '')}_{event.get('start', {}).get('dateTime', '')}"
+            existing.add(key)
+        
+        logger.info(f"  Found {len(existing)} existing events in target calendar")
+        
+        # Filter source events to only include those not already in target
+        filtered_source_events = []
+        for event in source_events:
+            key = f"{event.get('subject', '')}_{event.get('start', {}).get('dateTime', '')}"
+            if key not in existing:
+                filtered_source_events.append(event)
+            else:
+                logger.debug(f"⏭️ Skipping duplicate: {event.get('subject', 'No Subject')} on {event.get('start', {}).get('dateTime', '')[:10]}")
+        
+        logger.info(f"  After duplicate filtering: {len(filtered_source_events)} events to process (removed {len(source_events) - len(filtered_source_events)} duplicates)")
+        
+        for source_event in filtered_source_events:
             signature = self._create_event_signature(source_event)
             subject = source_event.get('subject', 'No subject')
             
