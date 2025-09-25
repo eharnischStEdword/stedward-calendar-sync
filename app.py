@@ -2448,35 +2448,6 @@ def debug_test_single_event(subject):
         logger.error(f"Test single event error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/clear-cache', methods=['POST'])
-def clear_cache():
-    """Clear all cached data and force fresh sync"""
-    try:
-        # Clear any cache files
-        import os
-        cache_files = ['event_cache.json', 'sync_cache.json', 'calendar_cache.json', '/data/event_cache.json']
-        cleared_files = []
-        for cache_file in cache_files:
-            if os.path.exists(cache_file):
-                os.remove(cache_file)
-                cleared_files.append(cache_file)
-                logger.info(f"Deleted cache file: {cache_file}")
-        
-        # Clear in-memory cache if sync_engine exists
-        if sync_engine and hasattr(sync_engine, 'change_tracker'):
-            sync_engine.change_tracker.event_cache = {}
-            sync_engine.change_tracker.last_sync_time = None
-            logger.info("Cleared in-memory cache")
-        
-        return jsonify({
-            "status": "success",
-            "message": "Cache cleared successfully",
-            "cleared_files": cleared_files
-        })
-    except Exception as e:
-        logger.error(f"Failed to clear cache: {e}")
-        return jsonify({"error": str(e)}), 500
-
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""
