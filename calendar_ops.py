@@ -407,6 +407,16 @@ class CalendarReader:
         # Add occurrences
         filtered_events.extend(occurrences)
         
+        # DIAGNOSTIC: Log occurrences in problem date range
+        for occ in occurrences:
+            event_date = occ.get('start', {}).get('dateTime', '')[:10]
+            if '2024-09-22' <= event_date <= '2024-11-21':
+                logger.warning(f"⚠️ OCCURRENCE in problem range: {occ.get('subject')} on {event_date}")
+                logger.warning(f"   Categories: {occ.get('categories', [])}")
+                logger.warning(f"   ShowAs: {occ.get('showAs')}")
+                logger.warning(f"   SeriesMasterId: {occ.get('seriesMasterId')}")
+                logger.warning(f"   Would sync: {'Public' in occ.get('categories', []) and occ.get('showAs') == 'busy'}")
+        
         # Only add seriesMasters if they have no occurrences in our window
         for master_id, master_event in series_masters.items():
             if master_id not in series_with_occurrences:

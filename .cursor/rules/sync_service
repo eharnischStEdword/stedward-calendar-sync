@@ -60,3 +60,14 @@
 
 # Guardrail (single line for LLMs/tools)
 - Protect against data corruption: master is read-only, only Public+Busy propagate, dry-run first, never sync occurrences, enforce MASTER_CALENDAR_PROTECTION.
+
+
+# Event Type Handling
+- Track event types (singleInstance, seriesMaster, occurrence) in all logging
+- When filtering occurrences, log the date range to identify patterns
+- Maintain a set of processed seriesMasterIds to prevent orphaned occurrences
+
+# Date-Specific Debugging
+- Log correlation IDs with date ranges for events being processed
+- Include event type in all filter decisions
+- Track why each event is excluded with specific reason codes

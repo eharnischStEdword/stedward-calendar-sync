@@ -2193,6 +2193,63 @@ def verify_config():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/debug/problem-range-events')
+def debug_problem_range():
+    """Specifically analyze Sept 22 - Nov 21 events"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get all events from source
+        all_events = sync_engine.reader.get_calendar_events(source_id)
+        
+        problem_events = []
+        for event in all_events:
+            date_str = event.get('start', {}).get('dateTime', '')[:10]
+            if '2024-09-22' <= date_str <= '2024-11-21':
+                problem_events.append({
+                    'subject': event.get('subject'),
+                    'date': date_str,
+                    'type': event.get('type'),
+                    'categories': event.get('categories', []),
+                    'showAs': event.get('showAs'),
+                    'seriesMasterId': event.get('seriesMasterId'),
+                    'isCancelled': event.get('isCancelled'),
+                    'would_sync': 'Public' in event.get('categories', []) and event.get('showAs') == 'busy' and not event.get('isCancelled', False)
+                })
+        
+        # Group by type for analysis
+        by_type = {}
+        for event in problem_events:
+            event_type = event['type']
+            if event_type not in by_type:
+                by_type[event_type] = []
+            by_type[event_type].append(event)
+        
+        return jsonify({
+            'total_in_range': len(problem_events),
+            'by_type': {k: len(v) for k, v in by_type.items()},
+            'events': problem_events[:20],  # First 20 as sample
+            'would_sync_count': len([e for e in problem_events if e['would_sync']]),
+            'analysis': {
+                'occurrence_count': len([e for e in problem_events if e['type'] == 'occurrence']),
+                'seriesmaster_count': len([e for e in problem_events if e['type'] == 'seriesMaster']),
+                'singleinstance_count': len([e for e in problem_events if e['type'] == 'singleInstance'])
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Problem range debug error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""

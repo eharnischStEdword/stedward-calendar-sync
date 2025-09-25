@@ -23,3 +23,10 @@
 # Incident Safety
 - If MASTER_CALENDAR_PROTECTION is missing/false at runtime, abort all write paths and surface an error in /status.
 - On repeated write failures to target, auto-switch to dry_run for next cycle and log a HIGH severity alert.
+
+
+# Debugging Production Issues
+- Add temporary diagnostic endpoints for specific date ranges
+- Include event type analysis in debug outputs
+- Test recurring event handling across date boundaries
+- Verify CalendarView expansion of recurring events
