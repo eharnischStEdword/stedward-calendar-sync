@@ -467,19 +467,7 @@ class CalendarReader:
                     filtered_events.append(occ)
                     logger.info(f"✅ Including orphaned occurrence: {occ.get('subject')} on {occ.get('start', {}).get('dateTime', '')[:10]}")
         
-        # DIAGNOSTIC: Log occurrences in problem date range
-        current_year = datetime.fromisoformat(get_utc_now_iso()).year
-        problem_start = f"{current_year}-09-21"
-        problem_end = f"{current_year}-11-22"
-        
-        for occ in occurrences:
-            event_date = occ.get('start', {}).get('dateTime', '')[:10]
-            if problem_start <= event_date <= problem_end:
-                logger.warning(f"⚠️ OCCURRENCE in problem range: {occ.get('subject')} on {event_date}")
-                logger.warning(f"   Categories: {occ.get('categories', [])}")
-                logger.warning(f"   ShowAs: {occ.get('showAs')}")
-                logger.warning(f"   SeriesMasterId: {occ.get('seriesMasterId')}")
-                logger.warning(f"   Would sync: {'Public' in occ.get('categories', []) and occ.get('showAs') == 'busy'}")
+        # Diagnostic logging removed - system is working correctly
         
         # Now apply the Public/Busy filtering
         all_events = filtered_events  # Use filtered list for rest of processing
@@ -547,24 +535,14 @@ class CalendarReader:
             categories = event.get('categories', [])
             if 'Public' not in categories:
                 stats['non_public'] += 1
-                # Special logging for problem date range
-                event_date = event.get('start', {}).get('dateTime', '')[:10]
-                if problem_start <= event_date <= problem_end:
-                    logger.warning(f"⚠️ PROBLEM RANGE EVENT REJECTED (not public): {event.get('subject')} on {event_date} - Categories: {categories}")
-                else:
-                    logger.info(f"❌ REJECTED (not public): {event.get('subject')} - Categories: {categories}")
+                logger.info(f"❌ REJECTED (not public): {event.get('subject')} - Categories: {categories}")
                 continue
 
             # CRITICAL: Also check if event is marked as Busy
             show_as = event.get('showAs', 'busy')
             if show_as != 'busy':
                 stats['not_busy'] += 1
-                # Special logging for problem date range
-                event_date = event.get('start', {}).get('dateTime', '')[:10]
-                if problem_start <= event_date <= problem_end:
-                    logger.warning(f"⚠️ PROBLEM RANGE EVENT REJECTED (not busy): {event.get('subject')} on {event_date} - ShowAs: {show_as}")
-                else:
-                    logger.info(f"❌ REJECTED (not busy): {event.get('subject')} - ShowAs: {show_as}")
+                logger.info(f"❌ REJECTED (not busy): {event.get('subject')} - ShowAs: {show_as}")
                 continue
             
             # Check event date
@@ -614,11 +592,6 @@ class CalendarReader:
                 # If we can't parse the date, include the event to be safe
                 pass
             
-            # Log events that make it through filtering, especially in problem range
-            event_date = event.get('start', {}).get('dateTime', '')[:10]
-            if problem_start <= event_date <= problem_end:
-                logger.warning(f"✅ PROBLEM RANGE EVENT PASSED FILTERS: {event.get('subject')} on {event_date} - Type: {event.get('type')}")
-            
             public_events.append(event)
         
         logger.info(f"Found {len(public_events)} public events to sync")
@@ -626,29 +599,6 @@ class CalendarReader:
         
         return public_events
     
-    def should_sync_occurrence(self, event, stats):
-        """
-        Special handler for occurrence events in problem date range.
-        
-        TEMPORARY: This is for testing the Sept 22 - Nov 21 issue.
-        """
-        event_date_str = event.get('start', {}).get('dateTime', '')[:10]
-        
-        # Check if this is in our problem range
-        current_year = datetime.fromisoformat(get_utc_now_iso()).year
-        problem_start = f"{current_year}-09-21"
-        problem_end = f"{current_year}-11-22"
-        
-        if problem_start <= event_date_str <= problem_end:
-            # Check if it meets our sync criteria
-            categories = event.get('categories', [])
-            show_as = event.get('showAs', 'busy')
-            
-            if 'Public' in categories and show_as == 'busy':
-                logger.warning(f"🔧 ALLOWING occurrence in problem range: {event.get('subject')} on {event_date_str}")
-                return True
-        
-        return False
 
     def clear_calendar_cache(self):
         """Clear the calendar ID cache"""
