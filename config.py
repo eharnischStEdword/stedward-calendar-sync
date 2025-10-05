@@ -35,6 +35,7 @@ MAX_SYNC_REQUESTS_PER_HOUR = int(os.environ.get('MAX_SYNC_REQUESTS_PER_HOUR', 20
 MASTER_CALENDAR_PROTECTION = os.environ.get('MASTER_CALENDAR_PROTECTION', 'True').lower() == 'true'
 DRY_RUN_MODE = os.environ.get('DRY_RUN_MODE', 'False').lower() == 'true'
 SYNC_CUTOFF_DAYS = int(os.environ.get('SYNC_CUTOFF_DAYS', 730))  # 2 years
+SYNC_LOOKAHEAD_DAYS = int(os.environ.get('SYNC_LOOKAHEAD_DAYS', 730))  # 2 years ahead
 
 # Occurrence Exception Settings
 SYNC_OCCURRENCE_EXCEPTIONS = os.environ.get('SYNC_OCCURRENCE_EXCEPTIONS', 'True').lower() == 'true'
