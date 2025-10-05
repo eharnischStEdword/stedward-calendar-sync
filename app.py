@@ -385,29 +385,72 @@ def index():
 
 @app.route('/sync', methods=['POST'])
 def trigger_sync():
-    """Trigger manual sync"""
+    """Trigger sync in background, return immediately"""
+    
+    # Initialize components on first request
+    ensure_components_initialized()
+    
+    # Validate auth first
+    if not auth_manager or not auth_manager.is_authenticated():
+        return jsonify({"error": "Not authenticated", "redirect": "/"}), 401
+    
+    if not sync_engine:
+        return jsonify({"error": "Sync engine not initialized"}), 500
+    
+    # Check if sync already running
+    if sync_engine.sync_in_progress:
+        return jsonify({
+            "status": "already_running",
+            "message": "Sync is already in progress",
+            "progress": sync_engine.get_progress_percent() if hasattr(sync_engine, 'get_progress_percent') else 0
+        }), 409
+    
+    # Parse request body
+    dry_run = request.json.get('dry_run', False) if request.json else False
+    
+    # Start sync in background thread
+    sync_thread = threading.Thread(
+        target=_run_sync_background,
+        args=(dry_run,),
+        daemon=True
+    )
+    sync_thread.start()
+    
+    return jsonify({
+        "status": "started",
+        "message": "Sync started in background",
+        "dry_run": dry_run,
+        "check_progress": "/sync/progress"
+    }), 202  # 202 Accepted
+
+@app.route('/sync/progress')
+def sync_progress():
+    """Get current sync progress"""
     try:
-        # Initialize components on first request
-        ensure_components_initialized()
-        
         if not sync_engine:
             return jsonify({"error": "Sync engine not initialized"}), 500
         
-        if not auth_manager or not auth_manager.is_authenticated():
-            return jsonify({"error": "Not authenticated", "redirect": "/"}), 401
-        
-        # Run sync synchronously to capture results
-        result = sync_engine.sync_calendars()
-        
-        # Add the formatted last sync time to the result
-        if result.get('success'):
-            result['last_sync_time_display'] = DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())
-        
-        return jsonify(result)
-        
+        return jsonify({
+            "in_progress": sync_engine.sync_in_progress,
+            "phase": sync_engine.sync_state.get('phase', 'idle'),
+            "progress": sync_engine.sync_state.get('progress', 0),
+            "total": sync_engine.sync_state.get('total', 0),
+            "percent": sync_engine.get_progress_percent() if hasattr(sync_engine, 'get_progress_percent') else 0,
+            "last_checkpoint": sync_engine.sync_state.get('last_checkpoint'),
+            "last_result": sync_engine.last_sync_result
+        })
     except Exception as e:
-        logger.error(f"Sync trigger error: {e}")
+        logger.error(f"Sync progress error: {e}")
         return jsonify({"error": str(e)}), 500
+
+def _run_sync_background(dry_run=False):
+    """Run sync in background thread"""
+    try:
+        logger.info(f"🔄 Background sync started (dry_run={dry_run})")
+        result = sync_engine.sync_calendars()
+        logger.info(f"✅ Background sync completed: {result.get('message')}")
+    except Exception as e:
+        logger.error(f"❌ Background sync failed: {e}", exc_info=True)
 
 @app.route('/clear-target', methods=['POST'])
 def clear_target():

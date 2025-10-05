@@ -1432,6 +1432,9 @@ class SyncEngine:
         
         total = len(to_add) + len(to_update) + len(to_delete)
         
+        # Update sync state with total operations
+        self.sync_state['total'] = total
+        
         # Count all-day events processed
         all_day_added = sum(1 for event in to_add if event.get('isAllDay', False))
         all_day_updated = sum(1 for source_event, _ in to_update if source_event.get('isAllDay', False))
@@ -1659,6 +1662,14 @@ class SyncEngine:
                 'change_tracker': self.change_tracker.get_cache_stats()
             }
             return status
+    
+    def get_progress_percent(self):
+        """Calculate progress percentage"""
+        total = self.sync_state.get('total', 0)
+        progress = self.sync_state.get('progress', 0)
+        if total == 0:
+            return 0
+        return int((progress / total) * 100)
 
 
 class SyncScheduler:
