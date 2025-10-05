@@ -12,12 +12,15 @@ import schedule
 import json
 import os
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple, Set, Optional
 from threading import Lock
 from collections import defaultdict
 import statistics
 import pytz
+
+def get_utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
 
 import config
 from calendar_ops import CalendarReader, CalendarWriter
@@ -737,6 +740,13 @@ class SyncValidator:
 class SyncEngine:
     """Core engine for calendar synchronization"""
     
+    def generate_weekly_ranges(self, start_date, end_date):
+        """Generate weekly date ranges for chunked syncing"""
+        current = start_date
+        while current < end_date:
+            yield (current, min(current + timedelta(days=7), end_date))
+            current += timedelta(days=7)
+    
     def __init__(self, auth_manager):
         self.auth = auth_manager
         self.reader = CalendarReader(auth_manager)
@@ -823,13 +833,25 @@ class SyncEngine:
             logger.info(f"Source calendar ID: {source_id}")
             logger.info(f"Target calendar ID: {target_id}")
             
-            # Get public events from source
-            source_events = self.reader.get_public_events(source_id, include_instances=False)
+            # Define overall date range for sync
+            start_date = DateTimeUtils.get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
+            end_date = DateTimeUtils.get_central_time() + timedelta(days=config.SYNC_LOOKAHEAD_DAYS)
+            
+            # Fetch events in weekly chunks
+            source_events = []
+            target_events = []
+            
+            for start, end in self.generate_weekly_ranges(start_date, end_date):
+                logger.info(f"[Sync] Querying from {start.isoformat()} to {end.isoformat()}")
+                week_source = self.reader.get_public_events(source_id, start=start, end=end, include_instances=False) or []
+                week_target = self.reader.get_calendar_events(target_id, start=start, end=end) or []
+                
+                source_events.extend(week_source)
+                target_events.extend(week_target)
+            
             if source_events is None:
                 return {"error": "Failed to retrieve source calendar events"}
             
-            # Get all events from target
-            target_events = self.reader.get_calendar_events(target_id)
             if target_events is None:
                 return {"error": "Failed to retrieve target calendar events"}
             
@@ -998,11 +1020,15 @@ class SyncEngine:
     
     def _is_synced_event(self, event: Dict) -> bool:
         """Check if this event was created by our sync system"""
-        # Check for our custom property that marks synced events
-        if 'SingleValueExtendedProperties' in event:
-            for prop in event.get('SingleValueExtendedProperties', []):
-                if prop.get('Value') == 'StEdwardSync':
-                    return True
+        # Check for our sync marker in the body content
+        body_content = event.get('body', {}).get('content', '')
+        if 'SYNC_ID:' in body_content:
+            return True
+        
+        # Also check for legacy markers
+        if 'Auto-synced from' in body_content:
+            return True
+            
         return False
     
     def _create_event_signature(self, event: Dict) -> str:
@@ -1162,22 +1188,16 @@ class SyncEngine:
         if should_add:
             logger.info(f"  First 5 to add: {list(should_add)[:5]}")
         
-        # Create set of existing events in target
-        existing = set()
+        # Build a comprehensive lookup of existing events in target calendar
+        # Use the same signature logic for consistent duplicate detection
+        existing_signatures = set()
         for event in target_events:
-            key = f"{event.get('subject')}_{event.get('start',{}).get('dateTime')}"
-            existing.add(key)
-
-        # Only add if not already there
-        events_to_add = []
-        for event in source_events:
-            key = f"{event.get('subject')}_{event.get('start',{}).get('dateTime')}"
-            if key not in existing:
-                events_to_add.append(event)
+            sig = self._create_event_signature(event)
+            existing_signatures.add(sig)
         
-        logger.info(f"🔍 Duplicate detection: Found {len(existing)} existing events, {len(events_to_add)} events to add (removed {len(source_events) - len(events_to_add)} duplicates)")
+        logger.info(f"🔍 Duplicate detection: Found {len(existing_signatures)} existing event signatures in target calendar")
         
-        for source_event in events_to_add:
+        for source_event in source_events:
             signature = self._create_event_signature(source_event)
             subject = source_event.get('subject', 'No subject')
             
@@ -1190,18 +1210,22 @@ class SyncEngine:
             if is_all_day:
                 logger.debug(f"📅 Processing all-day event: {subject}")
             
-            if signature in remaining_targets:
-                # Event exists - check if update needed
-                target_event = remaining_targets[signature]
-                
-                if self._needs_update(source_event, target_event):
-                    logger.debug(f"📝 UPDATE needed: {subject} (All-day: {is_all_day})")
-                    to_update.append((source_event, target_event))
+            # Check if this event already exists in target calendar (any event, not just synced ones)
+            if signature in existing_signatures:
+                logger.debug(f"🔄 Event already exists in target: {subject} (All-day: {is_all_day})")
+                # Check if it's a synced event that needs updating
+                if signature in remaining_targets:
+                    target_event = remaining_targets[signature]
+                    if self._needs_update(source_event, target_event):
+                        logger.debug(f"📝 UPDATE needed: {subject} (All-day: {is_all_day})")
+                        to_update.append((source_event, target_event))
+                    else:
+                        logger.debug(f"✅ No change needed: {subject} (All-day: {is_all_day})")
+                    # Remove from remaining targets
+                    del remaining_targets[signature]
                 else:
-                    logger.debug(f"✅ No change needed: {subject} (All-day: {is_all_day})")
-                
-                # Remove from remaining targets
-                del remaining_targets[signature]
+                    # Event exists but wasn't synced by us - skip it
+                    logger.debug(f"⏭️ Skipping existing non-synced event: {subject}")
             else:
                 # Event doesn't exist - add it
                 logger.debug(f"➕ ADD needed: {subject} (All-day: {is_all_day}) (signature: {signature})")
@@ -1438,6 +1462,8 @@ class SyncEngine:
             # ISO format strings expected by Graph
             start_str = window_start.isoformat()
             end_str = window_end.isoformat()
+            
+            logger.info(f"[Sync] Querying cancelled occurrences from {start_str} to {end_str}")
 
             # Fetch expanded instances (occurrences) within the window
             source_instances = self.reader.get_calendar_instances(source_id, start_str, end_str) or []
@@ -1524,6 +1550,8 @@ class SyncEngine:
             # ISO format strings expected by Graph
             start_str = window_start.isoformat()
             end_str = window_end.isoformat()
+            
+            logger.info(f"[Sync] Querying modified occurrences from {start_str} to {end_str}")
 
             # Fetch expanded instances (occurrences) within the window
             source_instances = self.reader.get_calendar_instances(source_id, start_str, end_str) or []

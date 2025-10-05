@@ -17,6 +17,9 @@ from utils import RetryUtils, DateTimeUtils
 
 logger = logging.getLogger(__name__)
 
+def get_utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
 
 def is_all_day_event(event):
     """
@@ -193,31 +196,34 @@ class CalendarReader:
         return None
     
     @RetryUtils.retry_with_backoff(max_retries=3, base_delay=1)
-    def get_calendar_events(self, calendar_id: str, select_fields: List[str] = None) -> Optional[List[Dict]]:
+    def get_calendar_events(self, calendar_id: str, select_fields: List[str] = None, start: datetime = None, end: datetime = None) -> Optional[List[Dict]]:
         """Get all calendar events with proper pagination"""
         try:
             headers = self.auth.get_headers()
             if not headers:
                 return None
             
-            # Calculate date range - MUST stay within 730 day limit
-            from datetime import datetime, timedelta
-            import pytz
-            
-            central_tz = pytz.timezone('America/Chicago')
-            now_central = DateTimeUtils.get_central_time()
-            
-            # Microsoft Graph limit is 1825 days total, but we'll use 730 days (2 years)
-            # Let's do 1 year back, 1 year forward = 365 + 365 = 730 days
-            start_date = now_central - timedelta(days=365)  # 1 year back
-            end_date = now_central + timedelta(days=365)    # 1 year forward
+            # Use provided date range or calculate default range
+            if start and end:
+                # Use provided date range
+                start_date = start
+                end_date = end
+            else:
+                # Calculate date range - MUST stay within 730 day limit
+                central_tz = pytz.timezone('America/Chicago')
+                now_central = DateTimeUtils.get_central_time()
+                
+                # Microsoft Graph limit is 1825 days total, but we'll use 730 days (2 years)
+                # Let's do 1 year back, 1 year forward = 365 + 365 = 730 days
+                start_date = now_central - timedelta(days=365)  # 1 year back
+                end_date = now_central + timedelta(days=365)    # 1 year forward
             
             # Convert to UTC for API call
             start_utc = start_date.astimezone(pytz.UTC)
             end_utc = end_date.astimezone(pytz.UTC)
             
-            start_time = start_utc.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-            end_time = end_utc.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            start_time = start_utc.isoformat()
+            end_time = end_utc.isoformat()
             
             # Calculate actual day span for logging
             day_span = (end_utc - start_utc).days
@@ -228,7 +234,7 @@ class CalendarReader:
                 # Adjust to stay within limit
                 end_date = start_date + timedelta(days=730)
                 end_utc = end_date.astimezone(pytz.UTC)
-                end_time = end_utc.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+                end_time = end_utc.isoformat()
                 logger.info(f"📅 Adjusted end date to stay within limit: {end_time[:10]}")
             
             # Use calendarView to expand recurring events
@@ -244,6 +250,7 @@ class CalendarReader:
             all_events = []
             request_count = 0
             
+            logger.info(f"[Sync] Querying from {start_time} to {end_time}")
             logger.info(f"📅 Fetching calendar events (within 730-day limit)")
             
             while endpoint:
@@ -295,7 +302,7 @@ class CalendarReader:
                         sample_dates[date] = sample_dates.get(date, 0) + 1
                 
                 # Show October specifically
-                current_year = datetime.now().year
+                current_year = datetime.fromisoformat(get_utc_now_iso()).year
                 october_count = sum(count for date, count in sample_dates.items() if date.startswith(f'{current_year}-10'))
                 logger.info(f"📊 October {current_year} events fetched: {october_count}")
             
@@ -335,6 +342,8 @@ class CalendarReader:
         }
         
         all_instances = []
+        
+        logger.info(f"[Sync] Querying instances from {start_date} to {end_date}")
         
         try:
             response = requests.get(url, headers=headers, params=params, timeout=30)
@@ -392,10 +401,10 @@ class CalendarReader:
             logger.error(f"Error getting instances: {e}")
             raise
     
-    def get_public_events(self, calendar_id: str, include_instances: bool = False) -> Optional[List[Dict]]:
+    def get_public_events(self, calendar_id: str, include_instances: bool = False, start: datetime = None, end: datetime = None) -> Optional[List[Dict]]:
         """Get only public events from a calendar"""
         # Get all events including expanded recurring occurrences
-        all_events = self.get_calendar_events(calendar_id)
+        all_events = self.get_calendar_events(calendar_id, start=start, end=end)
         
         if not all_events:
             return None
@@ -459,7 +468,7 @@ class CalendarReader:
                     logger.info(f"✅ Including orphaned occurrence: {occ.get('subject')} on {occ.get('start', {}).get('dateTime', '')[:10]}")
         
         # DIAGNOSTIC: Log occurrences in problem date range
-        current_year = datetime.now().year
+        current_year = datetime.fromisoformat(get_utc_now_iso()).year
         problem_start = f"{current_year}-09-21"
         problem_end = f"{current_year}-11-22"
         
@@ -626,7 +635,7 @@ class CalendarReader:
         event_date_str = event.get('start', {}).get('dateTime', '')[:10]
         
         # Check if this is in our problem range
-        current_year = datetime.now().year
+        current_year = datetime.fromisoformat(get_utc_now_iso()).year
         problem_start = f"{current_year}-09-21"
         problem_end = f"{current_year}-11-22"
         
