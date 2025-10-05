@@ -187,27 +187,69 @@ class DuplicateCleanup:
         logger.info(f"🔍 Processing duplicate group: {signature}")
         logger.info(f"   Found {len(events)} duplicate events")
         
-        # Sort events by creation date (oldest first)
+        # Sort events by creation date (oldest first), with fallback methods
         events_with_creation = []
+        events_without_creation = []
+        
         for event in events:
             created = event.get('createdDateTime', '')
-            if not created:
-                logger.warning(f"   ⚠️ Event '{event.get('subject', 'Unknown')}' has no creation date - skipping")
-                continue
-            events_with_creation.append((created, event))
+            if created:
+                events_with_creation.append((created, event))
+            else:
+                events_without_creation.append(event)
         
-        if not events_with_creation:
-            logger.warning(f"   ⚠️ No events with creation dates in group - skipping")
+        # If we have events with creation dates, use those
+        if events_with_creation:
+            # Sort by creation date (oldest first)
+            events_with_creation.sort(key=lambda x: x[0])
+            events_to_process = events_with_creation
+            logger.info(f"   📅 Using creation dates to determine oldest event")
+        elif events_without_creation:
+            # Fallback: use lastModifiedDateTime if available
+            events_with_modification = []
+            for event in events_without_creation:
+                modified = event.get('lastModifiedDateTime', '')
+                if modified:
+                    events_with_modification.append((modified, event))
+            
+            if events_with_modification:
+                # Sort by modification date (oldest first)
+                events_with_modification.sort(key=lambda x: x[0])
+                events_to_process = events_with_modification
+                logger.info(f"   📝 Using modification dates to determine oldest event")
+            else:
+                # Final fallback: use event ID (assuming shorter IDs are older)
+                events_with_id = []
+                for event in events_without_creation:
+                    event_id = event.get('id', '')
+                    if event_id:
+                        events_with_id.append((len(event_id), event_id, event))  # Sort by ID length
+                
+                if events_with_id:
+                    events_with_id.sort(key=lambda x: x[0])  # Sort by ID length (shorter = older)
+                    events_to_process = [(event_id, event) for _, event_id, event in events_with_id]
+                    logger.info(f"   🆔 Using event ID length to determine oldest event")
+                else:
+                    logger.warning(f"   ⚠️ No events with usable dates or IDs in group - skipping")
+                    return {"to_delete_count": 0, "kept_count": 0, "error_count": 0, "deleted_events": [], "kept_events": []}
+        else:
+            logger.warning(f"   ⚠️ No events to process in group - skipping")
             return {"to_delete_count": 0, "kept_count": 0, "error_count": 0, "deleted_events": [], "kept_events": []}
         
-        # Sort by creation date (oldest first)
-        events_with_creation.sort(key=lambda x: x[0])
-        
         # Keep the oldest event, delete the rest
-        oldest_event = events_with_creation[0][1]
-        events_to_delete = [event for _, event in events_with_creation[1:]]
+        oldest_event = events_to_process[0][1]
+        events_to_delete = [event for _, event in events_to_process[1:]]
         
-        logger.info(f"   ✅ Keeping oldest event: '{oldest_event.get('subject', 'Unknown')}' (created: {oldest_event.get('createdDateTime', 'Unknown')})")
+        # Determine which date field was used for sorting
+        date_used = "created"
+        if oldest_event.get('createdDateTime'):
+            date_used = "created"
+        elif oldest_event.get('lastModifiedDateTime'):
+            date_used = "modified"
+        else:
+            date_used = "ID length"
+        
+        logger.info(f"   ✅ Keeping oldest event: '{oldest_event.get('subject', 'Unknown')}' (using {date_used} date: {oldest_event.get('createdDateTime', oldest_event.get('lastModifiedDateTime', 'N/A'))})")
         
         result = {
             "to_delete_count": len(events_to_delete),
