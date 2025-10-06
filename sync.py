@@ -1037,6 +1037,8 @@ class SyncEngine:
         """Create unique signature for an event"""
         subject = self._normalize_subject(event.get('subject', ''))
         event_type = event.get('type', 'singleInstance')
+        location = event.get('location', {}).get('displayName', '')
+        location_normalized = location.lower().replace(' ', '') if location else ''
         
         # DIAGNOSTIC: Log signature inputs for common events
         original_subject = event.get('subject', 'No Subject')
@@ -1044,6 +1046,7 @@ class SyncEngine:
             logger.debug(f"  Signature inputs for '{original_subject}':")
             logger.debug(f"    Subject: {subject}")
             logger.debug(f"    Type: {event_type}")
+            logger.debug(f"    Location: {location}")
             logger.debug(f"    Start: {event.get('start')}")
             logger.debug(f"    End: {event.get('end')}")
         
@@ -1069,7 +1072,7 @@ class SyncEngine:
             pattern_str = json.dumps(pattern_data, sort_keys=True)
             pattern_hash = hashlib.md5(pattern_str.encode()).hexdigest()[:8]
             
-            signature = f"recurring:{subject}:{pattern_hash}:{start_normalized}"
+            signature = f"recurring:{subject}:{pattern_hash}:{start_normalized}:{location_normalized}"
             logger.debug(f"Recurring signature: {signature}")
             return signature
         
@@ -1078,12 +1081,12 @@ class SyncEngine:
             series_master_id = event.get('seriesMasterId', '')
             if series_master_id:
                 # Include the seriesMasterId in the signature to make it unique
-                signature = f"occurrence:{subject}:{series_master_id}:{start_normalized}"
+                signature = f"occurrence:{subject}:{series_master_id}:{start_normalized}:{location_normalized}"
                 logger.debug(f"Occurrence signature: {signature}")
                 return signature
             else:
                 # Fallback for occurrences without seriesMasterId
-                signature = f"occurrence:{subject}:{start_normalized}"
+                signature = f"occurrence:{subject}:{start_normalized}:{location_normalized}"
                 logger.debug(f"Occurrence signature (no master): {signature}")
                 return signature
         
@@ -1091,9 +1094,9 @@ class SyncEngine:
         if 'T' in start_normalized:
             date_part = start_normalized.split('T')[0]
             time_part = start_normalized.split('T')[1] if 'T' in start_normalized else '00:00'
-            signature = f"single:{subject}:{date_part}:{time_part}"
+            signature = f"single:{subject}:{date_part}:{time_part}:{location_normalized}"
         else:
-            signature = f"single:{subject}:{start_normalized}"
+            signature = f"single:{subject}:{start_normalized}:{location_normalized}"
         
         logger.debug(f"Single event signature: {signature}")
         return signature
