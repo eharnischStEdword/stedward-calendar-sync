@@ -1111,7 +1111,7 @@ class SyncEngine:
 
             # Process all events now (including occurrences)
             if signature in event_map:
-                # Keep the older event based on creation time; mark the other as duplicate
+                # Keep the newer event based on creation time; mark the other as duplicate
                 existing = event_map[signature]
                 existing_created = existing.get('createdDateTime', '')
                 new_created = event.get('createdDateTime', '')

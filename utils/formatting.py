@@ -48,6 +48,10 @@ def is_omitted_from_bulletin(subject: str, starts_at_utc: datetime, location: st
     hhmm = local.strftime("%H:%M")
     title = (subject or "").strip()
 
+    # Catch ALL "Adoration & Confession" events regardless of time/location
+    if title == "Adoration & Confession":
+        return True
+
     # Helper for quick checks
     def has(loc_expected: str | None = None) -> bool:
         if not loc_expected:
