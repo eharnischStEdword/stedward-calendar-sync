@@ -685,13 +685,15 @@ class SyncValidator:
         subject = event.get('subject', '').strip()
         start_time = event.get('start', {}).get('dateTime', '')
         end_time = event.get('end', {}).get('dateTime', '')
+        location = event.get('location', {}).get('displayName', '')
         
         # Normalize
         subject = subject.lower().replace(' ', '')
         start_time = start_time.split('T')[0] if start_time else ''
         end_time = end_time.split('T')[0] if end_time else ''
+        location = location.lower().replace(' ', '')
         
-        return f"{subject}|{start_time}|{end_time}"
+        return f"{subject}|{start_time}|{end_time}|{location}"
     
     def validate_sync_operation(
         self,
