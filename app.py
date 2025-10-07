@@ -3499,6 +3499,19 @@ def investigate_deletions():
             end=end_date
         )
         
+        # Check for None responses
+        if source_events is None:
+            return jsonify({
+                'error': 'Failed to fetch source events',
+                'details': 'Authentication or API error'
+            }), 500
+
+        if target_events is None:
+            return jsonify({
+                'error': 'Failed to fetch target events',
+                'details': 'Authentication or API error'
+            }), 500
+        
         # Build signature map
         source_signatures = set()
         for event in source_events:
