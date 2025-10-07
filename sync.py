@@ -801,6 +801,139 @@ class SyncEngine:
         # Change tracking for efficient syncing
         self.change_tracker = ChangeTracker()
     
+    def preview_sync(self):
+        """
+        Analyze what would be synced without making changes.
+        Returns dict with events to add/update/delete.
+        """
+        try:
+            # Get calendar IDs
+            source_id = self.reader.find_calendar_id(config.SOURCE_CALENDAR)
+            target_id = self.reader.find_calendar_id(config.TARGET_CALENDAR)
+            
+            if not source_id or not target_id:
+                raise Exception("Required calendars not found")
+            
+            # Safety check
+            if source_id == target_id:
+                raise Exception("SAFETY ABORT: Source and target calendars are identical")
+            
+            logger.info(f"Preview: Source calendar ID: {source_id}")
+            logger.info(f"Preview: Target calendar ID: {target_id}")
+            
+            # Define overall date range for sync
+            start_date = DateTimeUtils.get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
+            end_date = DateTimeUtils.get_central_time() + timedelta(days=config.SYNC_LOOKAHEAD_DAYS)
+            
+            # Fetch events in weekly chunks
+            source_events = []
+            target_events = []
+            
+            for start, end in self.generate_weekly_ranges(start_date, end_date):
+                logger.info(f"[Preview] Querying from {start.isoformat()} to {end.isoformat()}")
+                week_source = self.reader.get_public_events(source_id, start=start, end=end, include_instances=False) or []
+                week_target = self.reader.get_calendar_events(target_id, start=start, end=end) or []
+                
+                source_events.extend(week_source)
+                target_events.extend(week_target)
+            
+            if source_events is None:
+                raise Exception("Failed to retrieve source calendar events")
+            
+            if target_events is None:
+                raise Exception("Failed to retrieve target calendar events")
+            
+            logger.info(f"📊 Preview: Retrieved {len(source_events)} source events and {len(target_events)} target events")
+            
+            # Build target map for quick lookup and collect duplicate targets to delete
+            target_map, duplicate_targets = self._build_event_map(target_events)
+            
+            # Determine operations needed
+            to_add, to_update, to_delete = self._determine_sync_operations(
+                source_events, target_events, target_map, check_instances=False
+            )
+
+            # Safely append duplicates detected in target to deletion list
+            if duplicate_targets:
+                logger.info(f"🧹 Preview: Found {len(duplicate_targets)} duplicate target events to clean up")
+                # Ensure we only add events that still exist and have an id
+                to_delete.extend([e for e in duplicate_targets if e.get('id')])
+            
+            logger.info(f"📋 PREVIEW: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
+            
+            # Format events for preview display
+            formatted_to_add = []
+            for event in to_add:
+                formatted_to_add.append({
+                    'subject': event.get('subject', 'No Subject'),
+                    'start': event.get('start', {}),
+                    'location': event.get('location', {}),
+                    'type': event.get('type', 'singleInstance'),
+                    'signature': self._create_event_signature(event)
+                })
+            
+            formatted_to_update = []
+            for source_event, target_event in to_update:
+                formatted_to_update.append({
+                    'subject': source_event.get('subject', 'No Subject'),
+                    'start': source_event.get('start', {}),
+                    'location': source_event.get('location', {}),
+                    'signature': self._create_event_signature(source_event),
+                    'changes': self._get_change_summary(source_event, target_event)
+                })
+            
+            formatted_to_delete = []
+            for event in to_delete:
+                formatted_to_delete.append({
+                    'subject': event.get('subject', 'No Subject'),
+                    'start': event.get('start', {}),
+                    'signature': self._create_event_signature(event)
+                })
+            
+            return {
+                'to_add': formatted_to_add,
+                'to_update': formatted_to_update,
+                'to_delete': formatted_to_delete
+            }
+            
+        except Exception as e:
+            logger.error(f"Preview sync failed: {e}")
+            raise
+
+    def _get_change_summary(self, source_event: Dict, target_event: Dict) -> List[str]:
+        """Get a summary of what changed between source and target events"""
+        changes = []
+        
+        # Compare subjects
+        if source_event.get('subject') != target_event.get('subject'):
+            changes.append(f"Subject: '{target_event.get('subject')}' → '{source_event.get('subject')}'")
+        
+        # Compare start times
+        source_start = source_event.get('start', {})
+        target_start = target_event.get('start', {})
+        if source_start != target_start:
+            changes.append("Start time changed")
+        
+        # Compare end times
+        source_end = source_event.get('end', {})
+        target_end = target_event.get('end', {})
+        if source_end != target_end:
+            changes.append("End time changed")
+        
+        # Compare locations
+        source_location = source_event.get('location', {})
+        target_location = target_event.get('location', {})
+        if source_location != target_location:
+            changes.append("Location changed")
+        
+        # Compare categories
+        source_categories = set(source_event.get('categories', []))
+        target_categories = set(target_event.get('categories', []))
+        if source_categories != target_categories:
+            changes.append("Categories changed")
+        
+        return changes if changes else ["Minor updates"]
+
     def sync_calendars(self) -> Dict:
         """Main sync function with circuit breaker protection"""
         try:
@@ -1231,7 +1364,8 @@ class SyncEngine:
         logger.info("="*60)
         
         # ONE-TIME CLEANUP: Remove duplicate "Room in the Inn" events
-        self._cleanup_room_in_inn_duplicates(target_id, target_events)
+        # Note: target_id is not available in this scope, skip cleanup during preview
+        # self._cleanup_room_in_inn_duplicates(target_id, target_events)
         
         matching_sigs = source_signatures & synced_target_signatures
         logger.info(f"  Matching signatures found: {len(matching_sigs)}")

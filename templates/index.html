@@ -304,6 +304,83 @@
 
 
 
+        /* Preview Interface Styles */
+        .preview-summary {
+            display: flex;
+            gap: 1rem;
+            margin: 1rem 0;
+            justify-content: center;
+        }
+
+        .stat-box {
+            background: #f5f5f5;
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+            min-width: 120px;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #2196F3;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 0.5rem;
+        }
+
+        #preview-results {
+            background: white;
+            border: 2px solid #2196F3;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+        }
+
+        #preview-results h4 {
+            margin-top: 1rem;
+            color: #333;
+        }
+
+        #preview-results ul {
+            max-height: 300px;
+            overflow-y: auto;
+            background: #f9f9f9;
+            padding: 1rem;
+            border-radius: 4px;
+        }
+
+        #preview-results li {
+            padding: 0.5rem;
+            border-bottom: 1px solid #eee;
+        }
+
+        .preview-actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            justify-content: center;
+        }
+
+        .btn-success {
+            background: #4CAF50 !important;
+        }
+
+        .btn-success:hover {
+            background: #45a049 !important;
+        }
+
+        .btn-secondary {
+            background: #6c757d !important;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268 !important;
+        }
+
         @media (max-width: 768px) {
             .status-bar {
                 flex-direction: column;
@@ -312,6 +389,15 @@
             
             .actions-section {
                 grid-template-columns: 1fr;
+            }
+
+            .preview-summary {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .preview-actions {
+                flex-direction: column;
             }
         }
     </style>
@@ -359,8 +445,57 @@
                 <!-- Messages area -->
                 <div class="messages-area" id="messages-area"></div>
 
+                <!-- Preview results section -->
+                <div id="preview-results" style="display: none;">
+                    <h3>📋 Sync Preview</h3>
+                    
+                    <div class="preview-summary">
+                        <div class="stat-box">
+                            <div class="stat-number" id="add-count">0</div>
+                            <div class="stat-label">To Add</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-number" id="update-count">0</div>
+                            <div class="stat-label">To Update</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-number" id="delete-count">0</div>
+                            <div class="stat-label">To Delete</div>
+                        </div>
+                    </div>
+                    
+                    <div id="events-to-add" style="display: none;">
+                        <h4>Events to Add:</h4>
+                        <ul id="add-list"></ul>
+                    </div>
+                    
+                    <div id="events-to-update" style="display: none;">
+                        <h4>Events to Update:</h4>
+                        <ul id="update-list"></ul>
+                    </div>
+                    
+                    <div id="events-to-delete" style="display: none;">
+                        <h4>Events to Delete:</h4>
+                        <ul id="delete-list"></ul>
+                    </div>
+                    
+                    <div class="preview-actions">
+                        <button class="action-btn btn-success" onclick="executeSync()" id="execute-btn">
+                            ✅ Approve & Execute
+                        </button>
+                        <button class="action-btn btn-secondary" onclick="cancelPreview()">
+                            ❌ Cancel
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Action buttons -->
                 <div class="actions-section">
+                    <button class="action-btn" onclick="previewSync()" id="preview-btn">
+                        <span>🔍</span>
+                        <span>Preview Changes</span>
+                    </button>
+                    
                     <button class="action-btn" onclick="syncNow()" id="sync-btn">
                         <span id="sync-icon">🔄</span>
                         <span id="sync-label">Sync Now</span>
@@ -615,6 +750,109 @@
             if (scheduledCountElement && status.scheduled_sync_count !== undefined) {
                 scheduledCountElement.textContent = status.scheduled_sync_count;
             }
+        }
+
+        async function previewSync() {
+            const previewBtn = document.getElementById('preview-btn');
+            const resultsDiv = document.getElementById('preview-results');
+            
+            // Disable button and show loading
+            previewBtn.disabled = true;
+            previewBtn.innerHTML = '<span>⏳</span><span>Analyzing...</span>';
+            
+            try {
+                const response = await fetch('/sync/preview', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    credentials: 'same-origin'
+                });
+                
+                const data = await response.json();
+                
+                if (!data.success) {
+                    showMessage('Error: ' + (data.error || 'Preview failed'), 'error');
+                    return;
+                }
+                
+                // Display preview results
+                displayPreview(data.preview);
+                
+            } catch (error) {
+                showMessage('Error: ' + error.message, 'error');
+            } finally {
+                previewBtn.disabled = false;
+                previewBtn.innerHTML = '<span>🔍</span><span>Preview Changes</span>';
+            }
+        }
+
+        function displayPreview(preview) {
+            const resultsDiv = document.getElementById('preview-results');
+            
+            // Update counts
+            document.getElementById('add-count').textContent = preview.add_count;
+            document.getElementById('update-count').textContent = preview.update_count;
+            document.getElementById('delete-count').textContent = preview.delete_count;
+            
+            // Show warning if changes > 50
+            if (preview.total_changes > 50) {
+                showMessage(`⚠️ Large sync detected: ${preview.total_changes} changes planned. Review carefully before executing.`, 'warning');
+            }
+            
+            // Show events to add
+            if (preview.add_count > 0) {
+                const addList = document.getElementById('add-list');
+                addList.innerHTML = preview.events_to_add.map(event => 
+                    `<li><strong>${event.subject}</strong> - ${formatDate(event.start)}${event.location ? ` (${event.location.displayName || event.location})` : ''}</li>`
+                ).join('');
+                document.getElementById('events-to-add').style.display = 'block';
+            }
+            
+            // Show events to update
+            if (preview.update_count > 0) {
+                const updateList = document.getElementById('update-list');
+                updateList.innerHTML = preview.events_to_update.map(event => 
+                    `<li><strong>${event.subject}</strong> - ${formatDate(event.start)}<br><small style="color: #666;">Changes: ${event.changes.join(', ')}</small></li>`
+                ).join('');
+                document.getElementById('events-to-update').style.display = 'block';
+            }
+            
+            // Show events to delete
+            if (preview.delete_count > 0) {
+                const deleteList = document.getElementById('delete-list');
+                deleteList.innerHTML = preview.events_to_delete.map(event => 
+                    `<li><strong>${event.subject}</strong> - ${formatDate(event.start)}</li>`
+                ).join('');
+                document.getElementById('events-to-delete').style.display = 'block';
+            }
+            
+            // Show results section
+            resultsDiv.style.display = 'block';
+            resultsDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function formatDate(dateObj) {
+            if (!dateObj || !dateObj.dateTime) return 'Unknown';
+            const date = new Date(dateObj.dateTime);
+            return date.toLocaleString();
+        }
+
+        async function executeSync() {
+            const executeBtn = document.getElementById('execute-btn');
+            executeBtn.disabled = true;
+            executeBtn.textContent = '⏳ Executing...';
+            
+            // Call existing sync function
+            await syncNow();
+            
+            // Hide preview
+            cancelPreview();
+        }
+
+        function cancelPreview() {
+            document.getElementById('preview-results').style.display = 'none';
+            document.getElementById('events-to-add').style.display = 'none';
+            document.getElementById('events-to-update').style.display = 'none';
+            document.getElementById('events-to-delete').style.display = 'none';
         }
 
         async function syncNow() {

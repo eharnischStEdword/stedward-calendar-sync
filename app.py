@@ -423,6 +423,40 @@ def trigger_sync():
         "check_progress": "/sync/progress"
     }), 202  # 202 Accepted
 
+@app.route('/sync/preview', methods=['POST'])
+def preview_sync():
+    """
+    Analyze what would be synced without executing.
+    Returns detailed report of adds/updates/deletes.
+    """
+    if not auth_manager or not auth_manager.is_authenticated():
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    if not sync_engine:
+        return jsonify({"error": "Sync engine not initialized"}), 500
+    
+    try:
+        # Run sync in dry-run mode to get preview
+        preview_result = sync_engine.preview_sync()
+        
+        return jsonify({
+            "success": True,
+            "preview": {
+                "events_to_add": preview_result.get('to_add', []),
+                "events_to_update": preview_result.get('to_update', []),
+                "events_to_delete": preview_result.get('to_delete', []),
+                "add_count": len(preview_result.get('to_add', [])),
+                "update_count": len(preview_result.get('to_update', [])),
+                "delete_count": len(preview_result.get('to_delete', [])),
+                "total_changes": len(preview_result.get('to_add', [])) + 
+                                len(preview_result.get('to_update', [])) + 
+                                len(preview_result.get('to_delete', []))
+            }
+        })
+    except Exception as e:
+        logger.error(f"Preview sync failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/sync/progress')
 def sync_progress():
     """Get current sync progress"""
