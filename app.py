@@ -3466,6 +3466,102 @@ def event_search():
         logger.error(f"Event search error: {e}")
         return f"Error: {str(e)}", 500
 
+@app.route('/api/investigate', methods=['POST'])
+@require_auth
+def investigate_deletions():
+    """Investigation endpoint to see what would be deleted"""
+    try:
+        from calendar_ops import CalendarReader
+        from signature_utils import generate_event_signature
+        from datetime import datetime, timedelta
+        from collections import defaultdict
+        from auth import MicrosoftAuth
+        
+        auth_manager = MicrosoftAuth()
+        reader = CalendarReader(auth_manager)
+        
+        source_id = reader.find_calendar_id(config.SOURCE_CALENDAR)
+        target_id = reader.find_calendar_id(config.TARGET_CALENDAR)
+        
+        start_date = datetime.now() - timedelta(days=config.SYNC_CUTOFF_DAYS)
+        end_date = datetime.now() + timedelta(days=config.SYNC_LOOKAHEAD_DAYS)
+        
+        source_events = reader.get_public_events(
+            source_id,
+            start=start_date,
+            end=end_date,
+            include_instances=False
+        )
+        
+        target_events = reader.get_calendar_events(
+            target_id,
+            start=start_date,
+            end=end_date
+        )
+        
+        # Build signature map
+        source_signatures = set()
+        for event in source_events:
+            sig = generate_event_signature(event)
+            source_signatures.add(sig)
+        
+        target_by_signature = defaultdict(list)
+        for event in target_events:
+            sig = generate_event_signature(event)
+            target_by_signature[sig].append(event)
+        
+        # Find deletions
+        to_delete = []
+        for sig, events in target_by_signature.items():
+            if sig not in source_signatures:
+                to_delete.extend(events)
+        
+        # Format for display
+        deletion_list = []
+        for event in to_delete:
+            deletion_list.append({
+                'subject': event.get('subject', 'No Subject'),
+                'start': event.get('start', {}).get('dateTime', 'No Start'),
+                'location': event.get('location', {}).get('displayName', 'No Location'),
+                'categories': event.get('categories', []),
+                'showAs': event.get('showAs', 'unknown'),
+                'id': event.get('id', 'No ID')
+            })
+        
+        # Find duplicates
+        duplicate_groups = []
+        for sig, events in target_by_signature.items():
+            if len(events) > 1:
+                duplicate_groups.append({
+                    'signature': sig,
+                    'subject': events[0].get('subject', 'No Subject'),
+                    'count': len(events),
+                    'events': [{
+                        'id': e.get('id'),
+                        'created': e.get('createdDateTime')
+                    } for e in events]
+                })
+        
+        return jsonify({
+            'success': True,
+            'date_range': {
+                'start': start_date.isoformat(),
+                'end': end_date.isoformat()
+            },
+            'counts': {
+                'source_events': len(source_events),
+                'target_events': len(target_events),
+                'to_delete': len(to_delete),
+                'duplicate_groups': len(duplicate_groups)
+            },
+            'to_delete': deletion_list,
+            'duplicates': duplicate_groups
+        })
+        
+    except Exception as e:
+        logger.error(f"Investigation failed: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
 class GracefulShutdownHandler:
     def __init__(self):
         self.shutdown_requested = False
