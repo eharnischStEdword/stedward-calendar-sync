@@ -1112,6 +1112,41 @@ class SyncEngine:
                 source_signatures.add(sig)
         
         synced_target_signatures = set(synced_target_map.keys())
+        
+        # DEBUG: Add detailed signature comparison logging
+        logger.info("="*60)
+        logger.info("SIGNATURE COMPARISON DEBUG")
+        logger.info("="*60)
+        
+        # Log first 10 source signatures
+        logger.info("\nSource calendar signatures (first 10):")
+        source_sample = []
+        for i, event in enumerate(source_events[:10]):
+            sig = self._create_event_signature(event)
+            source_sample.append(sig)
+            logger.info(f"  {i+1}. {sig}")
+            logger.info(f"      Event: {event.get('subject')}")
+            logger.info(f"      Type: {event.get('type')}")
+            logger.info(f"      Start: {event.get('start')}")
+        
+        # Log first 10 target signatures
+        logger.info("\nTarget calendar signatures (first 10):")
+        target_sample = []
+        for i, (sig, event) in enumerate(list(synced_target_map.items())[:10]):
+            target_sample.append(sig)
+            logger.info(f"  {i+1}. {sig}")
+            logger.info(f"      Event: {event.get('subject')}")
+            logger.info(f"      Type: {event.get('type')}")
+            logger.info(f"      Start: {event.get('start')}")
+        
+        # Check if ANY match
+        matches = set(source_sample) & set(target_sample)
+        logger.info(f"\nMatches in sample: {len(matches)}")
+        if matches:
+            logger.info(f"Sample matches: {matches}")
+        
+        logger.info("="*60)
+        
         matching_sigs = source_signatures & synced_target_signatures
         logger.info(f"  Matching signatures found: {len(matching_sigs)}")
         if matching_sigs:

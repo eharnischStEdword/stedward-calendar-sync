@@ -35,12 +35,22 @@ def generate_event_signature(event: Dict) -> str:
     """
     subject = normalize_subject(event.get('subject', ''))
     event_type = event.get('type', 'singleInstance')
-    location = event.get('location', {}).get('displayName', '')
-    location_normalized = location.lower().replace(' ', '') if location else ''
     
-    # Get normalized start time
-    start_raw = event.get('start', {}).get('dateTime', '')
-    start_normalized = normalize_datetime(start_raw)
+    # Handle location - can be dict with displayName or string
+    location_raw = event.get('location', {})
+    if isinstance(location_raw, dict):
+        location = location_raw.get('displayName', '')
+    else:
+        location = location_raw or ''
+    location_normalized = normalize_location(location)
+    
+    # Get normalized start time - handle both dict and string formats
+    start_raw = event.get('start', {})
+    if isinstance(start_raw, dict):
+        start_datetime = start_raw.get('dateTime', '')
+    else:
+        start_datetime = start_raw or ''
+    start_normalized = normalize_datetime(start_datetime)
     
     # For recurring events
     if event_type == 'seriesMaster':
@@ -122,7 +132,16 @@ def normalize_datetime(dt_str: str) -> str:
     if not dt_str:
         return ""
     try:
-        # Remove timezone info and normalize to just date and time
+        # Handle different datetime formats from Microsoft Graph API
+        # Format 1: '2025-07-28T15:30:00.0000000' (with milliseconds)
+        # Format 2: '2025-07-28T15:30:00Z' (with Z suffix)
+        # Format 3: '2025-07-28T15:30:00' (basic format)
+        
+        # Remove milliseconds if present
+        if '.' in dt_str:
+            dt_str = dt_str.split('.')[0]
+        
+        # Remove timezone indicators
         clean_dt = dt_str.replace('Z', '').replace('+00:00', '')
         if '+' in clean_dt:
             clean_dt = clean_dt.split('+')[0]
