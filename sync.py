@@ -25,6 +25,7 @@ def get_utc_now_iso():
 import config
 from calendar_ops import CalendarReader, CalendarWriter
 from utils import DateTimeUtils, CircuitBreaker, CircuitBreakerOpenError, RetryUtils, structured_logger
+from signature_utils import generate_event_signature, normalize_subject, normalize_datetime, normalize_location
 
 logger = logging.getLogger(__name__)
 
@@ -70,56 +71,8 @@ class ChangeTracker:
             logger.error(f"Failed to save event cache: {e}")
     
     def _create_event_signature(self, event: Dict) -> str:
-        """Create a unique signature for an event - MUST MATCH SyncEngine format"""
-        subject = self._normalize_subject(event.get('subject', ''))
-        event_type = event.get('type', 'singleInstance')
-        location = event.get('location', {}).get('displayName', '')
-        location_normalized = location.lower().replace(' ', '') if location else ''
-        
-        # Get normalized start time
-        start_raw = event.get('start', {}).get('dateTime', '')
-        start_normalized = self._normalize_datetime(start_raw)
-        
-        # For recurring events
-        if event_type == 'seriesMaster':
-            recurrence = event.get('recurrence', {})
-            pattern = recurrence.get('pattern', {})
-            
-            # Create a stable hash of the recurrence pattern
-            pattern_data = {
-                'type': pattern.get('type', 'unknown'),
-                'interval': pattern.get('interval', 1),
-                'daysOfWeek': sorted(pattern.get('daysOfWeek', [])),
-                'dayOfMonth': pattern.get('dayOfMonth'),
-                'index': pattern.get('index')
-            }
-            
-            # Create hash of pattern for consistency
-            pattern_str = json.dumps(pattern_data, sort_keys=True)
-            pattern_hash = hashlib.md5(pattern_str.encode()).hexdigest()[:8]
-            
-            signature = f"recurring:{subject}:{pattern_hash}:{start_normalized}:{location_normalized}"
-            return signature
-        
-        elif event_type == 'occurrence':
-            # Include seriesMasterId for occurrences to prevent duplicates
-            series_master_id = event.get('seriesMasterId', '')
-            if series_master_id:
-                signature = f"occurrence:{subject}:{series_master_id}:{start_normalized}:{location_normalized}"
-                return signature
-            else:
-                signature = f"occurrence:{subject}:{start_normalized}:{location_normalized}"
-                return signature
-        
-        # For single events - include time to distinguish events on same day
-        if 'T' in start_normalized:
-            date_part = start_normalized.split('T')[0]
-            time_part = start_normalized.split('T')[1] if 'T' in start_normalized else '00:00'
-            signature = f"single:{subject}:{date_part}:{time_part}:{location_normalized}"
-        else:
-            signature = f"single:{subject}:{start_normalized}:{location_normalized}"
-        
-        return signature
+        """Create a unique signature for an event - Uses shared signature utilities"""
+        return generate_event_signature(event)
     
     def detect_changes(self, current_events: List[Dict]) -> Dict:
         """
@@ -248,37 +201,12 @@ class ChangeTracker:
             return False
     
     def _normalize_subject(self, subject: str) -> str:
-        """Normalize event subject for matching"""
-        if not subject:
-            return ""
-        # More aggressive normalization to handle Microsoft Graph variations
-        normalized = ' '.join(subject.strip().lower().split())
-        # Remove common punctuation that might vary
-        normalized = normalized.replace('.', '').replace(',', '').replace(':', '').replace(';', '')
-        return normalized
+        """Normalize event subject for matching - Uses shared utilities"""
+        return normalize_subject(subject)
     
     def _normalize_datetime(self, dt_str: str) -> str:
-        """Normalize datetime string for matching"""
-        if not dt_str:
-            return ""
-        try:
-            # Remove timezone info and normalize to just date and time
-            clean_dt = dt_str.replace('Z', '').replace('+00:00', '')
-            if '+' in clean_dt:
-                clean_dt = clean_dt.split('+')[0]
-            if '-' in clean_dt and clean_dt.count('-') > 2:  # More than just date separators
-                clean_dt = clean_dt.rsplit('-', 1)[0]
-            
-            # Ensure consistent format
-            if 'T' in clean_dt:
-                date_part, time_part = clean_dt.split('T', 1)
-                # Normalize time to HH:MM format for consistency
-                time_part = time_part[:5]  # Take only HH:MM
-                return f"{date_part}T{time_part}"
-            return clean_dt
-        except Exception as e:
-            logger.warning(f"Failed to normalize datetime '{dt_str}': {e}")
-            return dt_str
+        """Normalize datetime string for matching - Uses shared utilities"""
+        return normalize_datetime(dt_str)
 
 
 class SyncHistory:
@@ -750,19 +678,41 @@ class SyncValidator:
         return "all_day_event_handling", passed, details
     
     def _create_event_signature(self, event: Dict) -> str:
-        """Create a signature for event comparison"""
-        subject = event.get('subject', '').strip()
-        start_time = event.get('start', {}).get('dateTime', '')
-        end_time = event.get('end', {}).get('dateTime', '')
-        location = event.get('location', {}).get('displayName', '')
-        
-        # Normalize
-        subject = subject.lower().replace(' ', '')
-        start_time = start_time.split('T')[0] if start_time else ''
-        end_time = end_time.split('T')[0] if end_time else ''
-        location = location.lower().replace(' ', '')
-        
-        return f"{subject}|{start_time}|{end_time}|{location}"
+        """Create a unique signature for an event - Uses shared signature utilities"""
+        return generate_event_signature(event)
+    
+    def _normalize_subject(self, subject: str) -> str:
+        """Normalize event subject for matching - MUST MATCH ChangeTracker/SyncEngine"""
+        if not subject:
+            return ""
+        # More aggressive normalization to handle Microsoft Graph variations
+        normalized = ' '.join(subject.strip().lower().split())
+        # Remove common punctuation that might vary
+        normalized = normalized.replace('.', '').replace(',', '').replace(':', '').replace(';', '')
+        return normalized
+    
+    def _normalize_datetime(self, dt_str: str) -> str:
+        """Normalize datetime string for matching - MUST MATCH ChangeTracker/SyncEngine"""
+        if not dt_str:
+            return ""
+        try:
+            # Remove timezone info and normalize to just date and time
+            clean_dt = dt_str.replace('Z', '').replace('+00:00', '')
+            if '+' in clean_dt:
+                clean_dt = clean_dt.split('+')[0]
+            if '-' in clean_dt and clean_dt.count('-') > 2:  # More than just date separators
+                clean_dt = clean_dt.rsplit('-', 1)[0]
+            
+            # Ensure consistent format
+            if 'T' in clean_dt:
+                date_part, time_part = clean_dt.split('T', 1)
+                # Normalize time to HH:MM format for consistency
+                time_part = time_part[:5]  # Take only HH:MM
+                return f"{date_part}T{time_part}"
+            return clean_dt
+        except Exception as e:
+            logger.warning(f"Failed to normalize datetime '{dt_str}': {e}")
+            return dt_str
     
     def validate_sync_operation(
         self,
@@ -1057,37 +1007,12 @@ class SyncEngine:
                 self.sync_state['progress'] = 0
     
     def _normalize_subject(self, subject: str) -> str:
-        """Normalize event subject for matching"""
-        if not subject:
-            return ""
-        # More aggressive normalization to handle Microsoft Graph variations
-        normalized = ' '.join(subject.strip().lower().split())
-        # Remove common punctuation that might vary
-        normalized = normalized.replace('.', '').replace(',', '').replace(':', '').replace(';', '')
-        return normalized
+        """Normalize event subject for matching - Uses shared utilities"""
+        return normalize_subject(subject)
     
     def _normalize_datetime(self, dt_str: str) -> str:
-        """Normalize datetime string for matching"""
-        if not dt_str:
-            return ""
-        try:
-            # Remove timezone info and normalize to just date and time
-            clean_dt = dt_str.replace('Z', '').replace('+00:00', '')
-            if '+' in clean_dt:
-                clean_dt = clean_dt.split('+')[0]
-            if '-' in clean_dt and clean_dt.count('-') > 2:  # More than just date separators
-                clean_dt = clean_dt.rsplit('-', 1)[0]
-            
-            # Ensure consistent format
-            if 'T' in clean_dt:
-                date_part, time_part = clean_dt.split('T', 1)
-                # Normalize time to HH:MM format for consistency
-                time_part = time_part[:5]  # Take only HH:MM
-                return f"{date_part}T{time_part}"
-            return clean_dt
-        except Exception as e:
-            logger.warning(f"Failed to normalize datetime '{dt_str}': {e}")
-            return dt_str
+        """Normalize datetime string for matching - Uses shared utilities"""
+        return normalize_datetime(dt_str)
     
     def _is_synced_event(self, event: Dict) -> bool:
         """Check if this event was created by our sync system"""
@@ -1103,72 +1028,8 @@ class SyncEngine:
         return False
     
     def _create_event_signature(self, event: Dict) -> str:
-        """Create unique signature for an event"""
-        subject = self._normalize_subject(event.get('subject', ''))
-        event_type = event.get('type', 'singleInstance')
-        location = event.get('location', {}).get('displayName', '')
-        location_normalized = location.lower().replace(' ', '') if location else ''
-        
-        # DIAGNOSTIC: Log signature inputs for common events
-        original_subject = event.get('subject', 'No Subject')
-        if any(name in original_subject for name in ['Mass', 'Adoration', 'Confession', 'Ladies Auxiliary']):
-            logger.debug(f"  Signature inputs for '{original_subject}':")
-            logger.debug(f"    Subject: {subject}")
-            logger.debug(f"    Type: {event_type}")
-            logger.debug(f"    Location: {location}")
-            logger.debug(f"    Start: {event.get('start')}")
-            logger.debug(f"    End: {event.get('end')}")
-        
-        # Get normalized start time
-        start_raw = event.get('start', {}).get('dateTime', '')
-        start_normalized = self._normalize_datetime(start_raw)
-        
-        # For recurring events
-        if event_type == 'seriesMaster':
-            recurrence = event.get('recurrence', {})
-            pattern = recurrence.get('pattern', {})
-            
-            # Create a stable hash of the recurrence pattern
-            pattern_data = {
-                'type': pattern.get('type', 'unknown'),
-                'interval': pattern.get('interval', 1),
-                'daysOfWeek': sorted(pattern.get('daysOfWeek', [])),
-                'dayOfMonth': pattern.get('dayOfMonth'),
-                'index': pattern.get('index')
-            }
-            
-            # Create hash of pattern for consistency
-            pattern_str = json.dumps(pattern_data, sort_keys=True)
-            pattern_hash = hashlib.md5(pattern_str.encode()).hexdigest()[:8]
-            
-            signature = f"recurring:{subject}:{pattern_hash}:{start_normalized}:{location_normalized}"
-            logger.debug(f"Recurring signature: {signature}")
-            return signature
-        
-        elif event_type == 'occurrence':
-            # NEW: Include seriesMasterId for occurrences to prevent duplicates
-            series_master_id = event.get('seriesMasterId', '')
-            if series_master_id:
-                # Include the seriesMasterId in the signature to make it unique
-                signature = f"occurrence:{subject}:{series_master_id}:{start_normalized}:{location_normalized}"
-                logger.debug(f"Occurrence signature: {signature}")
-                return signature
-            else:
-                # Fallback for occurrences without seriesMasterId
-                signature = f"occurrence:{subject}:{start_normalized}:{location_normalized}"
-                logger.debug(f"Occurrence signature (no master): {signature}")
-                return signature
-        
-        # For single events - include time to distinguish events on same day
-        if 'T' in start_normalized:
-            date_part = start_normalized.split('T')[0]
-            time_part = start_normalized.split('T')[1] if 'T' in start_normalized else '00:00'
-            signature = f"single:{subject}:{date_part}:{time_part}:{location_normalized}"
-        else:
-            signature = f"single:{subject}:{start_normalized}:{location_normalized}"
-        
-        logger.debug(f"Single event signature: {signature}")
-        return signature
+        """Create unique signature for an event - Uses shared signature utilities"""
+        return generate_event_signature(event)
     
     def _build_event_map(self, events: List[Dict]) -> Tuple[Dict[str, Dict], List[Dict]]:
         """Build a map of events by signature and collect duplicates to remove.

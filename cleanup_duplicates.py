@@ -287,7 +287,7 @@ class DuplicateCleanup:
                             "created": created,
                             "action": "deleted"
                         })
-                        time.sleep(2)  # Wait 2 seconds between deletions to avoid rate limits
+                        time.sleep(2)  # Rate limiting: 2 sec delay between deletions
                     else:
                         logger.error(f"   ❌ Failed to delete: '{subject}'")
                         result["error_count"] += 1
