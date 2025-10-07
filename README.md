@@ -275,6 +275,29 @@ See `tests/README.md` for complete testing documentation.
 - **Duplicate Tests**: Ensure duplicate detection works correctly
 - **Integration Tests**: Test full sync workflows (require API access)
 
+## 📚 Documentation
+
+Comprehensive documentation is organized in the `/docs` directory:
+
+- **[Architecture](docs/architecture/system-overview.md)** - System design and components
+- **[Deployment Guide](docs/guides/deployment.md)** - Deployment procedures
+- **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues and solutions
+- **[Testing](tests/README.md)** - Test suite documentation
+- **[Historical Fixes](docs/historical/)** - Archive of past bug fixes
+
+### Quick Start
+
+1. **Deploy**: Follow [Deployment Guide](docs/guides/deployment.md)
+2. **Configure**: Set environment variables
+3. **Authenticate**: Visit web interface and sign in
+4. **Monitor**: Check `/health/detailed` endpoint
+
+### Getting Help
+
+- Check [Troubleshooting Guide](docs/guides/troubleshooting.md) first
+- Review logs for error messages
+- Run test suite: `pytest tests/ -v`
+
 ## 🛡️ Security Considerations
 
 ### OAuth Security
