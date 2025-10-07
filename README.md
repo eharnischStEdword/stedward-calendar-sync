@@ -283,7 +283,7 @@ Comprehensive documentation is organized in the `/docs` directory:
 - **[Deployment Guide](docs/guides/deployment.md)** - Deployment procedures
 - **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues and solutions
 - **[Testing](tests/README.md)** - Test suite documentation
-- **[Historical Fixes](docs/historical/)** - Archive of past bug fixes
+- **[Historical Fixes](docs/README.md#historical-documentation)** - Archive of past bug fixes
 
 ### Quick Start
 
