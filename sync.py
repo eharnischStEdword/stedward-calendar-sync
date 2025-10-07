@@ -1168,6 +1168,68 @@ class SyncEngine:
         
         logger.info("="*60)
         
+        # DUPLICATE DETECTION ANALYSIS
+        logger.info("="*60)
+        logger.info("DUPLICATE DETECTION ANALYSIS")
+        logger.info("="*60)
+
+        # Find events with same signature in target
+        target_sig_counts = {}
+        for event in target_events:
+            sig = self._create_event_signature(event)
+            if sig not in target_sig_counts:
+                target_sig_counts[sig] = []
+            target_sig_counts[sig].append(event)
+
+        # Find duplicates in target
+        duplicates = {sig: events for sig, events in target_sig_counts.items() if len(events) > 1}
+
+        if duplicates:
+            logger.info(f"\nFound {len(duplicates)} duplicate signatures in target:")
+            for sig, events in list(duplicates.items())[:10]:  # Show first 10
+                logger.info(f"\n  Signature: {sig}")
+                logger.info(f"  Occurrences: {len(events)}")
+                for i, event in enumerate(events):
+                    logger.info(f"    {i+1}. {event.get('subject')} - {event.get('start')}")
+                    logger.info(f"       Event ID: {event.get('id')}")
+        else:
+            logger.info("\n✅ No duplicates found in target")
+
+        # Find all "Room in the Inn" events specifically
+        logger.info("\nSearching for 'Room in the Inn' events:")
+
+        source_room = [e for e in source_events if 'room in the inn' in e.get('subject', '').lower()]
+        target_room = [e for e in target_events if 'room in the inn' in e.get('subject', '').lower()]
+
+        logger.info(f"\nSource calendar has {len(source_room)} 'Room in the Inn' events:")
+        for event in source_room:
+            sig = self._create_event_signature(event)
+            logger.info(f"  - {event.get('subject')} on {event.get('start')}")
+            logger.info(f"    Signature: {sig}")
+            logger.info(f"    Type: {event.get('type')}")
+            logger.info(f"    Location: {event.get('location')}")
+
+        logger.info(f"\nTarget calendar has {len(target_room)} 'Room in the Inn' events:")
+        for event in target_room:
+            sig = self._create_event_signature(event)
+            logger.info(f"  - {event.get('subject')} on {event.get('start')}")
+            logger.info(f"    Signature: {sig}")
+            logger.info(f"    Type: {event.get('type')}")
+            logger.info(f"    Location: {event.get('location')}")
+
+        # Check if signatures match
+        if len(source_room) > 0 and len(target_room) > 0:
+            source_sigs = {self._create_event_signature(e) for e in source_room}
+            target_sigs = {self._create_event_signature(e) for e in target_room}
+            
+            logger.info(f"\nSource signatures: {source_sigs}")
+            logger.info(f"Target signatures: {target_sigs}")
+            logger.info(f"Matching: {source_sigs & target_sigs}")
+            logger.info(f"Only in source: {source_sigs - target_sigs}")
+            logger.info(f"Only in target: {target_sigs - source_sigs}")
+
+        logger.info("="*60)
+        
         matching_sigs = source_signatures & synced_target_signatures
         logger.info(f"  Matching signatures found: {len(matching_sigs)}")
         if matching_sigs:
