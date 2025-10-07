@@ -64,14 +64,16 @@ def generate_event_signature(event: Dict) -> str:
         return signature
     
     elif event_type == 'occurrence':
-        # Include seriesMasterId for occurrences to prevent duplicates
-        series_master_id = event.get('seriesMasterId', '')
-        if series_master_id:
-            signature = f"occurrence:{subject}:{series_master_id}:{start_normalized}:{location_normalized}"
-            return signature
+        # CRITICAL FIX: Treat occurrences as single events for signature matching
+        # This ensures orphaned occurrences match previously synced events
+        # Use the same format as single events (without seriesMasterId)
+        if 'T' in start_normalized:
+            date_part = start_normalized.split('T')[0]
+            time_part = start_normalized.split('T')[1] if 'T' in start_normalized else '00:00'
+            signature = f"single:{subject}:{date_part}:{time_part}:{location_normalized}"
         else:
-            signature = f"occurrence:{subject}:{start_normalized}:{location_normalized}"
-            return signature
+            signature = f"single:{subject}:{start_normalized}:{location_normalized}"
+        return signature
     
     # For single events - include time to distinguish events on same day
     if 'T' in start_normalized:

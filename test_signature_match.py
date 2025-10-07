@@ -108,7 +108,7 @@ def test_signature_consistency():
         {
             'name': 'Occurrence Event',
             'event': create_test_event('occurrence', subject='Meeting Instance'),
-            'expected_prefix': 'occurrence:'
+            'expected_prefix': 'single:'
         },
         {
             'name': 'All Day Event',
