@@ -708,10 +708,125 @@ cache_manager = CacheManager()
 # Initialize structured logger
 structured_logger = StructuredLogger('calendar-sync')
 
+# =============================================================================
+# FORMATTING UTILITIES (moved from utils/formatting.py)
+# =============================================================================
+
+def _normalize_location_token(name: str) -> str:
+    """Normalize a single location token (no separators)."""
+    if name in ("Cafeteria Rental", "Cafeteria Rentals"):
+        return "School Cafeteria"
+    if name == "Little Carrell Room":
+        return "Little Carell Room"  # fix the typo
+    return name
+
+
+def normalize_location(location: str | None) -> str | None:
+    """Normalize location names; supports composite strings like 'Gym; Cafeteria Rentals'."""
+    if not location:
+        return location
+    name = location.strip()
+
+    # If composite, normalize each token and dedupe while preserving order
+    if ";" in name or "," in name:
+        parts = [p.strip() for p in name.replace(",", ";").split(";") if p.strip()]
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for p in parts:
+            token = _normalize_location_token(p)
+            if token not in seen:
+                normalized.append(token)
+                seen.add(token)
+        return "; ".join(normalized)
+
+    # Single token
+    return _normalize_location_token(name)
+
+def is_omitted_from_bulletin(subject: str, starts_at_utc: datetime, location: str | None) -> bool:
+    """
+    Return True if this event should be hidden from *bulletin lists only*,
+    based on local (America/Chicago) weekday + time + title.
+    Never used for Outlook or Public Calendar sync decisions.
+    """
+    if starts_at_utc.tzinfo is None:
+        raise ValueError("starts_at_utc must be timezone-aware (UTC).")
+
+    local = starts_at_utc.astimezone(ZoneInfo("America/Chicago"))
+    wd = local.weekday()  # Mon=0 .. Sun=6
+    hhmm = local.strftime("%H:%M")
+    title = (subject or "").strip()
+
+    # Catch ALL "Adoration & Confession" events regardless of time/location
+    if title == "Adoration & Confession":
+        return True
+
+    # Helper for quick checks
+    def has(loc_expected: str | None = None) -> bool:
+        if not loc_expected:
+            return True
+        loc_norm = normalize_location(location or "") or ""
+        # Some events have multiple locations separated by ';' or ','; check tokens
+        tokens = [part.strip() for part in loc_norm.replace(',', ';').split(';') if part.strip()]
+        if not tokens:
+            tokens = [loc_norm]
+        return any(token == loc_expected for token in tokens)
+
+    # -----------------------
+    # SATURDAYS (wd=5)
+    if wd == 5:
+        if hhmm == "07:00" and title == "Adoration & Confession" and has("Church"):
+            return True
+        if hhmm == "08:00" and title == "Mass- Daily":
+            return True
+        if hhmm == "17:00" and title == "Mass- Vigil":
+            return True
+
+    # SUNDAYS (wd=6)
+    if wd == 6:
+        if hhmm == "08:00" and title.startswith("Mass- 8:00"):
+            return True
+        if hhmm == "10:30" and title.startswith("Mass- 10:30"):
+            return True
+        if hhmm == "12:15" and title.startswith("Mass- 12:15"):
+            return True
+        if hhmm == "14:30" and title == "Zomi Mass":
+            return True
+
+    # MONDAYS (wd=0)
+    if wd == 0:
+        if hhmm == "07:00" and title == "Adoration & Confession" and has("Church"):
+            return True
+        if hhmm == "08:00" and title == "Mass- Daily":
+            return True
+
+    # TUESDAYS (wd=1)
+    if wd == 1:
+        if hhmm == "07:00" and title == "Adoration & Confession" and has("Church"):
+            return True
+        if hhmm == "08:00" and title == "Mass- Daily":
+            return True
+
+    # WEDNESDAYS (wd=2)
+    if wd == 2:
+        if hhmm == "16:30" and title == "Adoration & Confession":
+            return True
+        if hhmm == "17:30" and title == "Mass- Wednesday":
+            return True
+
+    # THURSDAYS (wd=3)
+    if wd == 3:
+        if hhmm == "07:00" and title == "Adoration & Confession" and has("Church"):
+            return True
+        if hhmm == "08:00" and title == "Mass- Daily":
+            return True
+
+    return False
+
 # Export main utilities
 __all__ = [
     'DateTimeUtils', 'ValidationUtils', 'MetricsUtils',
     'ResilientAPIClient', 'RetryUtils', 'StructuredLogger',
     'CacheManager', 'require_auth', 'handle_api_errors', 'rate_limit',
-    'cache_manager', 'structured_logger', 'get_version_info'
+    'cache_manager', 'structured_logger', 'get_version_info',
+    'normalize_location', 'is_omitted_from_bulletin'
 ] 

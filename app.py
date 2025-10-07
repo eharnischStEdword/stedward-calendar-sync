@@ -3076,7 +3076,7 @@ def bulletin_events():
             all_events = []
         
         # Process events for bulletin
-        from utils.formatting import normalize_location, is_omitted_from_bulletin
+        from utils import normalize_location, is_omitted_from_bulletin
 
         def graph_datetime_to_utc(dt_dict):
             """
