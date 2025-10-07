@@ -4,19 +4,21 @@
 # Unauthorized use, distribution, or modification is prohibited.
 
 """
-Duplicate Event Cleanup Script
+Cleanup utilities for calendar sync service
+
+Tools for cleaning up duplicate events and other maintenance tasks.
+Originally: cleanup_duplicates.py
 
 This script removes duplicate events from the St. Edward Public Calendar.
 It groups events by subject + start_time + end_time + location and keeps
 the oldest event (earliest creation date) while deleting newer duplicates.
 
 Usage:
-    python cleanup_duplicates.py [--dry-run] [--verbose]
+    python cleanup_tools.py [--dry-run] [--verbose]
 
 Options:
     --dry-run    Show what would be deleted without actually deleting
     --verbose    Show detailed logging
-"""
 
 import argparse
 import logging
