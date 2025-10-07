@@ -160,18 +160,25 @@ def normalize_datetime(dt_str: str) -> str:
         return dt_str
 
 
-def normalize_location(location: str) -> str:
+def normalize_location(location) -> str:
     """
     Normalize location for consistent matching.
     
     CRITICAL: This method MUST be identical across all classes.
     
     Args:
-        location: Location string
+        location: Location string or dict from Microsoft Graph API
         
     Returns:
         Normalized location string
     """
+    # Handle dict format from Microsoft Graph API
+    if isinstance(location, dict):
+        location = location.get('displayName', '')
+    
+    # Handle empty/None/empty string
     if not location:
-        return ""
+        return ""  # Consistent empty value for all empty cases
+    
+    # Normalize
     return location.lower().replace(' ', '').replace('#', '')

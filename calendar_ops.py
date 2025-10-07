@@ -964,9 +964,11 @@ class CalendarWriter:
                 'content': event['body'].get('content', '')
             }
         
-        # Add location if present
-        if 'location' in event and event['location']:
-            api_event['location'] = {'displayName': event['location'].get('displayName', '')}
+        # Add location if present (always include location field for consistency)
+        if 'location' in event:
+            # Always include location field, even if empty, for signature consistency
+            location_display_name = event['location'].get('displayName', '') if isinstance(event['location'], dict) else str(event['location'] or '')
+            api_event['location'] = {'displayName': location_display_name}
         
         # Add isAllDay if true
         if event.get('isAllDay'):
