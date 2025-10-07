@@ -627,6 +627,10 @@
             try {
                 const response = await fetch('/sync', { 
                     method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ dry_run: false }),
                     credentials: 'same-origin'
                 });
                 
