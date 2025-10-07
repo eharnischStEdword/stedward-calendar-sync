@@ -247,6 +247,34 @@ python app.py
 - `GET /debug/calendars` - Calendar listing
 - `GET /debug/events/<calendar>` - Event debugging
 
+## 🧪 Testing
+
+The project includes a comprehensive pytest test suite.
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run specific tests
+pytest tests/test_signatures.py
+pytest tests/test_duplicates.py
+
+# Run by category
+pytest -m signature  # Signature tests only
+pytest -m duplicate   # Duplicate detection only
+pytest -m unit        # Unit tests only
+```
+
+See `tests/README.md` for complete testing documentation.
+
+### Test Coverage
+
+- **Signature Tests**: Verify event signature generation consistency
+- **Duplicate Tests**: Ensure duplicate detection works correctly
+- **Integration Tests**: Test full sync workflows (require API access)
+
 ## 🛡️ Security Considerations
 
 ### OAuth Security
