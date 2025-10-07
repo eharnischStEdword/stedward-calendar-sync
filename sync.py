@@ -922,6 +922,27 @@ class SyncEngine:
             
             logger.info(f"📋 SYNC PLAN: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
             
+            # SAFETY CHECK: Prevent mass deletions without manual approval
+            MAX_DELETIONS_WITHOUT_APPROVAL = 50
+            if len(to_delete) > MAX_DELETIONS_WITHOUT_APPROVAL:
+                logger.error(f"🚨 SAFETY TRIGGERED: {len(to_delete)} deletions exceeds threshold of {MAX_DELETIONS_WITHOUT_APPROVAL}")
+                logger.error("🛑 Sync cancelled to prevent mass deletion. Manual approval required.")
+                logger.error("💡 To proceed, either:")
+                logger.error("   1. Set DRY_RUN_MODE=True to review changes safely")
+                logger.error("   2. Temporarily increase MAX_DELETIONS_WITHOUT_APPROVAL in sync.py")
+                logger.error("   3. Manually review and approve the deletion list")
+                
+                return {
+                    'success': False,
+                    'message': f'SAFETY TRIGGERED: {len(to_delete)} deletions exceeds {MAX_DELETIONS_WITHOUT_APPROVAL} threshold',
+                    'safety_triggered': True,
+                    'deletions_planned': len(to_delete),
+                    'threshold': MAX_DELETIONS_WITHOUT_APPROVAL,
+                    'added': len(to_add),
+                    'updated': len(to_update),
+                    'deleted': 0  # No deletions executed
+                }
+            
             # Check dry run mode
             if config.DRY_RUN_MODE:
                 logger.info("🧪 DRY RUN MODE - No changes will be made")
