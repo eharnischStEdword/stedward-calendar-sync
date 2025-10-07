@@ -20,6 +20,7 @@ import threading
 
 # Import timezone utilities
 from utils import DateTimeUtils
+from auth import require_auth
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
