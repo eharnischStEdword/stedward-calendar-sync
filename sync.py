@@ -70,19 +70,55 @@ class ChangeTracker:
             logger.error(f"Failed to save event cache: {e}")
     
     def _create_event_signature(self, event: Dict) -> str:
-        """Create a unique signature for an event"""
-        subject = event.get('subject', '').strip()
-        start_time = event.get('start', {}).get('dateTime', '')
-        end_time = event.get('end', {}).get('dateTime', '')
+        """Create a unique signature for an event - MUST MATCH SyncEngine format"""
+        subject = self._normalize_subject(event.get('subject', ''))
+        event_type = event.get('type', 'singleInstance')
         location = event.get('location', {}).get('displayName', '')
+        location_normalized = location.lower().replace(' ', '') if location else ''
         
-        # Normalize the data
-        subject = subject.lower().replace(' ', '')
-        start_time = start_time.split('T')[0] if start_time else ''  # Just the date
-        end_time = end_time.split('T')[0] if end_time else ''
-        location = location.lower().replace(' ', '')
+        # Get normalized start time
+        start_raw = event.get('start', {}).get('dateTime', '')
+        start_normalized = self._normalize_datetime(start_raw)
         
-        signature = f"{subject}|{start_time}|{end_time}|{location}"
+        # For recurring events
+        if event_type == 'seriesMaster':
+            recurrence = event.get('recurrence', {})
+            pattern = recurrence.get('pattern', {})
+            
+            # Create a stable hash of the recurrence pattern
+            pattern_data = {
+                'type': pattern.get('type', 'unknown'),
+                'interval': pattern.get('interval', 1),
+                'daysOfWeek': sorted(pattern.get('daysOfWeek', [])),
+                'dayOfMonth': pattern.get('dayOfMonth'),
+                'index': pattern.get('index')
+            }
+            
+            # Create hash of pattern for consistency
+            pattern_str = json.dumps(pattern_data, sort_keys=True)
+            pattern_hash = hashlib.md5(pattern_str.encode()).hexdigest()[:8]
+            
+            signature = f"recurring:{subject}:{pattern_hash}:{start_normalized}:{location_normalized}"
+            return signature
+        
+        elif event_type == 'occurrence':
+            # Include seriesMasterId for occurrences to prevent duplicates
+            series_master_id = event.get('seriesMasterId', '')
+            if series_master_id:
+                signature = f"occurrence:{subject}:{series_master_id}:{start_normalized}:{location_normalized}"
+                return signature
+            else:
+                signature = f"occurrence:{subject}:{start_normalized}:{location_normalized}"
+                return signature
+        
+        # For single events - include time to distinguish events on same day
+        if 'T' in start_normalized:
+            date_part = start_normalized.split('T')[0]
+            time_part = start_normalized.split('T')[1] if 'T' in start_normalized else '00:00'
+            signature = f"single:{subject}:{date_part}:{time_part}:{location_normalized}"
+        else:
+            signature = f"single:{subject}:{start_normalized}:{location_normalized}"
+        
         return signature
     
     def detect_changes(self, current_events: List[Dict]) -> Dict:
@@ -210,6 +246,39 @@ class ChangeTracker:
             return age < timedelta(hours=24)
         except:
             return False
+    
+    def _normalize_subject(self, subject: str) -> str:
+        """Normalize event subject for matching"""
+        if not subject:
+            return ""
+        # More aggressive normalization to handle Microsoft Graph variations
+        normalized = ' '.join(subject.strip().lower().split())
+        # Remove common punctuation that might vary
+        normalized = normalized.replace('.', '').replace(',', '').replace(':', '').replace(';', '')
+        return normalized
+    
+    def _normalize_datetime(self, dt_str: str) -> str:
+        """Normalize datetime string for matching"""
+        if not dt_str:
+            return ""
+        try:
+            # Remove timezone info and normalize to just date and time
+            clean_dt = dt_str.replace('Z', '').replace('+00:00', '')
+            if '+' in clean_dt:
+                clean_dt = clean_dt.split('+')[0]
+            if '-' in clean_dt and clean_dt.count('-') > 2:  # More than just date separators
+                clean_dt = clean_dt.rsplit('-', 1)[0]
+            
+            # Ensure consistent format
+            if 'T' in clean_dt:
+                date_part, time_part = clean_dt.split('T', 1)
+                # Normalize time to HH:MM format for consistency
+                time_part = time_part[:5]  # Take only HH:MM
+                return f"{date_part}T{time_part}"
+            return clean_dt
+        except Exception as e:
+            logger.warning(f"Failed to normalize datetime '{dt_str}': {e}")
+            return dt_str
 
 
 class SyncHistory:
