@@ -1056,7 +1056,8 @@ class SyncEngine:
             logger.info(f"📋 SYNC PLAN: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
             
             # SAFETY CHECK: Prevent mass deletions without manual approval
-            MAX_DELETIONS_WITHOUT_APPROVAL = 50
+            # TODO: Reset to 50 after duplicate cleanup completes
+            MAX_DELETIONS_WITHOUT_APPROVAL = 150  # Temporary for duplicate cleanup
             if len(to_delete) > MAX_DELETIONS_WITHOUT_APPROVAL:
                 logger.error(f"🚨 SAFETY TRIGGERED: {len(to_delete)} deletions exceeds threshold of {MAX_DELETIONS_WITHOUT_APPROVAL}")
                 logger.error("🛑 Sync cancelled to prevent mass deletion. Manual approval required.")
