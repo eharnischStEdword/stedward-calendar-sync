@@ -3468,7 +3468,6 @@ def event_search():
         return f"Error: {str(e)}", 500
 
 @app.route('/api/investigate', methods=['POST'])
-@require_auth
 def investigate_deletions():
     """Investigation endpoint to see what would be deleted"""
     try:
