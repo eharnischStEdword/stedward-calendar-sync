@@ -1230,6 +1230,9 @@ class SyncEngine:
 
         logger.info("="*60)
         
+        # ONE-TIME CLEANUP: Remove duplicate "Room in the Inn" events
+        self._cleanup_room_in_inn_duplicates(target_id, target_events)
+        
         matching_sigs = source_signatures & synced_target_signatures
         logger.info(f"  Matching signatures found: {len(matching_sigs)}")
         if matching_sigs:
@@ -1294,6 +1297,68 @@ class SyncEngine:
         logger.info(f"  - {len(remaining_targets)} unmatched target events")
         
         return to_add, to_update, to_delete
+    
+    def _cleanup_room_in_inn_duplicates(self, target_calendar_id: str, target_events: List[Dict]) -> None:
+        """
+        ONE-TIME CLEANUP: Remove duplicate "Room in the Inn" events.
+        
+        This function will be removed after the next sync.
+        """
+        logger.info("🧹 ONE-TIME CLEANUP: Checking for duplicate 'Room in the Inn' events")
+        
+        # Find all "Room in the Inn" events
+        room_events = [e for e in target_events if 'room in the inn' in e.get('subject', '').lower()]
+        
+        if len(room_events) <= 1:
+            logger.info("✅ No duplicate 'Room in the Inn' events found")
+            return
+        
+        logger.info(f"🔍 Found {len(room_events)} 'Room in the Inn' events - checking for duplicates")
+        
+        # Group by signature to find duplicates
+        signature_groups = {}
+        for event in room_events:
+            sig = self._create_event_signature(event)
+            if sig not in signature_groups:
+                signature_groups[sig] = []
+            signature_groups[sig].append(event)
+        
+        # Find groups with duplicates
+        duplicates_to_delete = []
+        for sig, events in signature_groups.items():
+            if len(events) > 1:
+                logger.info(f"📋 Found {len(events)} duplicate events with signature: {sig}")
+                
+                # Keep the first event, mark others for deletion
+                keep_event = events[0]
+                delete_events = events[1:]
+                
+                logger.info(f"  ✅ Keeping: {keep_event.get('subject')} - {keep_event.get('start')} (ID: {keep_event.get('id')})")
+                
+                for event in delete_events:
+                    logger.info(f"  🗑️ Deleting: {event.get('subject')} - {event.get('start')} (ID: {event.get('id')})")
+                    duplicates_to_delete.append(event)
+        
+        # Delete duplicate events
+        if duplicates_to_delete:
+            logger.info(f"🗑️ Deleting {len(duplicates_to_delete)} duplicate 'Room in the Inn' events")
+            
+            deleted_count = 0
+            for event in duplicates_to_delete:
+                try:
+                    event_id = event.get('id')
+                    if event_id:
+                        self.writer.delete_event(target_calendar_id, event_id)
+                        deleted_count += 1
+                        logger.info(f"  ✅ Deleted event ID: {event_id}")
+                    else:
+                        logger.warning(f"  ⚠️ Event has no ID, skipping: {event.get('subject')}")
+                except Exception as e:
+                    logger.error(f"  ❌ Failed to delete event {event.get('id')}: {e}")
+            
+            logger.info(f"🎉 Cleanup complete: Deleted {deleted_count} duplicate 'Room in the Inn' events")
+        else:
+            logger.info("✅ No duplicate 'Room in the Inn' events found to delete")
     
     def _needs_update(self, source_event: Dict, target_event: Dict) -> bool:
         """Check if an event needs updating - COMPARE PREPARED DATA WITH TARGET"""
