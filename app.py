@@ -730,103 +730,11 @@ def debug_info():
                     "target_name": config.TARGET_CALENDAR
                 }
                 
-                # GET EVENT COUNTS
-                if source_id and target_id:
-                    source_events = sync_engine.reader.get_calendar_events(source_id)
-                    target_events = sync_engine.reader.get_calendar_events(target_id)
-                    
-                    source_public_busy = [
-                        e for e in source_events 
-                        if 'Public' in e.get('categories', []) and e.get('showAs') == 'busy'
-                    ]
-                    
-                    # Enhanced all-day event tracking
-                    source_all_day = [e for e in source_events if e.get('isAllDay', False)]
-                    target_all_day = [e for e in target_events if e.get('isAllDay', False)]
-                    
-                    # Identify multi-day events (all-day events spanning multiple days)
-                    source_multi_day = []
-                    for event in source_all_day:
-                        start = event.get('start', {})
-                        end = event.get('end', {})
-                        start_date = start.get('date') or start.get('dateTime', '')
-                        end_date = end.get('date') or end.get('dateTime', '')
-                        
-                        if start_date and end_date:
-                            # Parse dates
-                            try:
-                                from datetime import datetime
-                                start_dt = datetime.fromisoformat(start_date.split('T')[0])
-                                end_dt = datetime.fromisoformat(end_date.split('T')[0])
-                                day_span = (end_dt - start_dt).days
-                                if day_span > 1:
-                                    source_multi_day.append({
-                                        'subject': event.get('subject', 'No Subject'),
-                                        'start': start_date.split('T')[0],
-                                        'end': end_date.split('T')[0],
-                                        'days': day_span
-                                    })
-                            except:
-                                pass
-                    
-                    target_multi_day = []
-                    for event in target_all_day:
-                        start = event.get('start', {})
-                        end = event.get('end', {})
-                        start_date = start.get('date') or start.get('dateTime', '')
-                        end_date = end.get('date') or end.get('dateTime', '')
-                        
-                        if start_date and end_date:
-                            try:
-                                from datetime import datetime
-                                start_dt = datetime.fromisoformat(start_date.split('T')[0])
-                                end_dt = datetime.fromisoformat(end_date.split('T')[0])
-                                day_span = (end_dt - start_dt).days
-                                if day_span > 1:
-                                    target_multi_day.append({
-                                        'subject': event.get('subject', 'No Subject'),
-                                        'start': start_date.split('T')[0],
-                                        'end': end_date.split('T')[0],
-                                        'days': day_span
-                                    })
-                            except:
-                                pass
-                    
-                    debug_info["event_counts"] = {
-                        "source_total": len(source_events),
-                        "source_public_busy": len(source_public_busy),
-                        "source_all_day": len(source_all_day),
-                        "source_multi_day": len(source_multi_day),
-                        "target_total": len(target_events),
-                        "target_all_day": len(target_all_day),
-                        "target_multi_day": len(target_multi_day)
-                    }
-                    
-                    # Sample all-day events for verification
-                    debug_info["all_day_samples"] = {
-                        "source": [
-                            {
-                                'subject': e.get('subject', 'No Subject'),
-                                'start': e.get('start', {}).get('date') or e.get('start', {}).get('dateTime', 'Unknown'),
-                                'type': e.get('type', 'singleInstance')
-                            } 
-                            for e in source_all_day[:5]
-                        ],
-                        "target": [
-                            {
-                                'subject': e.get('subject', 'No Subject'),
-                                'start': e.get('start', {}).get('date') or e.get('start', {}).get('dateTime', 'Unknown'),
-                                'type': e.get('type', 'singleInstance')
-                            } 
-                            for e in target_all_day[:5]
-                        ]
-                    }
-                    
-                    # Multi-day event details for verification
-                    debug_info["multi_day_events"] = {
-                        "source": source_multi_day[:5],
-                        "target": target_multi_day[:5]
-                    }
+                # GET EVENT COUNTS - Use cached data from last sync instead of fetching
+                debug_info["event_counts"] = {
+                    "note": "Event counts from last sync result",
+                    "last_sync_stats": sync_engine.last_sync_result if hasattr(sync_engine, 'last_sync_result') and sync_engine.last_sync_result else {}
+                }
             except Exception as e:
                 debug_info["calendar_error"] = str(e)
 
