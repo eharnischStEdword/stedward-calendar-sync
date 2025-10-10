@@ -881,7 +881,14 @@
                 
                 const result = await response.json();
                 
-                if (result.success) {
+                // Handle background sync response (status: "started")
+                if (result.status === "started") {
+                    showMessage('✅ Sync started successfully. Check progress below.', 'success');
+                    // Start polling for progress
+                    pollSyncProgress();
+                } 
+                // Handle old synchronous response (success: true/false)
+                else if (result.success) {
                     const msg = `✅ Sync completed! Added: ${result.added || 0}, Updated: ${result.updated || 0}, Deleted: ${result.deleted || 0}`;
                     showMessage(msg, 'success');
                     
@@ -890,7 +897,8 @@
                         lastSyncElement.textContent = result.last_sync_time_display;
                     }
                 } else {
-                    showMessage('⚠️ Sync completed with issues: ' + (result.message || result.error), 'warning');
+                    // Only show as issue if it's actually an error
+                    showMessage('⚠️ Sync failed: ' + (result.message || result.error), 'error');
                 }
                 
             } catch (error) {
@@ -905,6 +913,58 @@
                 
                 setTimeout(loadStatus, 1000);
             }
+        }
+
+        let progressPollInterval = null;
+
+        async function pollSyncProgress() {
+            // Clear any existing poll
+            if (progressPollInterval) {
+                clearInterval(progressPollInterval);
+            }
+            
+            // Poll every 2 seconds
+            progressPollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/sync/progress', {
+                        credentials: 'same-origin'
+                    });
+                    
+                    if (!response.ok) {
+                        clearInterval(progressPollInterval);
+                        return;
+                    }
+                    
+                    const progress = await response.json();
+                    
+                    // Update progress display
+                    if (progress.in_progress) {
+                        const percent = progress.percent || 0;
+                        const phase = progress.phase || 'syncing';
+                        showMessage(`🔄 Syncing... ${percent}% complete (${phase})`, 'info', 0);
+                    } else {
+                        // Sync completed - stop polling
+                        clearInterval(progressPollInterval);
+                        progressPollInterval = null;
+                        
+                        // Check result
+                        if (progress.last_result && progress.last_result.success) {
+                            const result = progress.last_result;
+                            const msg = `✅ Sync completed! Added: ${result.added || 0}, Updated: ${result.updated || 0}, Deleted: ${result.deleted || 0}`;
+                            showMessage(msg, 'success');
+                        } else if (progress.last_result) {
+                            showMessage('⚠️ Sync failed: ' + (progress.last_result.message || 'Unknown error'), 'error');
+                        }
+                        
+                        // Refresh status
+                        loadStatus();
+                    }
+                } catch (error) {
+                    console.error('Progress poll error:', error);
+                    clearInterval(progressPollInterval);
+                    progressPollInterval = null;
+                }
+            }, 2000); // Poll every 2 seconds
         }
 
         async function toggleScheduler() {
@@ -1155,6 +1215,13 @@
             document.getElementById('confirmClearSynced').checked = false;
             toggleClearSyncedButton();
         }
+
+        // Clean up polling when page unloads
+        window.addEventListener('beforeunload', () => {
+            if (progressPollInterval) {
+                clearInterval(progressPollInterval);
+            }
+        });
     </script>
 </body>
 </html>

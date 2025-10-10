@@ -47,10 +47,31 @@ def generate_event_signature(event: Dict) -> str:
     # Get normalized start time - handle both dict and string formats
     start_raw = event.get('start', {})
     if isinstance(start_raw, dict):
-        start_datetime = start_raw.get('dateTime', '')
+        start_datetime = start_raw.get('dateTime', '') or start_raw.get('date', '')
     else:
         start_datetime = start_raw or ''
-    start_normalized = normalize_datetime(start_datetime)
+    
+    # CRITICAL: All-day events use date-only for signature stability
+    is_all_day = event.get('isAllDay', False)
+    if is_all_day:
+        # Extract date portion only, no time
+        if 'T' in start_datetime:
+            start_normalized = start_datetime.split('T')[0]
+        else:
+            start_normalized = start_datetime
+    else:
+        start_normalized = normalize_datetime(start_datetime)
+    
+    # 🔍 DIAGNOSTIC LOGGING FOR ALL-DAY EVENTS
+    if is_all_day:
+        logger.info(f"🔍 ALL-DAY EVENT DIAGNOSTIC:")
+        logger.info(f"  Subject: {event.get('subject', 'No Subject')}")
+        logger.info(f"  Start raw: {event.get('start')}")
+        logger.info(f"  End raw: {event.get('end')}")
+        logger.info(f"  Type: {event.get('type', 'unknown')}")
+        logger.info(f"  isAllDay: {is_all_day}")
+        logger.info(f"  start_datetime extracted: {start_datetime}")
+        logger.info(f"  start_normalized: {start_normalized}")
     
     # For recurring events
     if event_type == 'seriesMaster':
@@ -71,27 +92,52 @@ def generate_event_signature(event: Dict) -> str:
         pattern_hash = hashlib.md5(pattern_str.encode()).hexdigest()[:8]
         
         signature = f"recurring:{subject}:{pattern_hash}:{start_normalized}:{location_normalized}"
+        
+        # 🔍 DIAGNOSTIC LOGGING - Log final signature for all-day events
+        if is_all_day:
+            logger.info(f"  Final signature: {signature}")
+            logger.info("="*60)
+        
         return signature
     
     elif event_type == 'occurrence':
         # CRITICAL FIX: Treat occurrences as single events for signature matching
         # This ensures orphaned occurrences match previously synced events
         # Use the same format as single events (without seriesMasterId)
-        if 'T' in start_normalized:
+        if is_all_day:
+            # All-day: date only with ALLDAY marker
+            signature = f"single:{subject}:{start_normalized}:ALLDAY:{location_normalized}"
+        elif 'T' in start_normalized:
             date_part = start_normalized.split('T')[0]
-            time_part = start_normalized.split('T')[1] if 'T' in start_normalized else '00:00'
+            time_part = start_normalized.split('T')[1]
             signature = f"single:{subject}:{date_part}:{time_part}:{location_normalized}"
         else:
             signature = f"single:{subject}:{start_normalized}:{location_normalized}"
+        
+        # 🔍 DIAGNOSTIC LOGGING - Log final signature for all-day events
+        if is_all_day:
+            logger.info(f"  Final signature: {signature}")
+            logger.info("="*60)
+        
         return signature
     
-    # For single events - include time to distinguish events on same day
-    if 'T' in start_normalized:
-        date_part = start_normalized.split('T')[0]
-        time_part = start_normalized.split('T')[1] if 'T' in start_normalized else '00:00'
-        signature = f"single:{subject}:{date_part}:{time_part}:{location_normalized}"
+    # For single events
+    if is_all_day:
+        # All-day: date only with ALLDAY marker
+        signature = f"single:{subject}:{start_normalized}:ALLDAY:{location_normalized}"
     else:
-        signature = f"single:{subject}:{start_normalized}:{location_normalized}"
+        # Timed: include time component
+        if 'T' in start_normalized:
+            date_part = start_normalized.split('T')[0]
+            time_part = start_normalized.split('T')[1]
+            signature = f"single:{subject}:{date_part}:{time_part}:{location_normalized}"
+        else:
+            signature = f"single:{subject}:{start_normalized}:{location_normalized}"
+    
+    # 🔍 DIAGNOSTIC LOGGING - Log final signature for all-day events
+    if is_all_day:
+        logger.info(f"  Final signature: {signature}")
+        logger.info("="*60)
     
     return signature
 
