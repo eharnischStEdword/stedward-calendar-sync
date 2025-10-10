@@ -671,32 +671,86 @@ def logout():
 
 @app.route('/debug')
 def debug_info():
-    """Basic debug information"""
+    """Enhanced debug information for troubleshooting"""
     try:
-        debug_data = {
+        debug_info = {
             "timestamp": DateTimeUtils.get_central_time().isoformat(),
             "timezone": "America/Chicago",
-            "current_time_display": DateTimeUtils.format_central_time(DateTimeUtils.get_central_time()),
-            "environment_vars": {
-                "CLIENT_ID": bool(os.environ.get('CLIENT_ID')),
-                "CLIENT_SECRET": bool(os.environ.get('CLIENT_SECRET')),
-                "TENANT_ID": bool(os.environ.get('TENANT_ID')),
-                "ACCESS_TOKEN": bool(os.environ.get('ACCESS_TOKEN')),
-                "REFRESH_TOKEN": bool(os.environ.get('REFRESH_TOKEN')),
-            },
+            "current_time_display": format_central_time(DateTimeUtils.get_central_time()),
+            "authenticated": auth_manager.is_authenticated() if auth_manager else False,
             "config_loaded": True,
             "components": {
                 "auth_manager": auth_manager is not None,
                 "sync_engine": sync_engine is not None,
                 "scheduler": scheduler is not None,
                 "scheduler_running": scheduler.is_running() if scheduler else False
+            },
+            "environment_vars": {
+                "CLIENT_ID": bool(config.CLIENT_ID),
+                "CLIENT_SECRET": bool(config.CLIENT_SECRET),
+                "TENANT_ID": bool(config.TENANT_ID),
+                "ACCESS_TOKEN": bool(config.ACCESS_TOKEN),
+                "REFRESH_TOKEN": bool(config.REFRESH_TOKEN)
             }
         }
-        
-        if auth_manager:
-            debug_data["authenticated"] = auth_manager.is_authenticated()
-        
-        return jsonify(debug_data)
+
+        # ADD SYNC STATUS
+        if sync_engine:
+            sync_status = sync_engine.get_status()
+            debug_info["sync_status"] = {
+                "in_progress": sync_status.get('sync_in_progress', False),
+                "last_sync": sync_status.get('last_sync_time'),
+                "last_sync_display": format_central_time(
+                    datetime.fromisoformat(sync_status['last_sync_time'].replace('Z', '+00:00'))
+                ) if sync_status.get('last_sync_time') else 'Never',
+                "last_result": sync_status.get('last_sync_result', {}),
+                "total_syncs": sync_status.get('total_syncs', 0)
+            }
+            
+            # ADD RECENT ERRORS
+            if hasattr(sync_engine, 'history'):
+                recent_failures = [
+                    {
+                        'timestamp': e['timestamp'].isoformat(),
+                        'error': e.get('error', 'Unknown'),
+                        'message': e.get('message', '')
+                    }
+                    for e in reversed(list(sync_engine.history.history))
+                    if not e.get('success', False)
+                ][:5]  # Last 5 failures
+                debug_info["recent_errors"] = recent_failures
+            
+            # ADD CALENDAR INFO
+            try:
+                source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+                target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+                debug_info["calendars"] = {
+                    "source_found": source_id is not None,
+                    "target_found": target_id is not None,
+                    "source_name": config.SOURCE_CALENDAR,
+                    "target_name": config.TARGET_CALENDAR
+                }
+                
+                # GET EVENT COUNTS
+                if source_id and target_id:
+                    source_events = sync_engine.reader.get_calendar_events(source_id)
+                    target_events = sync_engine.reader.get_calendar_events(target_id)
+                    
+                    source_public_busy = [
+                        e for e in source_events 
+                        if 'Public' in e.get('categories', []) and e.get('showAs') == 'busy'
+                    ]
+                    
+                    debug_info["event_counts"] = {
+                        "source_total": len(source_events),
+                        "source_public_busy": len(source_public_busy),
+                        "target_total": len(target_events),
+                        "target_all_day": len([e for e in target_events if e.get('isAllDay', False)])
+                    }
+            except Exception as e:
+                debug_info["calendar_error"] = str(e)
+
+        return jsonify(debug_info)
         
     except Exception as e:
         return jsonify({
