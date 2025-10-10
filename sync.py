@@ -1385,13 +1385,6 @@ class SyncEngine:
         for event in target_events:
             sig = self._create_event_signature(event)
             existing_signatures.add(sig)
-            
-            # 🔍 DIAGNOSTIC LOGGING - Track all-day events being added to existing_signatures
-            if event.get('isAllDay', False):
-                logger.info(f"🔍 Adding to existing_signatures: {sig}")
-                logger.info(f"   Event: {event.get('subject', 'No Subject')}")
-        
-        logger.info(f"🔍 Duplicate detection: Found {len(existing_signatures)} existing event signatures in target calendar")
         
         for source_event in source_events:
             signature = self._create_event_signature(source_event)
@@ -1405,14 +1398,6 @@ class SyncEngine:
             is_all_day = source_event.get('isAllDay', False)
             if is_all_day:
                 logger.debug(f"📅 Processing all-day event: {subject}")
-            
-            # 🔍 DIAGNOSTIC LOGGING - Enhanced all-day event duplicate detection
-            if is_all_day:
-                logger.info(f"🔍 CHECKING ALL-DAY EVENT FOR DUPLICATES:")
-                logger.info(f"  Subject: {subject}")
-                logger.info(f"  Signature: {signature}")
-                logger.info(f"  Already in existing_signatures? {signature in existing_signatures}")
-                logger.info(f"  Already in remaining_targets? {signature in remaining_targets}")
             
             # Check if this event already exists in target calendar (any event, not just synced ones)
             if signature in existing_signatures:

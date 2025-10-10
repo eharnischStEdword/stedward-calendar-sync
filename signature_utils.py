@@ -62,17 +62,6 @@ def generate_event_signature(event: Dict) -> str:
     else:
         start_normalized = normalize_datetime(start_datetime)
     
-    # 🔍 DIAGNOSTIC LOGGING FOR ALL-DAY EVENTS
-    if is_all_day:
-        logger.info(f"🔍 ALL-DAY EVENT DIAGNOSTIC:")
-        logger.info(f"  Subject: {event.get('subject', 'No Subject')}")
-        logger.info(f"  Start raw: {event.get('start')}")
-        logger.info(f"  End raw: {event.get('end')}")
-        logger.info(f"  Type: {event.get('type', 'unknown')}")
-        logger.info(f"  isAllDay: {is_all_day}")
-        logger.info(f"  start_datetime extracted: {start_datetime}")
-        logger.info(f"  start_normalized: {start_normalized}")
-    
     # For recurring events
     if event_type == 'seriesMaster':
         recurrence = event.get('recurrence', {})
@@ -93,11 +82,6 @@ def generate_event_signature(event: Dict) -> str:
         
         signature = f"recurring:{subject}:{pattern_hash}:{start_normalized}:{location_normalized}"
         
-        # 🔍 DIAGNOSTIC LOGGING - Log final signature for all-day events
-        if is_all_day:
-            logger.info(f"  Final signature: {signature}")
-            logger.info("="*60)
-        
         return signature
     
     elif event_type == 'occurrence':
@@ -114,11 +98,6 @@ def generate_event_signature(event: Dict) -> str:
         else:
             signature = f"single:{subject}:{start_normalized}:{location_normalized}"
         
-        # 🔍 DIAGNOSTIC LOGGING - Log final signature for all-day events
-        if is_all_day:
-            logger.info(f"  Final signature: {signature}")
-            logger.info("="*60)
-        
         return signature
     
     # For single events
@@ -133,11 +112,6 @@ def generate_event_signature(event: Dict) -> str:
             signature = f"single:{subject}:{date_part}:{time_part}:{location_normalized}"
         else:
             signature = f"single:{subject}:{start_normalized}:{location_normalized}"
-    
-    # 🔍 DIAGNOSTIC LOGGING - Log final signature for all-day events
-    if is_all_day:
-        logger.info(f"  Final signature: {signature}")
-        logger.info("="*60)
     
     return signature
 
