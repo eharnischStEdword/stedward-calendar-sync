@@ -689,8 +689,7 @@ def debug_info():
                 "CLIENT_ID": bool(config.CLIENT_ID),
                 "CLIENT_SECRET": bool(config.CLIENT_SECRET),
                 "TENANT_ID": bool(config.TENANT_ID),
-                "ACCESS_TOKEN": bool(config.ACCESS_TOKEN),
-                "REFRESH_TOKEN": bool(config.REFRESH_TOKEN)
+                "tokens_present": auth_manager.is_authenticated() if auth_manager else False
             }
         }
 
