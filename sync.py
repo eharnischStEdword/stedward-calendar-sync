@@ -1386,6 +1386,9 @@ class SyncEngine:
             sig = self._create_event_signature(event)
             existing_signatures.add(sig)
         
+        # Track source event signatures we've already processed in this sync
+        source_signatures_seen = set()
+        
         for source_event in source_events:
             signature = self._create_event_signature(source_event)
             subject = source_event.get('subject', 'No subject')
@@ -1393,6 +1396,15 @@ class SyncEngine:
             # Skip occurrences entirely
             if signature.startswith("skip:occurrence:"):
                 continue
+            
+            # NEW: Check for duplicate signatures within source events
+            # This prevents syncing both a recurring occurrence AND a separate single instance
+            if signature in source_signatures_seen:
+                logger.info(f"⏭️  Skipping duplicate signature in source: {subject}")
+                continue
+            
+            # Track this signature to catch duplicates within the same sync
+            source_signatures_seen.add(signature)
             
             # Log all-day status for debugging
             is_all_day = source_event.get('isAllDay', False)

@@ -16,6 +16,7 @@ import subprocess
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Dict, List, Optional, Any, Callable
+from zoneinfo import ZoneInfo
 import pytz
 import requests
 
@@ -748,17 +749,37 @@ def is_omitted_from_bulletin(subject: str, starts_at_utc: datetime, location: st
     based on local (America/Chicago) weekday + time + title.
     Never used for Outlook or Public Calendar sync decisions.
     """
+    # Quick check: omit ALL liturgical events by title (most common case)
+    subject_lower = (subject or "").strip().lower()
+    
+    # Omit all Mass variations
+    if subject_lower.startswith("mass"):
+        return True
+    
+    # Omit all Adoration & Confession variations (catches all days)
+    if "adoration" in subject_lower and "confession" in subject_lower:
+        return True
+    
+    # If we got here, continue with day/time-specific checks below...
+    
+    # Defensive: ensure timezone-aware datetime
     if starts_at_utc.tzinfo is None:
-        raise ValueError("starts_at_utc must be timezone-aware (UTC).")
-
-    local = starts_at_utc.astimezone(ZoneInfo("America/Chicago"))
+        logger.warning(f"is_omitted_from_bulletin received naive datetime for '{subject}', localizing to UTC")
+        starts_at_utc = pytz.UTC.localize(starts_at_utc)
+    
+    try:
+        local = starts_at_utc.astimezone(ZoneInfo("America/Chicago"))
+    except Exception as e:
+        logger.error(f"Failed to convert to Central time for '{subject}': {e}")
+        # If we can't convert timezone, default to omitting liturgical events
+        subject_lower = subject.lower()
+        if any(keyword in subject_lower for keyword in ['mass', 'adoration', 'confession']):
+            return True
+        return False
+    
     wd = local.weekday()  # Mon=0 .. Sun=6
     hhmm = local.strftime("%H:%M")
     title = (subject or "").strip()
-
-    # Catch ALL "Adoration & Confession" events regardless of time/location
-    if title == "Adoration & Confession":
-        return True
 
     # Helper for quick checks
     def has(loc_expected: str | None = None) -> bool:

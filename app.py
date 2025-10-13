@@ -3184,15 +3184,28 @@ def bulletin_events():
                 logger.info(f"DEBUG Mass event: '{subject}' at {event_start_central} (weekday: {event_start_central.weekday()}, time: {event_start_central.strftime('%H:%M')})")
             
             try:
+                # Ensure start_utc is timezone-aware before calling omission check
+                if start_utc.tzinfo is None:
+                    start_utc = pytz.UTC.localize(start_utc)
+                
                 omission_result = is_omitted_from_bulletin(subject, start_utc, location_text)
                 if omission_result:
-                    logger.info(f"Omitting event from bulletin: {subject} at {event_start_central}")
+                    logger.info(f"✓ Omitting from bulletin: {subject} at {event_start_central}")
                     continue
-                elif 'Mass' in subject:
-                    logger.info(f"DEBUG Mass event NOT omitted: '{subject}' at {event_start_central}")
+                else:
+                    logger.info(f"✓ Including in bulletin: {subject} at {event_start_central}")
             except Exception as e:
-                # If omission check fails, default to include rather than drop
-                logger.warning(f"Omission check error for '{subject}': {e} — including in bulletin")
+                logger.error(f"⚠️  Omission check failed for '{subject}': {e}")
+                logger.error(f"   start_utc={start_utc}, location={location_text}")
+                
+                # For Mass/Adoration/Confession: default to OMIT on error (safe default)
+                # For other events: default to INCLUDE
+                subject_lower = subject.lower()
+                if any(keyword in subject_lower for keyword in ['mass', 'adoration', 'confession']):
+                    logger.info(f"✓ Omitting liturgical event on error: {subject}")
+                    continue
+                else:
+                    logger.warning(f"⚠️  Including non-liturgical event despite error: {subject}")
 
             logger.info(f"Including event in bulletin: {subject} at {event_start_central}")
 
