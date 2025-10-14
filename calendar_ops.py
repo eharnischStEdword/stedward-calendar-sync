@@ -474,38 +474,39 @@ class CalendarReader:
         # Now apply the Public/Busy filtering
         all_events = filtered_events  # Use filtered list for rest of processing
         
-        # Diagnostic logging
-        logger.info(f"📊 DIAGNOSTIC: Retrieved {len(all_events)} total events from calendar")
-        
-        # Debug logging for recurring events
-        logger.info(f"📊 Recurring Event Analysis:")
-        logger.info(f"  Total events fetched: {len(all_events)}")
-        logger.info(f"  Series masters: {len(series_masters)}")
-        logger.info(f"  Occurrences: {len(occurrences)}")
-        logger.info(f"  Series with occurrences in window: {len(series_with_occurrences)}")
-        
-        # Log orphaned occurrences
-        orphaned_count = 0
-        for occ in occurrences:
-            if occ.get('seriesMasterId') not in series_masters:
-                orphaned_count += 1
-        logger.info(f"  Orphaned occurrences: {orphaned_count}")
-        
-        # Log event type breakdown
-        event_types = {}
-        for event in all_events:
-            event_type = event.get('type', 'unknown')
-            event_types[event_type] = event_types.get(event_type, 0) + 1
-        logger.info(f"📊 Event types breakdown: {event_types}")
+        # Diagnostic logging - only in DEBUG mode for performance
+        if logger.level == logging.DEBUG:
+            logger.debug(f"📊 DIAGNOSTIC: Retrieved {len(all_events)} total events from calendar")
+            
+            # Debug logging for recurring events
+            logger.debug(f"📊 Recurring Event Analysis:")
+            logger.debug(f"  Total events fetched: {len(all_events)}")
+            logger.debug(f"  Series masters: {len(series_masters)}")
+            logger.debug(f"  Occurrences: {len(occurrences)}")
+            logger.debug(f"  Series with occurrences in window: {len(series_with_occurrences)}")
+            
+            # Log orphaned occurrences
+            orphaned_count = 0
+            for occ in occurrences:
+                if occ.get('seriesMasterId') not in series_masters:
+                    orphaned_count += 1
+            logger.debug(f"  Orphaned occurrences: {orphaned_count}")
+            
+            # Log event type breakdown
+            event_types = {}
+            for event in all_events:
+                event_type = event.get('type', 'unknown')
+                event_types[event_type] = event_types.get(event_type, 0) + 1
+            logger.debug(f"📊 Event types breakdown: {event_types}")
 
-        # Log first 5 events for inspection
-        for i, event in enumerate(all_events[:5]):
-            logger.info(f"Sample event {i+1}:")
-            logger.info(f"  Subject: {event.get('subject')}")
-            logger.info(f"  Type: {event.get('type')}")
-            logger.info(f"  Categories: {event.get('categories', [])}")
-            logger.info(f"  ShowAs: {event.get('showAs')}")
-            logger.info(f"  Start: {event.get('start')}")
+            # Log first 5 events for inspection
+            for i, event in enumerate(all_events[:5]):
+                logger.debug(f"Sample event {i+1}:")
+                logger.debug(f"  Subject: {event.get('subject')}")
+                logger.debug(f"  Type: {event.get('type')}")
+                logger.debug(f"  Categories: {event.get('categories', [])}")
+                logger.debug(f"  ShowAs: {event.get('showAs')}")
+                logger.debug(f"  Start: {event.get('start')}")
         
         public_events = []
         stats = {
@@ -537,26 +538,18 @@ class CalendarReader:
             categories = event.get('categories', [])
             has_public_category = any(cat.lower() == 'public' for cat in categories)
             
-            # VERBOSE DEBUG LOGGING
-            logger.info(f"[FILTER CHECK] {event.get('subject')}")
-            logger.info(f"  Categories: {categories}")
-            logger.info(f"  HasPublic: {has_public_category}")
+            # Removed verbose filter check logging for performance - see speed optimization doc
             
             if not has_public_category:
                 stats['non_public'] += 1
-                logger.info(f"❌ REJECTED (not public): {event.get('subject')} - Categories: {categories}")
                 continue
 
             # CRITICAL: Check if event is marked as Busy (expanded to include tentative, oof, workingElsewhere)
             show_as = event.get('showAs', 'busy')
             is_busy = show_as.lower() in ['busy', 'tentative', 'oof', 'workingelsewhere']
             
-            logger.info(f"  ShowAs: {show_as}")
-            logger.info(f"  IsBusy: {is_busy}, WillSync: {has_public_category and is_busy}")
-            
             if not is_busy:
                 stats['not_busy'] += 1
-                logger.info(f"❌ REJECTED (not busy): {event.get('subject')} - ShowAs: {show_as}")
                 continue
             
             # Check event date

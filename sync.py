@@ -1011,28 +1011,29 @@ class SyncEngine:
             
             logger.info(f"📊 Retrieved {len(source_events)} source events and {len(target_events)} target events")
             
-            # DIAGNOSTIC: Detailed sync analysis
-            logger.info(f"🔍 Sync Analysis:")
-            logger.info(f"  Source events (filtered): {len(source_events)}")
-            logger.info(f"  Target events (from calendar): {len(target_events)}")
-            logger.info(f"  Cached events: {len(self.change_tracker.event_cache)}")
+            # Removed for performance - see speed optimization plan
+            if False:  # DIAGNOSTIC: Detailed sync analysis
+                logger.info(f"🔍 Sync Analysis:")
+                logger.info(f"  Source events (filtered): {len(source_events)}")
+                logger.info(f"  Target events (from calendar): {len(target_events)}")
+                logger.info(f"  Cached events: {len(self.change_tracker.event_cache)}")
 
-            # When comparing signatures
-            source_sigs = set([self._create_event_signature(e) for e in source_events])
-            target_sigs = set([self._create_event_signature(e) for e in target_events])
-            cached_sigs = set([self._create_event_signature(e) for e in self.change_tracker.event_cache.values()])
+                # When comparing signatures
+                source_sigs = set([self._create_event_signature(e) for e in source_events])
+                target_sigs = set([self._create_event_signature(e) for e in target_events])
+                cached_sigs = set([self._create_event_signature(e) for e in self.change_tracker.event_cache.values()])
 
-            logger.info(f"  Source signatures: {len(source_sigs)}")
-            logger.info(f"  Target signatures: {len(target_sigs)}")
-            logger.info(f"  Cached signatures: {len(cached_sigs)}")
+                logger.info(f"  Source signatures: {len(source_sigs)}")
+                logger.info(f"  Target signatures: {len(target_sigs)}")
+                logger.info(f"  Cached signatures: {len(cached_sigs)}")
 
-            # What's the overlap?
-            logger.info(f"  Source ∩ Target: {len(source_sigs & target_sigs)}")
-            logger.info(f"  Source ∩ Cached: {len(source_sigs & cached_sigs)}")
+                # What's the overlap?
+                logger.info(f"  Source ∩ Target: {len(source_sigs & target_sigs)}")
+                logger.info(f"  Source ∩ Cached: {len(source_sigs & cached_sigs)}")
 
-            # What should be added?
-            to_add_theoretical = source_sigs - target_sigs - cached_sigs
-            logger.info(f"  Events to add (not in target or cache): {len(to_add_theoretical)}")
+                # What should be added?
+                to_add_theoretical = source_sigs - target_sigs - cached_sigs
+                logger.info(f"  Events to add (not in target or cache): {len(to_add_theoretical)}")
             
             # Log all-day event statistics
             source_all_day_count = sum(1 for e in source_events if e.get('isAllDay', False))
@@ -1240,26 +1241,70 @@ class SyncEngine:
         
         logger.info(f"🔍 Analyzing {len(source_events)} source events against {len(synced_target_map)} SYNCED target events (out of {len(target_map)} total)")
         
-        # DIAGNOSTIC: Signature Analysis
-        logger.info(f"🔍 Signature Analysis:")
-        logger.info(f"  Source events with signatures: {len(source_events)}")
-        logger.info(f"  Total target events: {len(target_map)}")
-        logger.info(f"  Synced target events: {len(synced_target_map)}")
+        # Removed for performance - see speed optimization plan
+        if False:  # DIAGNOSTIC: Signature Analysis
+            logger.info(f"🔍 Signature Analysis:")
+            logger.info(f"  Source events with signatures: {len(source_events)}")
+            logger.info(f"  Total target events: {len(target_map)}")
+            logger.info(f"  Synced target events: {len(synced_target_map)}")
 
-        # Log sample signatures
-        if source_events and synced_target_map:
-            source_sample = []
-            target_sample = []
-            for i, event in enumerate(source_events[:5]):
+            # Log sample signatures
+            if source_events and synced_target_map:
+                source_sample = []
+                target_sample = []
+                for i, event in enumerate(source_events[:5]):
+                    sig = self._create_event_signature(event)
+                    source_sample.append(f"{event.get('subject', 'No Subject')[:20]} -> {sig[:50]}")
+                for i, (sig, event) in enumerate(list(synced_target_map.items())[:5]):
+                    target_sample.append(f"{event.get('subject', 'No Subject')[:20]} -> {sig[:50]}")
+                
+                logger.info(f"  Sample source signatures: {source_sample}")
+                logger.info(f"  Sample synced target signatures: {target_sample}")
+
+            # Find matching signatures
+            source_signatures = set()
+            for event in source_events:
                 sig = self._create_event_signature(event)
-                source_sample.append(f"{event.get('subject', 'No Subject')[:20]} -> {sig[:50]}")
-            for i, (sig, event) in enumerate(list(synced_target_map.items())[:5]):
-                target_sample.append(f"{event.get('subject', 'No Subject')[:20]} -> {sig[:50]}")
+                if not sig.startswith("skip:occurrence:"):
+                    source_signatures.add(sig)
             
-            logger.info(f"  Sample source signatures: {source_sample}")
-            logger.info(f"  Sample synced target signatures: {target_sample}")
-
-        # Find matching signatures
+            synced_target_signatures = set(synced_target_map.keys())
+            
+            # DEBUG: Add detailed signature comparison logging
+            logger.info("="*60)
+            logger.info("SIGNATURE COMPARISON DEBUG")
+            logger.info("="*60)
+            
+            # Log first 10 source signatures
+            logger.info("\nSource calendar signatures (first 10):")
+            source_sample = []
+            for i, event in enumerate(source_events[:10]):
+                sig = self._create_event_signature(event)
+                source_sample.append(sig)
+                logger.info(f"  {i+1}. {sig}")
+                logger.info(f"      Event: {event.get('subject')}")
+                logger.info(f"      Type: {event.get('type')}")
+                logger.info(f"      Start: {event.get('start')}")
+            
+            # Log first 10 target signatures
+            logger.info("\nTarget calendar signatures (first 10):")
+            target_sample = []
+            for i, (sig, event) in enumerate(list(synced_target_map.items())[:10]):
+                target_sample.append(sig)
+                logger.info(f"  {i+1}. {sig}")
+                logger.info(f"      Event: {event.get('subject')}")
+                logger.info(f"      Type: {event.get('type')}")
+                logger.info(f"      Start: {event.get('start')}")
+            
+            # Check if ANY match
+            matches = set(source_sample) & set(target_sample)
+            logger.info(f"\nMatches in sample: {len(matches)}")
+            if matches:
+                logger.info(f"Sample matches: {matches}")
+            
+            logger.info("="*60)
+        
+        # Find matching signatures (moved outside if False block - needed for logic)
         source_signatures = set()
         for event in source_events:
             sig = self._create_event_signature(event)
@@ -1268,101 +1313,68 @@ class SyncEngine:
         
         synced_target_signatures = set(synced_target_map.keys())
         
-        # DEBUG: Add detailed signature comparison logging
-        logger.info("="*60)
-        logger.info("SIGNATURE COMPARISON DEBUG")
-        logger.info("="*60)
-        
-        # Log first 10 source signatures
-        logger.info("\nSource calendar signatures (first 10):")
-        source_sample = []
-        for i, event in enumerate(source_events[:10]):
-            sig = self._create_event_signature(event)
-            source_sample.append(sig)
-            logger.info(f"  {i+1}. {sig}")
-            logger.info(f"      Event: {event.get('subject')}")
-            logger.info(f"      Type: {event.get('type')}")
-            logger.info(f"      Start: {event.get('start')}")
-        
-        # Log first 10 target signatures
-        logger.info("\nTarget calendar signatures (first 10):")
-        target_sample = []
-        for i, (sig, event) in enumerate(list(synced_target_map.items())[:10]):
-            target_sample.append(sig)
-            logger.info(f"  {i+1}. {sig}")
-            logger.info(f"      Event: {event.get('subject')}")
-            logger.info(f"      Type: {event.get('type')}")
-            logger.info(f"      Start: {event.get('start')}")
-        
-        # Check if ANY match
-        matches = set(source_sample) & set(target_sample)
-        logger.info(f"\nMatches in sample: {len(matches)}")
-        if matches:
-            logger.info(f"Sample matches: {matches}")
-        
-        logger.info("="*60)
-        
-        # DUPLICATE DETECTION ANALYSIS
-        logger.info("="*60)
-        logger.info("DUPLICATE DETECTION ANALYSIS")
-        logger.info("="*60)
+        # Removed for performance - see speed optimization plan
+        if False:  # DUPLICATE DETECTION ANALYSIS
+            logger.info("="*60)
+            logger.info("DUPLICATE DETECTION ANALYSIS")
+            logger.info("="*60)
 
-        # Find events with same signature in target
-        target_sig_counts = {}
-        for event in target_events:
-            sig = self._create_event_signature(event)
-            if sig not in target_sig_counts:
-                target_sig_counts[sig] = []
-            target_sig_counts[sig].append(event)
+            # Find events with same signature in target
+            target_sig_counts = {}
+            for event in target_events:
+                sig = self._create_event_signature(event)
+                if sig not in target_sig_counts:
+                    target_sig_counts[sig] = []
+                target_sig_counts[sig].append(event)
 
-        # Find duplicates in target
-        duplicates = {sig: events for sig, events in target_sig_counts.items() if len(events) > 1}
+            # Find duplicates in target
+            duplicates = {sig: events for sig, events in target_sig_counts.items() if len(events) > 1}
 
-        if duplicates:
-            logger.info(f"\nFound {len(duplicates)} duplicate signatures in target:")
-            for sig, events in list(duplicates.items())[:10]:  # Show first 10
-                logger.info(f"\n  Signature: {sig}")
-                logger.info(f"  Occurrences: {len(events)}")
-                for i, event in enumerate(events):
-                    logger.info(f"    {i+1}. {event.get('subject')} - {event.get('start')}")
-                    logger.info(f"       Event ID: {event.get('id')}")
-        else:
-            logger.info("\n✅ No duplicates found in target")
+            if duplicates:
+                logger.info(f"\nFound {len(duplicates)} duplicate signatures in target:")
+                for sig, events in list(duplicates.items())[:10]:  # Show first 10
+                    logger.info(f"\n  Signature: {sig}")
+                    logger.info(f"  Occurrences: {len(events)}")
+                    for i, event in enumerate(events):
+                        logger.info(f"    {i+1}. {event.get('subject')} - {event.get('start')}")
+                        logger.info(f"       Event ID: {event.get('id')}")
+            else:
+                logger.info("\n✅ No duplicates found in target")
 
-        # Find all "Room in the Inn" events specifically
-        logger.info("\nSearching for 'Room in the Inn' events:")
+            # Find all "Room in the Inn" events specifically
+            logger.info("\nSearching for 'Room in the Inn' events:")
 
-        source_room = [e for e in source_events if 'room in the inn' in e.get('subject', '').lower()]
-        target_room = [e for e in target_events if 'room in the inn' in e.get('subject', '').lower()]
+            source_room = [e for e in source_events if 'room in the inn' in e.get('subject', '').lower()]
+            target_room = [e for e in target_events if 'room in the inn' in e.get('subject', '').lower()]
 
-        logger.info(f"\nSource calendar has {len(source_room)} 'Room in the Inn' events:")
-        for event in source_room:
-            sig = self._create_event_signature(event)
-            logger.info(f"  - {event.get('subject')} on {event.get('start')}")
-            logger.info(f"    Signature: {sig}")
-            logger.info(f"    Type: {event.get('type')}")
-            logger.info(f"    Location: {event.get('location')}")
+            logger.info(f"\nSource calendar has {len(source_room)} 'Room in the Inn' events:")
+            for event in source_room:
+                sig = self._create_event_signature(event)
+                logger.info(f"  - {event.get('subject')} on {event.get('start')}")
+                logger.info(f"    Signature: {sig}")
+                logger.info(f"    Type: {event.get('type')}")
+                logger.info(f"    Location: {event.get('location')}")
 
-        logger.info(f"\nTarget calendar has {len(target_room)} 'Room in the Inn' events:")
-        for event in target_room:
-            sig = self._create_event_signature(event)
-            logger.info(f"  - {event.get('subject')} on {event.get('start')}")
-            logger.info(f"    Signature: {sig}")
-            logger.info(f"    Type: {event.get('type')}")
-            logger.info(f"    Location: {event.get('location')}")
+            logger.info(f"\nTarget calendar has {len(target_room)} 'Room in the Inn' events:")
+            for event in target_room:
+                sig = self._create_event_signature(event)
+                logger.info(f"  - {event.get('subject')} on {event.get('start')}")
+                logger.info(f"    Signature: {sig}")
+                logger.info(f"    Type: {event.get('type')}")
+                logger.info(f"    Location: {event.get('location')}")
 
-        # Check if signatures match
-        if len(source_room) > 0 and len(target_room) > 0:
-            source_sigs = {self._create_event_signature(e) for e in source_room}
-            target_sigs = {self._create_event_signature(e) for e in target_room}
-            
-            logger.info(f"\nSource signatures: {source_sigs}")
-            logger.info(f"Target signatures: {target_sigs}")
-            logger.info(f"Matching: {source_sigs & target_sigs}")
-            logger.info(f"Only in source: {source_sigs - target_sigs}")
-            logger.info(f"Only in target: {target_sigs - source_sigs}")
+            # Check if signatures match
+            if len(source_room) > 0 and len(target_room) > 0:
+                source_sigs = {self._create_event_signature(e) for e in source_room}
+                target_sigs = {self._create_event_signature(e) for e in target_room}
+                
+                logger.info(f"\nSource signatures: {source_sigs}")
+                logger.info(f"Target signatures: {target_sigs}")
+                logger.info(f"Matching: {source_sigs & target_sigs}")
+                logger.info(f"Only in source: {source_sigs - target_sigs}")
+                logger.info(f"Only in target: {target_sigs - source_sigs}")
 
-        logger.info("="*60)
+            logger.info("="*60)
         
         # ONE-TIME CLEANUP: Remove duplicate "Room in the Inn" events
         # Note: target_id is not available in this scope, skip cleanup during preview
