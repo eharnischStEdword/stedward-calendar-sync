@@ -460,10 +460,12 @@ class CalendarReader:
             master_id = occ.get('seriesMasterId')
             # If we don't have the series master, this is an orphaned occurrence
             if master_id and master_id not in series_masters:
-                # Check if it meets sync criteria before adding
+                # Check if it meets sync criteria before adding (CASE-INSENSITIVE, EXPANDED BUSY VALUES)
                 categories = occ.get('categories', [])
                 show_as = occ.get('showAs', 'busy')
-                if 'Public' in categories and show_as == 'busy':
+                has_public = any(cat.lower() == 'public' for cat in categories)
+                is_busy = show_as.lower() in ['busy', 'tentative', 'oof', 'workingelsewhere']
+                if has_public and is_busy:
                     filtered_events.append(occ)
                     logger.info(f"✅ Including orphaned occurrence: {occ.get('subject')} on {occ.get('start', {}).get('dateTime', '')[:10]}")
         
@@ -531,16 +533,28 @@ class CalendarReader:
                 logger.info(f"❌ REJECTED (cancelled): {event.get('subject')}")
                 continue
             
-            # Check if public
+            # Check if public (CASE-INSENSITIVE)
             categories = event.get('categories', [])
-            if 'Public' not in categories:
+            has_public_category = any(cat.lower() == 'public' for cat in categories)
+            
+            # VERBOSE DEBUG LOGGING
+            logger.info(f"[FILTER CHECK] {event.get('subject')}")
+            logger.info(f"  Categories: {categories}")
+            logger.info(f"  HasPublic: {has_public_category}")
+            
+            if not has_public_category:
                 stats['non_public'] += 1
                 logger.info(f"❌ REJECTED (not public): {event.get('subject')} - Categories: {categories}")
                 continue
 
-            # CRITICAL: Also check if event is marked as Busy
+            # CRITICAL: Check if event is marked as Busy (expanded to include tentative, oof, workingElsewhere)
             show_as = event.get('showAs', 'busy')
-            if show_as != 'busy':
+            is_busy = show_as.lower() in ['busy', 'tentative', 'oof', 'workingelsewhere']
+            
+            logger.info(f"  ShowAs: {show_as}")
+            logger.info(f"  IsBusy: {is_busy}, WillSync: {has_public_category and is_busy}")
+            
+            if not is_busy:
                 stats['not_busy'] += 1
                 logger.info(f"❌ REJECTED (not busy): {event.get('subject')} - ShowAs: {show_as}")
                 continue

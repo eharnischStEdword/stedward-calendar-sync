@@ -1098,6 +1098,69 @@ def debug_event_details(event_subject):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/debug/event/<event_id>')
+def debug_event_by_id(event_id):
+    """See exactly what Graph API returns for a specific event"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        import requests
+        
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Fetch the specific event
+        url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{source_id}/events/{event_id}"
+        response = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {auth_manager.get_access_token()}"}
+        )
+        
+        if response.status_code != 200:
+            return jsonify({"error": f"Failed to fetch event: {response.status_code}", "details": response.text}), response.status_code
+        
+        event_data = response.json()
+        
+        # Check sync criteria
+        categories = event_data.get('categories', [])
+        show_as = event_data.get('showAs', '')
+        
+        # OLD logic (case-sensitive, strict busy)
+        has_public_old = 'Public' in categories
+        is_busy_old = show_as == 'busy'
+        
+        # NEW logic (case-insensitive, expanded busy values)
+        has_public_new = any(cat.lower() == 'public' for cat in categories)
+        is_busy_new = show_as.lower() in ['busy', 'tentative', 'oof', 'workingelsewhere']
+        
+        return jsonify({
+            "event": event_data,
+            "sync_analysis": {
+                "categories_raw": categories,
+                "show_as": show_as,
+                "old_logic": {
+                    "has_public_category": has_public_old,
+                    "is_busy": is_busy_old,
+                    "would_sync": has_public_old and is_busy_old
+                },
+                "new_logic": {
+                    "has_public_category": has_public_new,
+                    "is_busy": is_busy_new,
+                    "would_sync": has_public_new and is_busy_new
+                },
+                "recommendation": "Event would sync with NEW logic" if (has_public_new and is_busy_new) else "Event would NOT sync - check categories and showAs values"
+            }
+        })
+    except Exception as e:
+        logger.error(f"Debug event error: {e}")
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
 @app.route('/debug/event-durations')
 def debug_event_durations():
     """Report on event durations to identify potential data issues"""
