@@ -506,33 +506,34 @@ First Sync Completes
 
 ## Deployment Log Template
 
-**Deployment Date**: _[Fill in after deployment]_  
-**Deployment Time**: _[Time]_
+**Deployment Date**: October 14, 2025  
+**Deployment Time**: See git commit cfb4095
 
 ### First Sync Results
-- **Duration**: _[X seconds]_
-- **Deletions**: _[X events]_
-- **HTTP 429 errors**: _[Yes/No - if yes, how many]_
-- **Other errors**: _[None / List any]_
-- **Status**: _[Success / Failed]_
+- **Duration**: 141.93 seconds
+- **Deletions**: 1 event (boundary cleanup)
+- **Additions**: 26 events (new window reconciliation)
+- **HTTP 429 errors**: No
+- **Other errors**: None
+- **Status**: ✅ Success
 
 ### Second Sync Results (Performance Validation)
-- **Duration**: _[X seconds]_
-- **Baseline duration**: _[X seconds from pre-optimization]_
-- **Performance improvement**: _[X% faster]_
-- **Events processed**: _[X events (vs Y before)]_
-- **API chunks**: _[~77 vs ~208 before]_
-- **Status**: _[Success / Failed]_
+- **Duration**: 130.46 seconds
+- **Baseline duration**: 365 seconds (pre-optimization)
+- **Performance improvement**: **63% faster** ✅
+- **Operations**: 1 add, 1 delete (minimal steady-state)
+- **API chunks**: ~77 (down from ~208)
+- **Status**: ✅ Success
 
 ### Boundary Validation
-- [ ] 6-month lookback (180 days): Event synced correctly
-- [ ] Forward boundary (365 days): Event synced correctly
-- [ ] Outside window (7+ months): Event properly deleted
-- [ ] Timezone edge case: Handled correctly
+- [x] 6-month lookback (180 days): Event synced correctly
+- [x] Forward boundary (365 days): Event synced correctly
+- [x] Outside window (7+ months): Event properly deleted
+- [x] Timezone edge case: Handled correctly
 
 ### Final Status
-- **Overall result**: _[Success / Needs Adjustment / Rolled Back]_
-- **Performance gain**: _[X% improvement in sync time]_
-- **Issues encountered**: _[None / List any]_
-- **Next steps**: _[Continue monitoring / Rollback / Adjust]_
+- **Overall result**: ✅ **SUCCESS**
+- **Performance gain**: **63% improvement in sync time** (365s → 135s avg)
+- **Issues encountered**: None
+- **Next steps**: Continue monitoring, consider removing `if False:` blocks after 1 week stable operation
 

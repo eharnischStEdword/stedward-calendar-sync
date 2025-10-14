@@ -117,16 +117,12 @@
         }
 
         .status-bar {
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            background: white;
             border-radius: 10px;
-            padding: 1rem;
+            padding: 1.5rem;
             margin-bottom: 2rem;
-            border-left: 4px solid #DAAA00;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 1rem;
+            border-left: 4px solid #10B981;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             transition: all 0.3s ease;
         }
 
@@ -134,6 +130,44 @@
             border-left-color: #005921;
             background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
             animation: successGlow 2s ease-in-out;
+        }
+
+        .status-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .status-icon {
+            font-size: 1.3rem;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .status-metric {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #4b5563;
+            font-size: 0.95rem;
+        }
+
+        .status-metric-icon {
+            font-size: 1.2rem;
+        }
+
+        .status-metric-value {
+            font-weight: 600;
+            color: #1f2937;
         }
 
 
@@ -203,23 +237,28 @@
         .message.info { background: #d1ecf1; border-color: #0c5460; color: #0c5460; }
 
         .actions-section {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
             margin-bottom: 2rem;
         }
 
+        .primary-actions {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .secondary-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 0.75rem;
+        }
+
         .action-btn {
-            background: #005921;
-            color: #EEF4F1;
             border: none;
-            padding: 1rem 1.5rem;
             border-radius: 8px;
             cursor: pointer;
-            font-size: 1rem;
             font-weight: 600;
             transition: all 0.3s ease;
-            min-height: 60px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -229,10 +268,50 @@
             overflow: hidden;
         }
 
-        .action-btn:hover:not(:disabled) {
-            background: #004a1e;
+        .action-btn.primary {
+            background: #2E7D32;
+            color: white;
+            padding: 1.25rem 2rem;
+            font-size: 1.1rem;
+            flex: 1;
+            min-height: 70px;
+            box-shadow: 0 4px 12px rgba(46, 125, 50, 0.3);
+        }
+
+        .action-btn.primary:hover:not(:disabled) {
+            background: #1B5E20;
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0, 89, 33, 0.3);
+            box-shadow: 0 6px 20px rgba(46, 125, 50, 0.4);
+        }
+
+        .action-btn.primary-secondary {
+            background: white;
+            color: #2E7D32;
+            border: 2px solid #2E7D32;
+            padding: 1rem 1.5rem;
+            font-size: 1rem;
+            flex: 0.8;
+            min-height: 70px;
+        }
+
+        .action-btn.primary-secondary:hover:not(:disabled) {
+            background: #f1f8f4;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(46, 125, 50, 0.2);
+        }
+
+        .action-btn.secondary {
+            background: #4A5568;
+            color: white;
+            padding: 0.75rem 1rem;
+            font-size: 0.9rem;
+            min-height: 50px;
+        }
+
+        .action-btn.secondary:hover:not(:disabled) {
+            background: #2D3748;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(74, 85, 104, 0.3);
         }
 
         .action-btn:disabled {
@@ -247,29 +326,161 @@
 
 
 
-        .action-btn.secondary {
-            background: #6c757d;
-        }
-
-        .action-btn.secondary:hover:not(:disabled) {
-            background: #5a6268;
-        }
-
         .action-btn.warning {
-            background: #e74c3c;
+            background: #DC2626;
+            color: white;
         }
 
         .action-btn.warning:hover:not(:disabled) {
-            background: #c0392b;
+            background: #B91C1C;
         }
 
         .action-btn.paused {
-            background: #DAAA00;
+            background: #F59E0B !important;
             animation: pulse-warning 2s infinite;
         }
 
         .action-btn.paused:hover:not(:disabled) {
-            background: #b89400;
+            background: #D97706 !important;
+        }
+
+        /* Danger Zone Styles */
+        .danger-zone {
+            margin-top: 3rem;
+            border: 1px solid #FEE2E2;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .danger-zone-header {
+            background: #FEF2F2;
+            padding: 1rem 1.5rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: background 0.2s;
+        }
+
+        .danger-zone-header:hover {
+            background: #FEE2E2;
+        }
+
+        .danger-zone-header h3 {
+            margin: 0;
+            font-size: 1rem;
+            color: #991B1B;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .danger-zone-content {
+            padding: 1.5rem;
+            background: white;
+            display: none;
+        }
+
+        .danger-zone-content.expanded {
+            display: block;
+        }
+
+        .danger-warning {
+            background: #FEF2F2;
+            border-left: 4px solid #DC2626;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            border-radius: 4px;
+            color: #7F1D1D;
+        }
+
+        .danger-option {
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            border: 1px solid #E5E7EB;
+            border-radius: 6px;
+        }
+
+        .danger-option-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .danger-option-description {
+            font-size: 0.9rem;
+            color: #6B7280;
+            margin-left: 2rem;
+        }
+
+        .danger-confirm-input {
+            margin-top: 1rem;
+            padding: 0.75rem;
+            border: 2px solid #E5E7EB;
+            border-radius: 6px;
+            width: 100%;
+            font-size: 1rem;
+        }
+
+        .danger-confirm-input:focus {
+            outline: none;
+            border-color: #DC2626;
+        }
+
+        /* Search Modal Styles */
+        .search-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .search-modal.active {
+            display: flex;
+        }
+
+        .search-modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .search-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+        }
+
+        .search-modal-header h3 {
+            margin: 0;
+            font-size: 1.3rem;
+            color: #1F2937;
+        }
+
+        .search-modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #6B7280;
+            padding: 0.25rem 0.5rem;
+        }
+
+        .search-modal-close:hover {
+            color: #1F2937;
         }
 
 
@@ -382,12 +593,21 @@
         }
 
         @media (max-width: 768px) {
-            .status-bar {
-                flex-direction: column;
-                align-items: flex-start;
+            .status-grid {
+                grid-template-columns: 1fr;
             }
             
-            .actions-section {
+            .primary-actions {
+                flex-direction: column;
+            }
+
+            .action-btn.primary,
+            .action-btn.primary-secondary {
+                flex: 1;
+                width: 100%;
+            }
+
+            .secondary-actions {
                 grid-template-columns: 1fr;
             }
 
@@ -399,6 +619,50 @@
             .preview-actions {
                 flex-direction: column;
             }
+
+            .search-modal-content {
+                width: 95%;
+                padding: 1.5rem;
+            }
+        }
+
+        /* Animations */
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes successPulse {
+            0%, 100% { box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+            50% { box-shadow: 0 0 30px rgba(0, 89, 33, 0.5); }
+        }
+
+        @keyframes shimmer {
+            to { left: 100%; }
+        }
+
+        @keyframes successGlow {
+            0%, 100% { background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); }
+            50% { background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); }
+        }
+
+        @keyframes successBounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        @keyframes dotPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes sparkle {
+            0%, 100% { transform: translateY(-50%) scale(1); opacity: 1; }
+            50% { transform: translateY(-50%) scale(1.2); opacity: 0.7; }
+        }
+
+        @keyframes pulse-warning {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(218, 170, 0, 0.4); }
+            50% { box-shadow: 0 0 0 10px rgba(218, 170, 0, 0); }
         }
     </style>
 </head>
@@ -418,27 +682,30 @@
             </div>
 
             <div class="card-content">
-                <!-- Status bar -->
+                <!-- Enhanced Status Bar -->
                 <div class="status-bar" id="status-bar">
-                    <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
-                        <div class="status-item">
-                            <div class="status-dot success" id="auth-dot"></div>
-                            <span id="auth-text">Connected</span>
-                        </div>
-                        <div class="status-item">
-                            <div class="status-dot success" id="sync-dot"></div>
-                            <span id="sync-text">Ready</span>
-                        </div>
-                        <div class="status-item">
-                            <div class="status-dot success" id="scheduler-dot"></div>
-                            <span>Auto-sync Active</span>
-                        </div>
+                    <div class="status-header">
+                        <span class="status-icon">●</span>
+                        <span id="status-header-text">System Status: All Systems Go</span>
                     </div>
-                    <div style="text-align: right;">
-                        <div>Last sync: <span id="last-sync-time">Never</span></div>
-                        <div>Next scheduled: <span id="next-sync-time">Unknown</span></div>
-                        <div style="font-size: 0.8rem; color: #888;">Scheduled syncs today: <span id="scheduled-sync-count">0</span></div>
-                        <div class="timezone-info">All times in Central Time (CT)</div>
+                    
+                    <div class="status-grid">
+                        <div class="status-metric">
+                            <span class="status-metric-icon">🔄</span>
+                            <span>Auto-sync: <span class="status-metric-value" id="auto-sync-status">Active</span></span>
+                        </div>
+                        <div class="status-metric">
+                            <span class="status-metric-icon">⏱️</span>
+                            <span>Last sync: <span class="status-metric-value" id="last-sync-time">Never</span></span>
+                        </div>
+                        <div class="status-metric">
+                            <span class="status-metric-icon">📅</span>
+                            <span>Next sync: <span class="status-metric-value" id="next-sync-time">Unknown</span></span>
+                        </div>
+                        <div class="status-metric">
+                            <span class="status-metric-icon">✓</span>
+                            <span>Events synced today: <span class="status-metric-value" id="scheduled-sync-count">0</span></span>
+                        </div>
                     </div>
                 </div>
 
@@ -491,123 +758,114 @@
 
                 <!-- Action buttons -->
                 <div class="actions-section">
-                    <button class="action-btn" onclick="previewSync()" id="preview-btn">
-                        <span>🔍</span>
-                        <span>Preview Changes</span>
-                    </button>
-                    
-                    <button class="action-btn" onclick="syncNow()" id="sync-btn">
-                        <span id="sync-icon">🔄</span>
-                        <span id="sync-label">Sync Now</span>
-                    </button>
-                    
-                    <a href="/test-sync" style="text-decoration: none;">
-                        <button class="action-btn" style="background: #17a2b8; border-color: #17a2b8;">
-                            <span>🧪</span>
-                            <span>Test Sync Fix</span>
+                    <!-- Primary Actions -->
+                    <div class="primary-actions">
+                        <button class="action-btn primary-secondary" onclick="previewSync()" id="preview-btn">
+                            <span>🔍</span>
+                            <span>Preview Changes</span>
                         </button>
-                    </a>
-                    
-                    <button class="action-btn secondary" onclick="toggleScheduler()" id="scheduler-toggle-btn">
-                        <span id="scheduler-icon">⏸️</span>
-                        <span id="scheduler-label">Pause Syncing</span>
-                    </button>
-                    
-                    <button class="action-btn secondary" onclick="showStatus()" id="status-btn">
-                        📊 System Status
-                    </button>
-                    
-                    <a href="/debug" class="action-btn secondary">
-                        🔍 Debug Info
-                    </a>
-                    
-                    <div style="position: relative;">
-                        <button class="action-btn secondary" onclick="toggleBulletinMenu(event)" style="position: relative;">
-                            📋 Weekly Bulletin ▼
+                        
+                        <button class="action-btn primary" onclick="syncNow()" id="sync-btn">
+                            <span id="sync-icon">▶️</span>
+                            <span id="sync-label">Sync Now</span>
                         </button>
-                        <div id="bulletin-menu" style="display: none; position: absolute; bottom: 100%; margin-bottom: 5px; left: 0; min-width: 200px; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; border: 1px solid #ddd;">
-                            <a href="/bulletin-events?week=current" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
-                                📅 Current Week
-                            </a>
-                            <a href="/bulletin-events?week=upcoming" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
-                                📆 Upcoming Week
-                            </a>
-                            <a href="/bulletin-events?week=following" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
-                                📋 Following Week
-                            </a>
+                    </div>
+                    
+                    <!-- Secondary Actions -->
+                    <div class="secondary-actions">
+                        <button class="action-btn secondary" onclick="toggleScheduler()" id="scheduler-toggle-btn">
+                            <span id="scheduler-icon">⏸️</span>
+                            <span id="scheduler-label">Pause</span>
+                        </button>
+                        
+                        <button class="action-btn secondary" onclick="showStatus()" id="status-btn">
+                            📊 Status
+                        </button>
+                        
+                        <button class="action-btn secondary" onclick="openSearchModal()">
+                            🔍 Search Events
+                        </button>
+                        
+                        <div style="position: relative;">
+                            <button class="action-btn secondary" onclick="toggleBulletinMenu(event)" style="position: relative;">
+                                📰 Weekly Bulletin ▾
+                            </button>
+                            <div id="bulletin-menu" style="display: none; position: absolute; bottom: 100%; margin-bottom: 5px; left: 0; min-width: 200px; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; border: 1px solid #ddd;">
+                                <a href="/bulletin-events?week=current" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                                    📅 Current Week
+                                </a>
+                                <a href="/bulletin-events?week=upcoming" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; border-bottom: 1px solid #eee; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                                    📆 Upcoming Week
+                                </a>
+                                <a href="/bulletin-events?week=following" target="_blank" style="display: block; padding: 12px 16px; color: #333; text-decoration: none; transition: background 0.2s; font-weight: normal; font-size: 0.95rem;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='white'">
+                                    📋 Following Week
+                                </a>
+                            </div>
                         </div>
+
+                        <a href="/debug" class="action-btn secondary" style="text-decoration: none;">
+                            🐛 Debug
+                        </a>
+                        
+                        <a href="/test-sync" class="action-btn secondary" style="text-decoration: none;">
+                            🧪 Test Fix
+                        </a>
                     </div>
                 </div>
 
-                <!-- Clear Target Calendar Section -->
-                <div class="card mb-4 border-danger">
-                    <div class="card-header bg-danger text-white">
-                        <h5 class="mb-0">🚨 Danger Zone</h5>
+                <!-- Danger Zone - Collapsible at bottom -->
+                <div class="danger-zone">
+                    <div class="danger-zone-header" onclick="toggleDangerZone()">
+                        <h3>
+                            <span>⚠️</span>
+                            <span>Advanced Actions</span>
+                        </h3>
+                        <span id="danger-zone-arrow">▼</span>
                     </div>
-                    <div class="card-body">
-                        <div class="alert alert-danger">
-                            <strong>Warning!</strong> This will permanently delete ALL events from the target calendar.
+                    <div class="danger-zone-content" id="danger-zone-content">
+                        <div class="danger-warning">
+                            <strong>⚠️ Warning:</strong> These actions are irreversible and will permanently delete events from your calendar.
                         </div>
-                        <div class="form-check mb-3">
-                            <input class="form-check-input" type="checkbox" id="confirmClear" onchange="toggleClearButton()">
-                            <label class="form-check-label" for="confirmClear">
-                                I understand this will DELETE ALL events from St. Edward Public Calendar
-                            </label>
-                        </div>
-                        <button id="clearButton" class="btn btn-danger" onclick="clearTargetCalendar()" disabled>
-                            🚨 Clear Target Calendar
-                        </button>
                         
-                        <div class="mt-3">
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="checkbox" id="confirmClearSynced" onchange="toggleClearSyncedButton()">
-                                <label class="form-check-label" for="confirmClearSynced">
-                                    I understand this will DELETE ONLY events created by sync
+                        <div class="danger-option">
+                            <div class="danger-option-header">
+                                <input type="checkbox" id="confirmClear" onchange="validateDangerAction()">
+                                <label for="confirmClear" style="margin: 0; cursor: pointer;">
+                                    <strong>Clear all target calendar events</strong>
                                 </label>
                             </div>
-                            <button id="clearSyncedButton" class="btn btn-warning" onclick="clearSyncedEventsOnly()" disabled>
-                                🧹 Clear Synced Events Only
+                            <div class="danger-option-description">
+                                Will delete <span id="total-events-count">all</span> events from St. Edward Public Calendar
+                            </div>
+                        </div>
+                        
+                        <div class="danger-option">
+                            <div class="danger-option-header">
+                                <input type="checkbox" id="confirmClearSynced" onchange="validateDangerAction()">
+                                <label for="confirmClearSynced" style="margin: 0; cursor: pointer;">
+                                    <strong>Clear only synced events</strong>
+                                </label>
+                            </div>
+                            <div class="danger-option-description">
+                                Will delete <span id="synced-events-count">synced</span> events created by this system
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 1.5rem;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #1F2937;">
+                                Type "DELETE" to confirm:
+                            </label>
+                            <input type="text" id="danger-confirm-text" class="danger-confirm-input" placeholder="Type DELETE here" oninput="validateDangerAction()">
+                        </div>
+                        
+                        <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+                            <button class="action-btn secondary" onclick="toggleDangerZone()" style="flex: 1;">
+                                Cancel
+                            </button>
+                            <button id="danger-execute-btn" class="action-btn warning" onclick="executeDangerAction()" disabled style="flex: 1;">
+                                Confirm Deletion
                             </button>
                         </div>
-                    </div>
-                </div>
-
-                <!-- Event Search - Full Width -->
-                <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; border: 1px solid #e9ecef; margin-bottom: 2rem;">
-                    <h3 style="margin: 0 0 1rem 0; color: #005921; font-size: 1.2rem; font-weight: 600;">🔍 Search Events</h3>
-                    
-                    <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
-                        <!-- Search Input -->
-                        <div style="flex: 1; min-width: 250px;">
-                            <input type="text" id="event-search-term" placeholder="Search for events (e.g., scout, council, mass)..." 
-                                   style="width: 100%; padding: 0.75rem 1rem; border: 2px solid #e9ecef; border-radius: 6px; font-size: 1rem; transition: border-color 0.3s;"
-                                   onfocus="this.style.borderColor='#005921'" onblur="this.style.borderColor='#e9ecef'">
-                        </div>
-                        
-                        <!-- Radio Buttons Container -->
-                        <div style="display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap;">
-                            <label style="display: flex; align-items: center; cursor: pointer; font-size: 0.95rem;">
-                                <input type="radio" name="date-range" value="week" style="margin-right: 0.5rem; cursor: pointer;">
-                                <span>Next 7 days</span>
-                            </label>
-                            <label style="display: flex; align-items: center; cursor: pointer; font-size: 0.95rem;">
-                                <input type="radio" name="date-range" value="month" checked style="margin-right: 0.5rem; cursor: pointer;">
-                                <span>Next 30 days</span>
-                            </label>
-                            <label style="display: flex; align-items: center; cursor: pointer; font-size: 0.95rem;">
-                                <input type="radio" name="date-range" value="quarter" style="margin-right: 0.5rem; cursor: pointer;">
-                                <span>Next 90 days</span>
-                            </label>
-                            <label style="display: flex; align-items: center; cursor: pointer; font-size: 0.95rem;">
-                                <input type="radio" name="date-range" value="june" style="margin-right: 0.5rem; cursor: pointer;">
-                                <span>Until June 30</span>
-                            </label>
-                        </div>
-                        
-                        <!-- Search Button -->
-                        <button class="action-btn" onclick="searchEvents()" style="min-width: 120px; padding: 0.75rem 1.5rem; height: auto;">
-                            🔍 Search
-                        </button>
                     </div>
                 </div>
 
@@ -625,6 +883,58 @@
         <p>St. Edward Church & School • Calendar Management System • Nashville, TN</p>
         <p style="margin-top: 0.5rem; opacity: 0.7;">Automated synchronization every 15 minutes</p>
     </footer>
+
+    <!-- Search Modal -->
+    <div class="search-modal" id="search-modal">
+        <div class="search-modal-content">
+            <div class="search-modal-header">
+                <h3>🔍 Search Events</h3>
+                <button class="search-modal-close" onclick="closeSearchModal()">×</button>
+            </div>
+            
+            <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #1F2937;">
+                    Search for events:
+                </label>
+                <input type="text" id="event-search-term" placeholder="e.g., scout, council, mass..." 
+                       style="width: 100%; padding: 0.75rem 1rem; border: 2px solid #E5E7EB; border-radius: 6px; font-size: 1rem;"
+                       onfocus="this.style.borderColor='#2E7D32'" onblur="this.style.borderColor='#E5E7EB'">
+            </div>
+            
+            <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; margin-bottom: 0.75rem; font-weight: 600; color: #1F2937;">
+                    Date range:
+                </label>
+                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <label style="display: flex; align-items: center; cursor: pointer; padding: 0.5rem; border: 1px solid #E5E7EB; border-radius: 6px; transition: background 0.2s;" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background='white'">
+                        <input type="radio" name="date-range" value="week" style="margin-right: 0.75rem; cursor: pointer;">
+                        <span>Next 7 days</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer; padding: 0.5rem; border: 1px solid #E5E7EB; border-radius: 6px; transition: background 0.2s;" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background='white'">
+                        <input type="radio" name="date-range" value="month" checked style="margin-right: 0.75rem; cursor: pointer;">
+                        <span>Next 30 days</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer; padding: 0.5rem; border: 1px solid #E5E7EB; border-radius: 6px; transition: background 0.2s;" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background='white'">
+                        <input type="radio" name="date-range" value="quarter" style="margin-right: 0.75rem; cursor: pointer;">
+                        <span>Next 90 days</span>
+                    </label>
+                    <label style="display: flex; align-items: center; cursor: pointer; padding: 0.5rem; border: 1px solid #E5E7EB; border-radius: 6px; transition: background 0.2s;" onmouseover="this.style.background='#F9FAFB'" onmouseout="this.style.background='white'">
+                        <input type="radio" name="date-range" value="june" style="margin-right: 0.75rem; cursor: pointer;">
+                        <span>Until June 30</span>
+                    </label>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 1rem;">
+                <button class="action-btn secondary" onclick="closeSearchModal()" style="flex: 1;">
+                    Cancel
+                </button>
+                <button class="action-btn primary" onclick="searchEvents()" style="flex: 1;">
+                    🔍 Search
+                </button>
+            </div>
+        </div>
+    </div>
 
 
 
@@ -672,7 +982,7 @@
                     labelEl.textContent = label || 'Syncing...';
                 } else {
                     btn.disabled = false;
-                    icon.textContent = '🔄';
+                    icon.textContent = '▶️';
                     labelEl.textContent = 'Sync Now';
                 }
             } else if (buttonId === 'scheduler-toggle-btn') {
@@ -703,36 +1013,43 @@
 
 
         function updateStatusDots(status) {
-            // Update auth status
-            const authDot = document.getElementById('auth-dot');
-            const authText = document.getElementById('auth-text');
-            if (authDot && authText) {
-                if (status.authenticated) {
-                    authDot.className = 'status-dot success';
-                    authText.textContent = 'Connected';
+            // Update status header
+            const statusBar = document.getElementById('status-bar');
+            const statusHeaderText = document.getElementById('status-header-text');
+            const statusIcon = document.querySelector('.status-icon');
+            const autoSyncStatus = document.getElementById('auto-sync-status');
+            
+            if (statusHeaderText && statusIcon) {
+                if (!status.authenticated) {
+                    statusHeaderText.textContent = 'System Status: Disconnected';
+                    statusIcon.style.color = '#EF4444';
+                    statusBar.style.borderLeftColor = '#EF4444';
+                } else if (status.sync_in_progress) {
+                    statusHeaderText.textContent = 'System Status: Syncing...';
+                    statusIcon.style.color = '#F59E0B';
+                    statusBar.style.borderLeftColor = '#F59E0B';
+                } else if (status.last_sync_result && !status.last_sync_result.success) {
+                    statusHeaderText.textContent = 'System Status: Sync Error';
+                    statusIcon.style.color = '#EF4444';
+                    statusBar.style.borderLeftColor = '#EF4444';
                 } else {
-                    authDot.className = 'status-dot error';
-                    authText.textContent = 'Disconnected';
+                    statusHeaderText.textContent = 'System Status: All Systems Go';
+                    statusIcon.style.color = '#10B981';
+                    statusBar.style.borderLeftColor = '#10B981';
                 }
             }
 
-            // Update sync status
-            const syncDot = document.getElementById('sync-dot');
-            const syncText = document.getElementById('sync-text');
-            
-            if (syncDot && syncText) {
-                if (status.sync_in_progress) {
-                    syncDot.className = 'status-dot warning';
-                    syncText.textContent = 'Syncing...';
-                } else if (status.last_sync_result && status.last_sync_result.success) {
-                    syncDot.className = 'status-dot success';
-                    syncText.textContent = 'Ready';
-                } else if (status.last_sync_result && !status.last_sync_result.success) {
-                    syncDot.className = 'status-dot error';
-                    syncText.textContent = 'Error';
+            // Update auto-sync status
+            if (autoSyncStatus) {
+                if (status.scheduler_paused) {
+                    autoSyncStatus.textContent = 'Paused';
+                    autoSyncStatus.style.color = '#F59E0B';
+                } else if (status.scheduler_running) {
+                    autoSyncStatus.textContent = 'Active (every 15 min)';
+                    autoSyncStatus.style.color = '#10B981';
                 } else {
-                    syncDot.className = 'status-dot warning';
-                    syncText.textContent = 'Never Synced';
+                    autoSyncStatus.textContent = 'Inactive';
+                    autoSyncStatus.style.color = '#EF4444';
                 }
             }
 
@@ -996,12 +1313,12 @@
                     if (icon && label) {
                         if (result.paused) {
                             icon.textContent = '▶️';
-                            label.textContent = 'Resume Syncing';
+                            label.textContent = 'Resume';
                             document.getElementById('scheduler-toggle-btn').classList.add('paused');
                             showMessage('⏸️ Automatic syncing paused', 'warning');
                         } else {
                             icon.textContent = '⏸️';
-                            label.textContent = 'Pause Syncing';
+                            label.textContent = 'Pause';
                             document.getElementById('scheduler-toggle-btn').classList.remove('paused');
                             showMessage('▶️ Automatic syncing resumed', 'success');
                         }
@@ -1086,11 +1403,11 @@
                 if (icon && label) {
                     if (status.scheduler_paused) {
                         icon.textContent = '▶️';
-                        label.textContent = 'Resume Syncing';
+                        label.textContent = 'Resume';
                         document.getElementById('scheduler-toggle-btn').classList.add('paused');
                     } else {
                         icon.textContent = '⏸️';
-                        label.textContent = 'Pause Syncing';
+                        label.textContent = 'Pause';
                         document.getElementById('scheduler-toggle-btn').classList.remove('paused');
                     }
                 }
@@ -1117,6 +1434,15 @@
             menu.style.display = isOpen ? 'none' : 'block';
         }
 
+        // Search Modal Functions
+        function openSearchModal() {
+            document.getElementById('search-modal').classList.add('active');
+        }
+
+        function closeSearchModal() {
+            document.getElementById('search-modal').classList.remove('active');
+        }
+
         function searchEvents() {
             const searchTerm = document.getElementById('event-search-term').value.trim();
             const selectedRange = document.querySelector('input[name="date-range"]:checked').value;
@@ -1127,15 +1453,66 @@
             }
             url += `range=${selectedRange}`;
             
-            // Open in new tab
+            // Close modal and open in new tab
+            closeSearchModal();
             window.open(url, '_blank');
         }
 
-        // Close menu when clicking anywhere else
+        // Danger Zone Functions
+        function toggleDangerZone() {
+            const content = document.getElementById('danger-zone-content');
+            const arrow = document.getElementById('danger-zone-arrow');
+            
+            if (content.classList.contains('expanded')) {
+                content.classList.remove('expanded');
+                arrow.textContent = '▼';
+                // Reset form
+                document.getElementById('confirmClear').checked = false;
+                document.getElementById('confirmClearSynced').checked = false;
+                document.getElementById('danger-confirm-text').value = '';
+                validateDangerAction();
+            } else {
+                content.classList.add('expanded');
+                arrow.textContent = '▲';
+            }
+        }
+
+        function validateDangerAction() {
+            const clearAll = document.getElementById('confirmClear').checked;
+            const clearSynced = document.getElementById('confirmClearSynced').checked;
+            const confirmText = document.getElementById('danger-confirm-text').value;
+            const executeBtn = document.getElementById('danger-execute-btn');
+            
+            // Enable button only if one option is selected and DELETE is typed correctly
+            const isValid = (clearAll || clearSynced) && confirmText === 'DELETE';
+            executeBtn.disabled = !isValid;
+        }
+
+        async function executeDangerAction() {
+            const clearAll = document.getElementById('confirmClear').checked;
+            const clearSynced = document.getElementById('confirmClearSynced').checked;
+            
+            if (clearAll) {
+                await clearTargetCalendar();
+            } else if (clearSynced) {
+                await clearSyncedEventsOnly();
+            }
+            
+            // Close danger zone after execution
+            toggleDangerZone();
+        }
+
+        // Close menus and modals when clicking outside
         document.addEventListener('click', function(event) {
             const bulletinMenu = document.getElementById('bulletin-menu');
-            if (!event.target.closest('#bulletin-menu')) {
+            if (!event.target.closest('#bulletin-menu') && !event.target.closest('[onclick*="toggleBulletinMenu"]')) {
                 bulletinMenu.style.display = 'none';
+            }
+            
+            // Close search modal when clicking outside
+            const searchModal = document.getElementById('search-modal');
+            if (searchModal && event.target === searchModal) {
+                closeSearchModal();
             }
         });
 
@@ -1149,6 +1526,13 @@
                     }
                 });
             }
+            
+            // ESC key to close modal
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    closeSearchModal();
+                }
+            });
         });
 
         // Initialize on page load
@@ -1163,40 +1547,27 @@
             }, 60000);
         });
 
-        function toggleClearButton() {
-            const checkbox = document.getElementById('confirmClear');
-            const button = document.getElementById('clearButton');
-            button.disabled = !checkbox.checked;
-        }
-
-        function toggleClearSyncedButton() {
-            const checkbox = document.getElementById('confirmClearSynced');
-            const button = document.getElementById('clearSyncedButton');
-            button.disabled = !checkbox.checked;
-        }
-
         async function clearTargetCalendar() {
             if (!confirm('FINAL WARNING: This will delete ALL events from the target calendar. Are you absolutely sure?')) {
                 return;
             }
             
-            const button = document.getElementById('clearButton');
-            button.disabled = true;
-            button.innerHTML = '⏳ Clearing calendar...';
+            const executeBtn = document.getElementById('danger-execute-btn');
+            executeBtn.disabled = true;
+            executeBtn.innerHTML = '⏳ Clearing calendar...';
             
             try {
                 const response = await fetch('/clear-target', {
                     method: 'POST'
                 });
                 const data = await response.json();
-                alert(`Calendar cleared: ${data.deleted} events removed`);
-                location.reload();
+                showMessage(`✅ Calendar cleared: ${data.deleted} events removed`, 'success');
+                setTimeout(() => location.reload(), 2000);
             } catch (error) {
-                alert('Error clearing calendar: ' + error);
+                showMessage('❌ Error clearing calendar: ' + error, 'error');
+                executeBtn.disabled = false;
+                executeBtn.innerHTML = 'Confirm Deletion';
             }
-            
-            document.getElementById('confirmClear').checked = false;
-            toggleClearButton();
         }
 
         async function clearSyncedEventsOnly() {
@@ -1204,23 +1575,22 @@
                 return;
             }
             
-            const button = document.getElementById('clearSyncedButton');
-            button.disabled = true;
-            button.innerHTML = '⏳ Clearing synced events...';
+            const executeBtn = document.getElementById('danger-execute-btn');
+            executeBtn.disabled = true;
+            executeBtn.innerHTML = '⏳ Clearing synced events...';
             
             try {
                 const response = await fetch('/clear-synced-only', {
                     method: 'POST'
                 });
                 const data = await response.json();
-                alert(`Synced events cleared: ${data.deleted} events removed`);
-                location.reload();
+                showMessage(`✅ Synced events cleared: ${data.deleted} events removed`, 'success');
+                setTimeout(() => location.reload(), 2000);
             } catch (error) {
-                alert('Error clearing synced events: ' + error);
+                showMessage('❌ Error clearing synced events: ' + error, 'error');
+                executeBtn.disabled = false;
+                executeBtn.innerHTML = 'Confirm Deletion';
             }
-            
-            document.getElementById('confirmClearSynced').checked = false;
-            toggleClearSyncedButton();
         }
 
         // Clean up polling when page unloads
