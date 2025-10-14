@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar Sync Testing</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; margin-top: 0; }
+        h2 { color: #555; margin-top: 30px; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px 10px 0;
+        }
+        .btn:hover { background: #0056b3; }
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        input[type="text"] {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 400px;
+            margin-right: 10px;
+        }
+        .result {
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .result.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .result.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .result.info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status-badge.true {
+            background: #28a745;
+            color: white;
+        }
+        .status-badge.false {
+            background: #dc3545;
+            color: white;
+        }
+        .loading {
+            display: inline-block;
+            margin-left: 10px;
+            color: #007bff;
+        }
+        .event-card {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .event-card h4 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        .event-detail {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        .event-detail strong {
+            display: inline-block;
+            width: 150px;
+            color: #666;
+        }
+        .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #007bff;
+            text-decoration: none;
+        }
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">← Back to Dashboard</a>
+        
+        <h1>📊 Calendar Sync Testing</h1>
+        <p>Test the calendar sync fix for "Breakfast with Santa" event</p>
+
+        <h2>Step 1: Find Event</h2>
+        <div class="section">
+            <p>Search for events by name:</p>
+            <input type="text" id="searchTerm" placeholder="Enter event name (e.g., 'breakfast')" value="breakfast">
+            <button class="btn" onclick="searchEvents()">Search Events</button>
+            <div id="searchResult"></div>
+        </div>
+
+        <h2>Step 2: Test Event</h2>
+        <div class="section">
+            <p>Test a specific event ID:</p>
+            <input type="text" id="eventId" placeholder="Paste event ID here">
+            <button class="btn" onclick="testEvent()">Test Event</button>
+            <div id="testResult"></div>
+        </div>
+
+        <h2>Step 3: Run Sync</h2>
+        <div class="section">
+            <p>Manually trigger calendar sync:</p>
+            <button class="btn" onclick="runSync()">Run Sync Now</button>
+            <div id="syncResult"></div>
+        </div>
+
+        <h2>Step 4: View Logs</h2>
+        <div class="section">
+            <p>Check recent sync activity:</p>
+            <button class="btn" onclick="viewLogs()">View Sync History</button>
+            <div id="logsResult"></div>
+        </div>
+    </div>
+
+    <script>
+        function showLoading(elementId) {
+            document.getElementById(elementId).innerHTML = '<span class="loading">⏳ Loading...</span>';
+        }
+
+        function showError(elementId, message) {
+            document.getElementById(elementId).innerHTML = 
+                `<div class="result error">❌ Error: ${escapeHtml(message)}</div>`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function searchEvents() {
+            const searchTerm = document.getElementById('searchTerm').value;
+            const resultDiv = 'searchResult';
+            
+            if (!searchTerm) {
+                showError(resultDiv, 'Please enter a search term');
+                return;
+            }
+
+            showLoading(resultDiv);
+
+            try {
+                const response = await fetch(`/debug/find-event/${encodeURIComponent(searchTerm)}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(resultDiv, data.error || 'Failed to search events');
+                    return;
+                }
+
+                if (data.found_count === 0) {
+                    document.getElementById(resultDiv).innerHTML = 
+                        `<div class="result info">No events found matching "${searchTerm}"</div>`;
+                    return;
+                }
+
+                let html = `<div class="result success">✅ Found ${data.found_count} event(s)</div>`;
+                
+                data.events.forEach(event => {
+                    const wouldSync = event.has_public && event.is_busy;
+                    html += `
+                        <div class="event-card">
+                            <h4>${escapeHtml(event.subject)}</h4>
+                            <div class="event-detail"><strong>Event ID:</strong> <code>${event.id}</code></div>
+                            <div class="event-detail"><strong>Start:</strong> ${event.start}</div>
+                            <div class="event-detail"><strong>Categories:</strong> ${event.categories.join(', ') || 'None'}</div>
+                            <div class="event-detail"><strong>Show As:</strong> ${event.showAs}</div>
+                            <div class="event-detail">
+                                <strong>Has Public:</strong> <span class="status-badge ${event.has_public}">${event.has_public ? 'YES' : 'NO'}</span>
+                            </div>
+                            <div class="event-detail">
+                                <strong>Is Busy:</strong> <span class="status-badge ${event.is_busy}">${event.is_busy ? 'YES' : 'NO'}</span>
+                            </div>
+                            <div class="event-detail">
+                                <strong>Would Sync:</strong> <span class="status-badge ${wouldSync}">${wouldSync ? 'YES ✅' : 'NO ❌'}</span>
+                            </div>
+                            <button class="btn" onclick="document.getElementById('eventId').value='${event.id}'; window.scrollTo(0, document.getElementById('eventId').offsetTop - 100);">
+                                Use This Event ID
+                            </button>
+                        </div>
+                    `;
+                });
+
+                document.getElementById(resultDiv).innerHTML = html;
+
+            } catch (error) {
+                showError(resultDiv, error.message);
+            }
+        }
+
+        async function testEvent() {
+            const eventId = document.getElementById('eventId').value;
+            const resultDiv = 'testResult';
+            
+            if (!eventId) {
+                showError(resultDiv, 'Please enter an event ID');
+                return;
+            }
+
+            showLoading(resultDiv);
+
+            try {
+                const response = await fetch(`/debug/event/${encodeURIComponent(eventId)}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(resultDiv, data.error || 'Failed to test event');
+                    return;
+                }
+
+                const analysis = data.sync_analysis.new_logic;
+                const wouldSync = analysis.would_sync;
+
+                let html = `
+                    <div class="result ${wouldSync ? 'success' : 'error'}">
+                        <h3>${wouldSync ? '✅ Event WILL Sync' : '❌ Event will NOT sync'}</h3>
+                        <div style="margin-top: 15px;">
+                            <div><strong>Event:</strong> ${escapeHtml(data.event.subject)}</div>
+                            <div><strong>Start:</strong> ${data.event.start.dateTime}</div>
+                            <div style="margin-top: 10px;"><strong>Sync Analysis:</strong></div>
+                            <div>• Has Public Category: <span class="status-badge ${analysis.has_public_category}">${analysis.has_public_category ? 'YES' : 'NO'}</span></div>
+                            <div>• Is Busy: <span class="status-badge ${analysis.is_busy}">${analysis.is_busy ? 'YES' : 'NO'}</span></div>
+                            <div>• Would Sync: <span class="status-badge ${wouldSync}">${wouldSync ? 'YES' : 'NO'}</span></div>
+                        </div>
+                        <div style="margin-top: 15px;">
+                            <strong>Raw Data:</strong>
+                            <pre style="margin-top: 5px; background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 12px;">${JSON.stringify(data.event, null, 2)}</pre>
+                        </div>
+                    </div>
+                `;
+
+                document.getElementById(resultDiv).innerHTML = html;
+
+            } catch (error) {
+                showError(resultDiv, error.message);
+            }
+        }
+
+        async function runSync() {
+            const resultDiv = 'syncResult';
+            showLoading(resultDiv);
+
+            try {
+                const response = await fetch('/sync', { method: 'POST' });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(resultDiv, data.error || 'Sync failed');
+                    return;
+                }
+
+                const isSuccess = data.success || data.status === 'success';
+                let html = `
+                    <div class="result ${isSuccess ? 'success' : 'error'}">
+                        <h3>${isSuccess ? '✅ Sync Completed' : '❌ Sync Failed'}</h3>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </div>
+                `;
+
+                document.getElementById(resultDiv).innerHTML = html;
+
+            } catch (error) {
+                showError(resultDiv, error.message);
+            }
+        }
+
+        async function viewLogs() {
+            const resultDiv = 'logsResult';
+            showLoading(resultDiv);
+
+            try {
+                const response = await fetch('/history');
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showError(resultDiv, data.error || 'Failed to load logs');
+                    return;
+                }
+
+                let html = `<div class="result info">`;
+                
+                if (data.recent_syncs && data.recent_syncs.length > 0) {
+                    html += '<h3>Recent Sync Operations:</h3>';
+                    data.recent_syncs.slice(0, 5).forEach(sync => {
+                        html += `
+                            <div style="margin: 10px 0; padding: 10px; background: white; border-radius: 4px;">
+                                <div><strong>Time:</strong> ${new Date(sync.timestamp).toLocaleString()}</div>
+                                <div><strong>Status:</strong> <span class="status-badge ${sync.success}">${sync.success ? 'SUCCESS' : 'FAILED'}</span></div>
+                                <div><strong>Message:</strong> ${escapeHtml(sync.message)}</div>
+                            </div>
+                        `;
+                    });
+                } else {
+                    html += '<p>No recent sync history available.</p>';
+                }
+
+                html += '</div>';
+                document.getElementById(resultDiv).innerHTML = html;
+
+            } catch (error) {
+                showError(resultDiv, error.message);
+            }
+        }
+    </script>
+</body>
+</html>
+

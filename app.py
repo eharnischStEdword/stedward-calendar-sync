@@ -14,7 +14,7 @@ import signal
 import sys
 import config
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, redirect, session, request, copy_current_request_context, make_response
 import threading
 
@@ -3330,6 +3330,67 @@ def bulletin_events():
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+
+@app.route('/test-sync')
+def test_sync_page():
+    """Web-based testing interface for calendar sync"""
+    if not auth_manager or not auth_manager.is_authenticated():
+        return redirect('/')
+    return render_template('test_sync.html')
+
+@app.route('/debug/find-event/<search_term>')
+def find_event_by_name(search_term):
+    """Find events by name/subject"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get source calendar ID
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        if not source_id:
+            return jsonify({"error": "Source calendar not found"}), 404
+        
+        # Get events from the next 90 days
+        start = DateTimeUtils.get_central_time()
+        end = start + timedelta(days=90)
+        
+        # Fetch all events
+        events = sync_engine.reader.get_calendar_events(source_id, start=start, end=end)
+        
+        if not events:
+            return jsonify({
+                'search_term': search_term,
+                'found_count': 0,
+                'events': []
+            })
+        
+        # Search for matching events (case-insensitive)
+        matching_events = []
+        for e in events:
+            if search_term.lower() in e.get('subject', '').lower():
+                matching_events.append({
+                    'id': e['id'],
+                    'subject': e['subject'],
+                    'start': e['start'].get('dateTime', e['start'].get('date', 'Unknown')),
+                    'categories': e.get('categories', []),
+                    'showAs': e.get('showAs', 'unknown'),
+                    'has_public': any(cat.lower() == 'public' for cat in e.get('categories', [])),
+                    'is_busy': e.get('showAs', '').lower() in ['busy', 'tentative', 'oof', 'workingelsewhere']
+                })
+        
+        return jsonify({
+            'search_term': search_term,
+            'found_count': len(matching_events),
+            'events': matching_events
+        })
+        
+    except Exception as e:
+        logger.error(f"Error finding event: {str(e)}")
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 @app.route('/event-search')
 def event_search():
