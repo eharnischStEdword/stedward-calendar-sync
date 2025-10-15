@@ -1,0 +1,270 @@
+# Cursor Rules - St. Edward Calendar Sync Project
+
+## Purpose
+
+These rule files guide Cursor's AI to avoid common mistakes and follow project-specific patterns. Rules are automatically loaded by Cursor when working in this repository.
+
+---
+
+## Rule Files
+
+### 1. `python` - Python Code Standards
+**When to reference:** All Python code
+**Key rules:**
+- Functional programming over classes
+- Type hints on all functions
+- Guard clauses and early returns
+- No print statements, use logging
+- UTC-only datetimes internally
+
+### 2. `flask` - Flask Application Rules
+**When to reference:** Working on app.py or routes
+**Key rules:**
+- Thin Flask layer (orchestration only)
+- JSON responses only
+- Never perform long operations in request handlers
+- All config from environment
+- Include dry_run in responses
+
+### 3. `sync_service` - Sync Business Logic
+**When to reference:** Working on sync.py or calendar_ops.py
+**Key rules:**
+- Master calendar is READ-ONLY (critical!)
+- Only sync Public AND Busy events
+- No occurrence-level sync (series masters only)
+- Signature-based matching
+- Enforce MASTER_CALENDAR_PROTECTION
+
+### 4. `ops_testing_deploy` - Operations & Testing
+**When to reference:** Testing, deployment, CI/CD
+**Key rules:**
+- Use GitHub web UI (no terminal instructions)
+- pytest for all tests
+- No live API calls in tests
+- MASTER_CALENDAR_PROTECTION must be enforced
+- Auto-switch to dry_run on repeated failures
+
+### 5. `microsoft_graph_api` - Microsoft Graph API Specifics
+**When to reference:** Implementing ANY Microsoft Graph API feature
+**Key rules:**
+- Use `singleValueExtendedProperties` (not `extendedProperties`)
+- Extended properties require $expand parameter
+- Always test API calls in analysis tool first
+- Check official Microsoft documentation
+- Extended properties are ARRAYS, not objects
+
+### 6. `external_api_verification` - General API Integration
+**When to reference:** Integrating ANY external API
+**Key rules:**
+- Test first, implement second
+- Log complete responses during development
+- Never assume API formats
+- Handle pagination
+- Trust official documentation over assumptions
+
+---
+
+## How Cursor Uses These Rules
+
+1. **Automatic Loading:** Cursor reads all files in .cursor/rules/
+2. **Context-Aware:** Cursor considers relevant rules based on file/task
+3. **Precedence:** Project rules override Cursor's defaults
+4. **Enforcement:** Cursor uses rules as "must follow" constraints
+
+---
+
+## When To Update Rules
+
+### Add New Rules When:
+- Same mistake happens twice
+- Complex API patterns are discovered
+- Project conventions change
+- New external integrations added
+- Team identifies common pitfalls
+
+### Update Existing Rules When:
+- Microsoft Graph API changes
+- Better patterns discovered
+- Requirements change
+- Technology upgrades
+
+---
+
+## Rule Writing Guidelines
+
+### ✅ Good Rules:
+- Specific and actionable
+- Include examples (correct vs incorrect)
+- Explain WHY, not just WHAT
+- Reference documentation
+- Show common mistakes
+
+### ❌ Bad Rules:
+- Vague ("be careful with dates")
+- No examples
+- Only say what not to do
+- No explanation of consequences
+- Assume knowledge
+
+---
+
+## Recent Mistakes That Inspired Rules
+
+### 1. Extended Properties Mistake (Oct 2025)
+**What happened:** Cursor implemented `extendedProperties.private.sourceEventId` which doesn't exist in Microsoft Graph API
+
+**Why it happened:** 
+- Didn't test API call first
+- Assumed REST-like structure
+- Didn't read Microsoft documentation
+
+**Rule added:** `microsoft_graph_api` with explicit examples
+
+**Prevention:** Must test in analysis tool before implementing
+
+---
+
+### 2. Category Case Sensitivity (Sept 2025)
+**What happened:** Events with lowercase 'public' category weren't syncing
+
+**Why it happened:**
+- Assumed categories would be capitalized
+- Used exact string match instead of case-insensitive
+
+**Rule added:** Noted in `sync_service` and `microsoft_graph_api`
+
+**Prevention:** Always use case-insensitive matching for categories
+
+---
+
+### 3. Pagination Not Implemented (Aug 2025)
+**What happened:** Only first 100 events were syncing
+
+**Why it happened:**
+- Didn't check for @odata.nextLink
+- Assumed small result sets
+- Didn't test with realistic data volume
+
+**Rule added:** Mandatory pagination in `external_api_verification`
+
+**Prevention:** Always implement pagination for collections
+
+---
+
+## Priority Hierarchy
+
+When rules conflict, follow this priority:
+
+1. **Safety First:** `MASTER_CALENDAR_PROTECTION` overrides everything
+2. **API Requirements:** Microsoft Graph rules override general patterns
+3. **Project Standards:** Sync-specific rules override general Python rules
+4. **Code Quality:** Python standards apply when no specific rule exists
+
+---
+
+## Testing Rules Compliance
+
+### Manual Check:
+```bash
+# Before committing, verify:
+- [ ] No writes to master calendar
+- [ ] Extended properties use correct format
+- [ ] All API calls tested in analysis tool first
+- [ ] Type hints on all functions
+- [ ] Pagination implemented for collections
+- [ ] Error handling for API failures
+```
+
+### Cursor Verification:
+When asking Cursor to implement something, include:
+> "Check .cursor/rules/[relevant_file] before implementing"
+
+Example:
+> "Add a new extended property to track event priority. Check .cursor/rules/microsoft_graph_api before implementing."
+
+---
+
+## Quick Reference
+
+### For Cursor AI:
+**Before implementing Microsoft Graph API feature:**
+1. Read `microsoft_graph_api` rules
+2. Test API call in analysis tool
+3. Verify response structure
+4. Check documentation
+5. Implement based on verified structure
+
+**Before modifying sync logic:**
+1. Read `sync_service` rules
+2. Verify MASTER_CALENDAR_PROTECTION
+3. Check filter criteria (Public AND Busy)
+4. Test in dry_run mode
+5. Verify no source calendar writes
+
+**Before deploying:**
+1. Read `ops_testing_deploy` rules
+2. Run pytest suite
+3. Check MASTER_CALENDAR_PROTECTION
+4. Test in staging first
+5. Monitor first production run
+
+---
+
+## Contributing to Rules
+
+### Found a new gotcha?
+
+1. Document it in relevant rule file
+2. Include:
+   - What went wrong
+   - Why it went wrong
+   - Correct approach
+   - Example code (correct vs incorrect)
+3. Update this README with the mistake
+4. Consider if new rule file needed
+
+### Example Template:
+
+```markdown
+## New Pattern Discovered: [Brief Title]
+
+### ❌ WRONG (Don't do this):
+```python
+# Bad example with explanation
+```
+
+### ✅ CORRECT (Do this instead):
+```python  
+# Good example with explanation
+```
+
+### Why This Matters:
+[Explain consequences of doing it wrong]
+
+### Documentation Reference:
+[Link to official docs if applicable]
+```
+
+---
+
+## Rule Files To Add In Future
+
+As project grows, consider adding:
+
+- `monitoring_observability` - Logging and metrics standards
+- `error_handling` - Error handling patterns
+- `performance` - Performance optimization rules
+- `security` - Security best practices
+- `database` (if added) - Database interaction patterns
+
+---
+
+## Questions?
+
+If Cursor's behavior doesn't match rules:
+1. Check if rule is clear and actionable
+2. Verify Cursor is reading the rules folder
+3. Update rule with more specific guidance
+4. Add examples if needed
+
+The goal: Clear, enforceable rules that prevent repeated mistakes.
