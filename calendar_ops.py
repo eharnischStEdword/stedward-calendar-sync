@@ -244,6 +244,7 @@ class CalendarReader:
                 "startDateTime": start_time,
                 "endDateTime": end_time,
                 "$select": "id,subject,body,start,end,categories,showAs,type,seriesMasterId,isCancelled,recurrence,sensitivity,isAllDay,responseStatus,organizer",
+                "$expand": "singleValueExtendedProperties($filter=(id eq 'String {66f5a359-4659-4830-9070-00047ec6ac6e} Name sourceEventId') or (id eq 'String {66f5a359-4659-4830-9070-00047ec6ac6e} Name lastSynced'))",
                 "$top": 100  # Fetch in chunks of 100
             }
             
@@ -981,15 +982,20 @@ class CalendarWriter:
         if event.get('isAllDay'):
             api_event['isAllDay'] = True
         
-        # CRITICAL: Add extendedProperties for event linking and deletion detection
+        # CRITICAL: Add singleValueExtendedProperties for event linking
+        # Microsoft Graph API requires this exact format with GUID
         source_id = event.get('id', '')
         if source_id:
-            api_event['extendedProperties'] = {
-                'private': {
-                    'sourceEventId': source_id,
-                    'lastSynced': get_utc_now_iso()
+            api_event['singleValueExtendedProperties'] = [
+                {
+                    'id': 'String {66f5a359-4659-4830-9070-00047ec6ac6e} Name sourceEventId',
+                    'value': source_id
+                },
+                {
+                    'id': 'String {66f5a359-4659-4830-9070-00047ec6ac6e} Name lastSynced',
+                    'value': get_utc_now_iso()
                 }
-            }
+            ]
         
         # Create unique identifier from source event
         sync_marker = f"<!-- SYNC_ID:{source_id} -->"

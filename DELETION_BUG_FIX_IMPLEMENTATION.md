@@ -7,21 +7,30 @@ Successfully implemented the deletion bug fix for the St. Edward Calendar Sync s
 
 ### 1. Extended Properties Support ✅
 **File**: `calendar_ops.py` - `_prepare_event_for_api()` method
-- Added `extendedProperties.private.sourceEventId` to store the source event ID
-- Added `extendedProperties.private.lastSynced` to track sync timestamp
+- Added `singleValueExtendedProperties` array with Microsoft Graph API compliant format
+- Uses GUID `{66f5a359-4659-4830-9070-00047ec6ac6e}` for custom namespace
+- Stores `sourceEventId` and `lastSynced` values in proper API format
 - Maintains backward compatibility with existing `SYNC_ID:` body marker
 
 ### 2. Enhanced Event Tracking ✅
 **File**: `sync.py` - `_is_synced_event()` method
-- Updated to check for new `extendedProperties` approach first
+- Updated to check for new `singleValueExtendedProperties` array first
+- Iterates through extended properties to find `sourceEventId` by name
 - Falls back to legacy body content markers for backward compatibility
 - Ensures all synced events are properly identified
 
 ### 3. Source Event ID Extraction ✅
 **File**: `sync.py` - `_get_source_event_id()` method
-- Extracts source event ID from both new and legacy tracking methods
+- Extracts source event ID from `singleValueExtendedProperties` array
+- Searches for properties with `Name sourceEventId` in the ID field
 - Uses regex to parse legacy `SYNC_ID:` markers from body content
 - Provides reliable event relationship tracking
+
+### 4. API Event Fetching Enhancement ✅
+**File**: `calendar_ops.py` - `get_calendar_events()` method
+- Added `$expand` parameter to fetch `singleValueExtendedProperties`
+- Filters to only fetch our custom properties using GUID namespace
+- Ensures extended properties are available for deletion detection
 
 ### 4. Deletion Detection Logic ✅
 **File**: `sync.py` - `_identify_events_to_delete()` method

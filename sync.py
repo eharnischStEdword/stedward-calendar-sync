@@ -1192,10 +1192,11 @@ class SyncEngine:
     
     def _is_synced_event(self, event: Dict) -> bool:
         """Check if this event was created by our sync system"""
-        # Check for new extendedProperties approach (preferred)
-        extended_props = event.get('extendedProperties', {}).get('private', {})
-        if extended_props.get('sourceEventId'):
-            return True
+        # Check for new singleValueExtendedProperties approach (preferred)
+        extended_props = event.get('singleValueExtendedProperties', [])
+        for prop in extended_props:
+            if 'Name sourceEventId' in prop.get('id', ''):
+                return True
         
         # Check for legacy sync marker in the body content
         body_content = event.get('body', {}).get('content', '')
@@ -1214,10 +1215,12 @@ class SyncEngine:
     
     def _get_source_event_id(self, event: Dict) -> Optional[str]:
         """Extract source event ID from a public event (new or legacy approach)"""
-        # Check new extendedProperties approach first
-        extended_props = event.get('extendedProperties', {}).get('private', {})
-        if extended_props.get('sourceEventId'):
-            return extended_props['sourceEventId']
+        # Check new singleValueExtendedProperties approach first
+        extended_props = event.get('singleValueExtendedProperties', [])
+        for prop in extended_props:
+            # Match the property by its name suffix
+            if 'Name sourceEventId' in prop.get('id', ''):
+                return prop.get('value')
         
         # Fall back to legacy body content approach
         body_content = event.get('body', {}).get('content', '')
