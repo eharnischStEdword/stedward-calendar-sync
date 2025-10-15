@@ -2719,6 +2719,54 @@ def debug_test_single_event(subject):
         logger.error(f"Test single event error: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/admin/migrate-extended-properties', methods=['POST'])
+def migrate_extended_properties():
+    """
+    ONE-TIME MIGRATION: Add extended properties to existing events
+    
+    Query parameters:
+    - dry_run: true/false (default: true)
+    """
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        if not sync_engine:
+            return jsonify({"error": "Sync engine not initialized"}), 500
+        
+        # Get dry_run parameter
+        dry_run = request.args.get('dry_run', 'true').lower() == 'true'
+        
+        # Get calendar IDs
+        source_id = sync_engine.reader.find_calendar_id(config.SOURCE_CALENDAR)
+        target_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
+        
+        if not source_id or not target_id:
+            return jsonify({"error": "Could not find required calendars"}), 404
+        
+        # Run migration
+        logger.info(f"🔄 Starting migration (dry_run={dry_run})")
+        stats = sync_engine.migrate_existing_events_to_extended_properties(
+            source_id,
+            target_id,
+            dry_run=dry_run
+        )
+        
+        return jsonify({
+            "success": True,
+            "dry_run": dry_run,
+            "stats": stats,
+            "message": "Migration complete" if not dry_run else "Dry run complete - no changes made"
+        })
+        
+    except Exception as e:
+        logger.error(f"Migration error: {e}")
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
 @app.route('/admin')
 def admin_interface():
     """Web interface for debugging category reading issues"""

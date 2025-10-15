@@ -1266,6 +1266,219 @@ class SyncEngine:
         
         return events_to_delete
     
+    def migrate_existing_events_to_extended_properties(
+        self, 
+        source_calendar_id: str, 
+        target_calendar_id: str,
+        dry_run: bool = True
+    ) -> Dict:
+        """
+        ONE-TIME MIGRATION: Add sourceEventId to existing public events.
+        
+        Matches existing public events to source events by signature and updates
+        them with singleValueExtendedProperties containing sourceEventId.
+        
+        Args:
+            source_calendar_id: Source calendar ID
+            target_calendar_id: Target calendar ID  
+            dry_run: If True, only report what would be done (default: True)
+            
+        Returns:
+            Dict with migration statistics
+        """
+        logger.info("=" * 60)
+        logger.info("🔄 STARTING EXTENDED PROPERTIES MIGRATION")
+        logger.info("=" * 60)
+        logger.info(f"Dry run mode: {dry_run}")
+        
+        # Get date range for migration
+        start_date = DateTimeUtils.get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
+        end_date = DateTimeUtils.get_central_time() + timedelta(days=config.SYNC_LOOKAHEAD_DAYS)
+        
+        # Fetch source events
+        logger.info("📥 Fetching source events...")
+        source_events = self.reader.get_public_events(
+            source_calendar_id, 
+            start=start_date, 
+            end=end_date,
+            include_instances=False
+        )
+        
+        if not source_events:
+            logger.error("Failed to fetch source events")
+            return {"error": "Failed to fetch source events"}
+        
+        logger.info(f"✅ Fetched {len(source_events)} source events")
+        
+        # Fetch target events
+        logger.info("📥 Fetching target (public) events...")
+        target_events = self.reader.get_calendar_events(
+            target_calendar_id,
+            start=start_date,
+            end=end_date
+        )
+        
+        if not target_events:
+            logger.error("Failed to fetch target events")
+            return {"error": "Failed to fetch target events"}
+        
+        logger.info(f"✅ Fetched {len(target_events)} target events")
+        
+        # Build signature maps
+        logger.info("🔍 Building signature maps...")
+        source_map = {}
+        for event in source_events:
+            sig = self._create_event_signature(event)
+            source_map[sig] = event
+        
+        logger.info(f"✅ Built source map with {len(source_map)} unique signatures")
+        
+        # Analyze target events
+        stats = {
+            'total_target_events': len(target_events),
+            'already_have_extended_props': 0,
+            'matched_by_signature': 0,
+            'no_match_found': 0,
+            'would_update': 0,
+            'would_delete': 0,
+            'actually_updated': 0,
+            'actually_deleted': 0,
+            'failed_updates': 0,
+            'events_to_update': [],
+            'events_to_delete': [],
+            'unmatched_events': []
+        }
+        
+        for target_event in target_events:
+            target_id = target_event.get('id')
+            subject = target_event.get('subject', 'No subject')
+            
+            # Check if already has extended properties
+            existing_source_id = self._get_source_event_id(target_event)
+            if existing_source_id:
+                stats['already_have_extended_props'] += 1
+                logger.debug(f"✓ Event already has sourceEventId: {subject}")
+                continue
+            
+            # Try to match by signature
+            sig = self._create_event_signature(target_event)
+            source_event = source_map.get(sig)
+            
+            if source_event:
+                # Found match
+                stats['matched_by_signature'] += 1
+                stats['would_update'] += 1
+                source_id = source_event.get('id')
+                
+                stats['events_to_update'].append({
+                    'target_id': target_id,
+                    'source_id': source_id,
+                    'subject': subject,
+                    'signature': sig
+                })
+                
+                logger.info(f"✅ MATCH: {subject}")
+                logger.info(f"   Target ID: {target_id}")
+                logger.info(f"   Source ID: {source_id}")
+            else:
+                # No match - event exists in public but not in source
+                stats['no_match_found'] += 1
+                stats['would_delete'] += 1
+                
+                stats['events_to_delete'].append({
+                    'target_id': target_id,
+                    'subject': subject,
+                    'signature': sig
+                })
+                
+                logger.warning(f"⚠️ NO MATCH: {subject} (signature: {sig})")
+                logger.warning(f"   This event exists in public calendar but NOT in source")
+                logger.warning(f"   Target ID: {target_id}")
+        
+        # Summary before execution
+        logger.info("=" * 60)
+        logger.info("📊 MIGRATION SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"Total target events: {stats['total_target_events']}")
+        logger.info(f"Already have extended properties: {stats['already_have_extended_props']}")
+        logger.info(f"Matched by signature: {stats['matched_by_signature']}")
+        logger.info(f"No match found (orphaned): {stats['no_match_found']}")
+        logger.info(f"")
+        logger.info(f"WOULD UPDATE with sourceEventId: {stats['would_update']}")
+        logger.info(f"WOULD DELETE (orphaned): {stats['would_delete']}")
+        
+        # Execute if not dry run
+        if not dry_run:
+            logger.info("=" * 60)
+            logger.info("🚀 EXECUTING MIGRATION (NOT DRY RUN)")
+            logger.info("=" * 60)
+            
+            # Update events with extended properties
+            for event_info in stats['events_to_update']:
+                try:
+                    target_id = event_info['target_id']
+                    source_id = event_info['source_id']
+                    subject = event_info['subject']
+                    
+                    # Prepare update with extended properties
+                    update_data = {
+                        'singleValueExtendedProperties': [
+                            {
+                                'id': 'String {66f5a359-4659-4830-9070-00047ec6ac6e} Name sourceEventId',
+                                'value': source_id
+                            },
+                            {
+                                'id': 'String {66f5a359-4659-4830-9070-00047ec6ac6e} Name lastSynced',
+                                'value': get_utc_now_iso()
+                            }
+                        ]
+                    }
+                    
+                    # Update the event
+                    success = self.writer.update_event(target_calendar_id, target_id, update_data)
+                    
+                    if success:
+                        stats['actually_updated'] += 1
+                        logger.info(f"✅ Updated: {subject}")
+                    else:
+                        stats['failed_updates'] += 1
+                        logger.error(f"❌ Failed to update: {subject}")
+                        
+                except Exception as e:
+                    stats['failed_updates'] += 1
+                    logger.error(f"❌ Exception updating {subject}: {e}")
+            
+            # Delete orphaned events
+            for event_info in stats['events_to_delete']:
+                try:
+                    target_id = event_info['target_id']
+                    subject = event_info['subject']
+                    
+                    success = self.writer.delete_event(target_calendar_id, target_id)
+                    
+                    if success:
+                        stats['actually_deleted'] += 1
+                        logger.info(f"🗑️ Deleted orphaned: {subject}")
+                    else:
+                        logger.error(f"❌ Failed to delete: {subject}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Exception deleting {subject}: {e}")
+            
+            logger.info("=" * 60)
+            logger.info("✅ MIGRATION EXECUTION COMPLETE")
+            logger.info("=" * 60)
+            logger.info(f"Successfully updated: {stats['actually_updated']}/{stats['would_update']}")
+            logger.info(f"Successfully deleted: {stats['actually_deleted']}/{stats['would_delete']}")
+            logger.info(f"Failed updates: {stats['failed_updates']}")
+        else:
+            logger.info("=" * 60)
+            logger.info("ℹ️ DRY RUN - No changes made")
+            logger.info("=" * 60)
+            logger.info("Run with dry_run=False to execute migration")
+        
+        return stats
+    
     def _build_event_map(self, events: List[Dict]) -> Tuple[Dict[str, Dict], List[Dict]]:
         """Build a map of events by signature and collect duplicates to remove.
 
