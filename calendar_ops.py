@@ -981,8 +981,17 @@ class CalendarWriter:
         if event.get('isAllDay'):
             api_event['isAllDay'] = True
         
-        # Create unique identifier from source event
+        # CRITICAL: Add extendedProperties for event linking and deletion detection
         source_id = event.get('id', '')
+        if source_id:
+            api_event['extendedProperties'] = {
+                'private': {
+                    'sourceEventId': source_id,
+                    'lastSynced': get_utc_now_iso()
+                }
+            }
+        
+        # Create unique identifier from source event
         sync_marker = f"<!-- SYNC_ID:{source_id} -->"
         
         # Add to body content

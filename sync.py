@@ -1130,7 +1130,27 @@ class SyncEngine:
                 all_day_summary = result['all_day_events']
                 logger.info(f"📅 All-day events processed: {all_day_summary['total_processed']} (Added: {all_day_summary['added']}, Updated: {all_day_summary['updated']})")
             
-            logger.info(f"🎉 Sync completed in {duration:.2f} seconds: {result}")
+            # COMPREHENSIVE SYNC LOGGING
+            logger.info("="*60)
+            logger.info("🎉 SYNC COMPLETED SUCCESSFULLY")
+            logger.info("="*60)
+            logger.info(f"⏱️  Duration: {duration:.2f} seconds")
+            logger.info(f"📊 Operations Summary:")
+            logger.info(f"  ✅ Created: {result.get('added', 0)} events")
+            logger.info(f"  🔄 Updated: {result.get('updated', 0)} events")
+            logger.info(f"  🗑️  Deleted: {result.get('deleted', 0)} events")
+            logger.info(f"  ❌ Failed: {result.get('failed_operations', 0)} operations")
+            logger.info(f"📈 Success Rate: {((result.get('successful_operations', 0) / max(result.get('successful_operations', 0) + result.get('failed_operations', 0), 1)) * 100):.1f}%")
+            
+            if result.get('operation_details'):
+                details = result['operation_details']
+                logger.info(f"🔍 Detailed Results:")
+                logger.info(f"  - Create: {details.get('add_success', 0)} success, {details.get('add_failed', 0)} failed")
+                logger.info(f"  - Update: {details.get('update_success', 0)} success, {details.get('update_failed', 0)} failed")
+                logger.info(f"  - Delete: {details.get('delete_success', 0)} success, {details.get('delete_failed', 0)} failed")
+            
+            logger.info("="*60)
+            
             return result
             
         except Exception as e:
@@ -1172,7 +1192,12 @@ class SyncEngine:
     
     def _is_synced_event(self, event: Dict) -> bool:
         """Check if this event was created by our sync system"""
-        # Check for our sync marker in the body content
+        # Check for new extendedProperties approach (preferred)
+        extended_props = event.get('extendedProperties', {}).get('private', {})
+        if extended_props.get('sourceEventId'):
+            return True
+        
+        # Check for legacy sync marker in the body content
         body_content = event.get('body', {}).get('content', '')
         if 'SYNC_ID:' in body_content:
             return True
@@ -1186,6 +1211,57 @@ class SyncEngine:
     def _create_event_signature(self, event: Dict) -> str:
         """Create unique signature for an event - Uses shared signature utilities"""
         return generate_event_signature(event)
+    
+    def _get_source_event_id(self, event: Dict) -> Optional[str]:
+        """Extract source event ID from a public event (new or legacy approach)"""
+        # Check new extendedProperties approach first
+        extended_props = event.get('extendedProperties', {}).get('private', {})
+        if extended_props.get('sourceEventId'):
+            return extended_props['sourceEventId']
+        
+        # Fall back to legacy body content approach
+        body_content = event.get('body', {}).get('content', '')
+        if 'SYNC_ID:' in body_content:
+            # Extract ID from <!-- SYNC_ID:abc123 -->
+            import re
+            match = re.search(r'SYNC_ID:([^>\s]+)', body_content)
+            if match:
+                return match.group(1)
+        
+        return None
+    
+    def _identify_events_to_delete(self, source_events: List[Dict], public_events: List[Dict]) -> List[Dict]:
+        """
+        Identify public events that should be deleted because their source events no longer exist.
+        
+        Args:
+            source_events: List of qualifying source events (category="Public" AND transparency="opaque")
+            public_events: List of all public events with sourceEventId property
+            
+        Returns:
+            List of public events that should be deleted
+        """
+        # Create set of source event IDs for quick lookup
+        source_event_ids = {event.get('id') for event in source_events if event.get('id')}
+        
+        # Create map of public events by source event ID
+        public_events_map = {}
+        for pub_event in public_events:
+            source_id = self._get_source_event_id(pub_event)
+            if source_id:
+                if source_id not in public_events_map:
+                    public_events_map[source_id] = []
+                public_events_map[source_id].append(pub_event)
+        
+        # Identify events to delete
+        events_to_delete = []
+        for source_id, pub_events in public_events_map.items():
+            if source_id not in source_event_ids:
+                # Source event no longer exists - mark all public events for deletion
+                events_to_delete.extend(pub_events)
+                logger.info(f"🗑️ Source event {source_id} no longer exists - marking {len(pub_events)} public events for deletion")
+        
+        return events_to_delete
     
     def _build_event_map(self, events: List[Dict]) -> Tuple[Dict[str, Dict], List[Dict]]:
         """Build a map of events by signature and collect duplicates to remove.
@@ -1444,13 +1520,30 @@ class SyncEngine:
                 logger.debug(f"➕ ADD needed: {subject} (All-day: {is_all_day}) (signature: {signature})")
                 to_add.append(source_event)
         
-        # Remaining events in target should be deleted (not in source anymore)
-        to_delete = list(remaining_targets.values())
+        # NEW DELETION DETECTION: Use extendedProperties-based approach
+        # This identifies events to delete based on source event IDs, not just signatures
+        events_to_delete_by_source_id = self._identify_events_to_delete(source_events, synced_target_events)
+        
+        # Combine both deletion approaches:
+        # 1. Legacy signature-based deletions (remaining_targets)
+        # 2. New source ID-based deletions (events_to_delete_by_source_id)
+        signature_based_deletions = list(remaining_targets.values())
+        
+        # Merge both deletion lists, avoiding duplicates
+        all_deletions = {}
+        for event in signature_based_deletions + events_to_delete_by_source_id:
+            event_id = event.get('id')
+            if event_id:
+                all_deletions[event_id] = event
+        
+        to_delete = list(all_deletions.values())
         
         logger.info(f"📊 Operation summary:")
         logger.info(f"  - {len(to_add)} events to ADD")
         logger.info(f"  - {len(to_update)} events to UPDATE") 
         logger.info(f"  - {len(to_delete)} events to DELETE")
+        logger.info(f"    - {len(signature_based_deletions)} from signature matching")
+        logger.info(f"    - {len(events_to_delete_by_source_id)} from source ID tracking")
         logger.info(f"  - {len(remaining_targets)} unmatched target events")
         
         return to_add, to_update, to_delete
