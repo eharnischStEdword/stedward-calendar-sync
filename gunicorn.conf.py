@@ -7,7 +7,7 @@ import os
 # Basic worker configuration
 workers = 1  # Start with just 1 worker for Render
 worker_class = 'sync'  # Use sync workers instead of threaded
-timeout = 300  # Increased from 120 to 300 seconds
+timeout = 600  # Increased to 600 seconds (10 minutes) for migration operations
 graceful_timeout = 30  # Add this line
 keepalive = 2
 
