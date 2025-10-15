@@ -1374,7 +1374,8 @@ class SyncEngine:
                     'target_id': target_id,
                     'source_id': source_id,
                     'subject': subject,
-                    'signature': sig
+                    'signature': sig,
+                    'target_event': target_event  # Add full event data
                 })
                 
                 logger.info(f"✅ MATCH: {subject}")
@@ -1419,9 +1420,17 @@ class SyncEngine:
                     target_id = event_info['target_id']
                     source_id = event_info['source_id']
                     subject = event_info['subject']
+                    target_event = event_info['target_event']
                     
-                    # Prepare update with extended properties
+                    # Build complete event data with extended properties
+                    # Microsoft Graph requires full event data on update
                     update_data = {
+                        'subject': target_event.get('subject', ''),
+                        'start': target_event.get('start', {}),
+                        'end': target_event.get('end', {}),
+                        'isAllDay': target_event.get('isAllDay', False),
+                        'showAs': target_event.get('showAs', 'busy'),
+                        'categories': target_event.get('categories', []),
                         'singleValueExtendedProperties': [
                             {
                                 'id': 'String {66f5a359-4659-4830-9070-00047ec6ac6e} Name sourceEventId',
@@ -1433,6 +1442,14 @@ class SyncEngine:
                             }
                         ]
                     }
+                    
+                    # Add optional fields if present
+                    if 'body' in target_event:
+                        update_data['body'] = target_event['body']
+                    if 'location' in target_event:
+                        update_data['location'] = target_event['location']
+                    if 'recurrence' in target_event:
+                        update_data['recurrence'] = target_event['recurrence']
                     
                     # Update the event
                     success = self.writer.update_event(target_calendar_id, target_id, update_data)
