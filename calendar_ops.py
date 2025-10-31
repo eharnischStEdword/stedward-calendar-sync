@@ -965,12 +965,9 @@ class CalendarWriter:
             'categories': event.get('categories', [])
         }
         
-        # Add body if present
-        if 'body' in event:
-            api_event['body'] = {
-                'contentType': 'HTML',
-                'content': event['body'].get('content', '')
-            }
+        # SECURITY: DO NOT copy body/description content to public calendar
+        # Only include the sync marker for internal tracking
+        # This prevents sensitive information (like door access times) from being exposed
         
         # Add location if present (always include location field for consistency)
         if 'location' in event:
@@ -997,14 +994,14 @@ class CalendarWriter:
                 }
             ]
         
-        # Create unique identifier from source event
+        # Create unique identifier from source event (for internal tracking only)
         sync_marker = f"<!-- SYNC_ID:{source_id} -->"
         
-        # Add to body content
-        if 'body' not in api_event:
-            api_event['body'] = {'contentType': 'HTML', 'content': ''}
-            
-        api_event['body']['content'] = sync_marker + api_event['body'].get('content', '')
+        # Set body to contain ONLY the sync marker (no event description for security)
+        api_event['body'] = {
+            'contentType': 'HTML',
+            'content': sync_marker
+        }
             
         return api_event
     
