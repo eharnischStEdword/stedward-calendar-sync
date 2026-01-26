@@ -3235,12 +3235,23 @@ def bulletin_events():
             """
             Convert a Microsoft Graph dateTime dict to timezone-aware UTC datetime.
             Handles cases where dateTime has no 'Z' and timeZone is 'Central Standard Time'.
+            Also handles 'date' field for all-day events.
             """
             try:
-                dt_str = (dt_dict or {}).get('dateTime', '')
+                dt_dict = dt_dict or {}
+                # Check for date-only format (all-day events)
+                if 'date' in dt_dict:
+                    date_str = dt_dict['date']
+                    # Parse date and create datetime at noon UTC to avoid timezone shift issues
+                    dt = datetime.fromisoformat(date_str + 'T12:00:00')
+                    import pytz as _pytz
+                    return _pytz.UTC.localize(dt)
+                
+                # Handle dateTime format
+                dt_str = dt_dict.get('dateTime', '')
                 if not dt_str:
                     return None
-                tz_name = (dt_dict or {}).get('timeZone', 'UTC') or 'UTC'
+                tz_name = dt_dict.get('timeZone', 'UTC') or 'UTC'
 
                 # Normalize ISO string; handle Z → +00:00
                 iso = dt_str.replace('Z', '+00:00')
@@ -3273,7 +3284,31 @@ def bulletin_events():
                 logger.info("Skipping event with invalid start time")
                 continue
 
-            event_start_central = utc_to_central(start_utc)
+            is_all_day = event.get('isAllDay', False)
+            subject = event.get('subject', 'No Title')
+            
+            # For all-day events, create datetime at noon Central to avoid date shift
+            if is_all_day:
+                # Get the date directly from the Graph API response
+                start_dict = event.get('start', {})
+                if 'date' in start_dict:
+                    event_date = datetime.fromisoformat(start_dict['date']).date()
+                elif 'dateTime' in start_dict:
+                    dt_str = start_dict['dateTime']
+                    date_part = dt_str.split('T')[0]
+                    event_date = datetime.fromisoformat(date_part).date()
+                else:
+                    # Fallback to converted time
+                    event_date = utc_to_central(start_utc).date()
+                
+                # Create datetime at noon Central time for this date
+                central_tz = pytz.timezone('America/Chicago')
+                event_start_central = central_tz.localize(
+                    datetime.combine(event_date, datetime.min.time().replace(hour=12))
+                )
+                logger.debug(f"All-day event '{subject}': date={event_date}, central_time={event_start_central}")
+            else:
+                event_start_central = utc_to_central(start_utc)
 
             # Prefer Graph location; fallback to body "Location:" snippet
             location_text = ''
@@ -3288,7 +3323,6 @@ def bulletin_events():
                     location_text = location_match.group(1).strip()
 
             # Check if this event should be omitted from bulletin
-            subject = event.get('subject', 'No Title')
             
             # Debug logging for Mass events
             if 'Mass' in subject:
@@ -3332,7 +3366,24 @@ def bulletin_events():
             # End time (optional)
             end_utc = graph_datetime_to_utc(event.get('end'))
             if end_utc is not None:
-                event_data['end'] = utc_to_central(end_utc)
+                if is_all_day:
+                    # For all-day events, extract date and create datetime at noon Central
+                    end_dict = event.get('end', {})
+                    if 'date' in end_dict:
+                        end_date = datetime.fromisoformat(end_dict['date']).date()
+                    elif 'dateTime' in end_dict:
+                        dt_str = end_dict['dateTime']
+                        date_part = dt_str.split('T')[0]
+                        end_date = datetime.fromisoformat(date_part).date()
+                    else:
+                        end_date = utc_to_central(end_utc).date()
+                    
+                    central_tz = pytz.timezone('America/Chicago')
+                    event_data['end'] = central_tz.localize(
+                        datetime.combine(end_date, datetime.min.time().replace(hour=12))
+                    )
+                else:
+                    event_data['end'] = utc_to_central(end_utc)
 
             bulletin_events.append(event_data)
         
@@ -3342,6 +3393,8 @@ def bulletin_events():
         # Group events by day
         events_by_day = {}
         for event in bulletin_events:
+            # For all-day events, event_start_central is already set to noon on the correct date
+            # So we can safely use .date() without timezone shift issues
             day_key = event['start'].date()
             if day_key not in events_by_day:
                 events_by_day[day_key] = []
