@@ -3397,34 +3397,25 @@ def bulletin_events():
                 events_by_day[day_key] = []
             events_by_day[day_key].append(event)
         
-        # Format for display — only include days that have events
+        # Format for display — include all days in the week range
         formatted_days = []
         current_date = start_date
         
         while current_date <= end_date:
             day_events = events_by_day.get(current_date, [])
-            if day_events:
-                formatted_days.append({
-                    'date': current_date,
-                    'day_name': current_date.strftime('%A'),
-                    'date_str': current_date.strftime('%B %d'),
-                    'events': day_events
-                })
+            formatted_days.append({
+                'date': current_date,
+                'day_name': current_date.strftime('%A'),
+                'date_str': current_date.strftime('%B %d'),
+                'events': day_events
+            })
             
             current_date += timedelta(days=1)
         
-        # Set display date range based on days that have events
-        if formatted_days:
-            display_start = formatted_days[0]['date'].strftime('%B %d')
-            display_end = formatted_days[-1]['date'].strftime('%B %d, %Y')
-        else:
-            display_start = start_date.strftime('%B %d')
-            display_end = end_date.strftime('%B %d, %Y')
-        
-        # Render the bulletin template
+        # Render the bulletin template — always use full week boundaries for the date range
         return render_template('bulletin_events.html',
-                             start_date=display_start,
-                             end_date=display_end,
+                             start_date=start_date.strftime('%B %d'),
+                             end_date=end_date.strftime('%B %d, %Y'),
                              days=formatted_days,
                              week_label=week_label,
                              week_param=week_param,
