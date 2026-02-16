@@ -3452,6 +3452,19 @@ def test_sync_page():
         return redirect('/')
     return render_template('test_sync.html')
 
+@app.route('/version')
+def get_version():
+    """Get version and deployment info"""
+    try:
+        from utils import get_version_info
+        version_info = get_version_info()
+        return jsonify(version_info)
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "version": "unknown"
+        }), 500
+
 @app.route('/debug/bulletin-calculation')
 def debug_bulletin_calculation():
     """Debug endpoint to see exactly what dates are being calculated for bulletin"""
@@ -3461,12 +3474,14 @@ def debug_bulletin_calculation():
         
         from datetime import timedelta
         import pytz
+        from utils import get_version_info
         
         central_tz = pytz.timezone('America/Chicago')
         today = DateTimeUtils.get_central_time().date()
         week_param = request.args.get('week', 'upcoming')
         
         debug_info = {
+            "version": get_version_info(),
             "today": str(today),
             "today_weekday": today.weekday(),
             "today_weekday_name": today.strftime('%A'),
@@ -3506,6 +3521,8 @@ def debug_bulletin_calculation():
             
             debug_info["all_days_in_range"] = all_days
             debug_info["total_days"] = len(all_days)
+            debug_info["expected_days"] = 7
+            debug_info["matches_expected"] = len(all_days) == 7
         
         return jsonify(debug_info)
         
