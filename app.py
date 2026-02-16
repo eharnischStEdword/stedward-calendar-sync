@@ -3139,6 +3139,7 @@ def bulletin_events():
             start_date = today + timedelta(days=days_until_sunday)
             end_date = start_date + timedelta(days=6)
             week_label = "Upcoming Week"
+            logger.info(f"🔍 DEBUG: Upcoming week calculation - today={today}, days_until_sunday={days_until_sunday}, start_date={start_date}, end_date={end_date}, days_in_range={(end_date - start_date).days + 1}")
         
         elif week_param == 'following':
             # Following week (Sunday to Saturday, 7 days — one week after upcoming)
@@ -3401,19 +3402,32 @@ def bulletin_events():
         formatted_days = []
         current_date = start_date
         
+        logger.info(f"🔍 DEBUG: Starting day formatting loop - start_date={start_date}, end_date={end_date}")
+        logger.info(f"🔍 DEBUG: events_by_day keys: {sorted(events_by_day.keys())}")
+        
+        day_count = 0
         while current_date <= end_date:
             day_events = events_by_day.get(current_date, [])
             # Always add the day, even if it has no events
-            formatted_days.append({
+            day_info = {
                 'date': current_date,
                 'day_name': current_date.strftime('%A'),
                 'date_str': current_date.strftime('%B %d'),
                 'events': day_events
-            })
+            }
+            formatted_days.append(day_info)
+            logger.info(f"🔍 DEBUG: Added day {day_count + 1}: {day_info['day_name']} {day_info['date_str']} ({len(day_events)} events)")
             
             current_date += timedelta(days=1)
+            day_count += 1
         
-        logger.info(f"Bulletin week range: {start_date} to {end_date} ({len(formatted_days)} days)")
+        logger.info(f"🔍 DEBUG: Bulletin week range: {start_date} to {end_date} ({len(formatted_days)} days total)")
+        logger.info(f"🔍 DEBUG: Formatted days list: {[f\"{d['day_name']} {d['date_str']} ({len(d['events'])} events)\" for d in formatted_days]}")
+        
+        # CRITICAL: Verify we have exactly 7 days
+        if len(formatted_days) != 7:
+            logger.error(f"🚨 CRITICAL ERROR: Expected 7 days but got {len(formatted_days)} days!")
+            logger.error(f"🚨 Days: {[d['date_str'] for d in formatted_days]}")
         
         # Render the bulletin template — always use full week boundaries for the date range
         return render_template('bulletin_events.html',
@@ -3437,6 +3451,69 @@ def test_sync_page():
     if not auth_manager or not auth_manager.is_authenticated():
         return redirect('/')
     return render_template('test_sync.html')
+
+@app.route('/debug/bulletin-calculation')
+def debug_bulletin_calculation():
+    """Debug endpoint to see exactly what dates are being calculated for bulletin"""
+    try:
+        if not auth_manager or not auth_manager.is_authenticated():
+            return jsonify({"error": "Not authenticated"}), 401
+        
+        from datetime import timedelta
+        import pytz
+        
+        central_tz = pytz.timezone('America/Chicago')
+        today = DateTimeUtils.get_central_time().date()
+        week_param = request.args.get('week', 'upcoming')
+        
+        debug_info = {
+            "today": str(today),
+            "today_weekday": today.weekday(),
+            "today_weekday_name": today.strftime('%A'),
+            "week_param": week_param,
+            "calculation": {}
+        }
+        
+        if week_param == 'upcoming':
+            days_until_sunday = (6 - today.weekday()) % 7
+            if days_until_sunday == 0:
+                days_until_sunday = 7
+            start_date = today + timedelta(days=days_until_sunday)
+            end_date = start_date + timedelta(days=6)
+            
+            debug_info["calculation"] = {
+                "days_until_sunday": days_until_sunday,
+                "start_date": str(start_date),
+                "end_date": str(end_date),
+                "days_in_range": (end_date - start_date).days + 1,
+                "start_weekday": start_date.weekday(),
+                "start_weekday_name": start_date.strftime('%A'),
+                "end_weekday": end_date.weekday(),
+                "end_weekday_name": end_date.strftime('%A')
+            }
+            
+            # Generate all days in range
+            all_days = []
+            current = start_date
+            while current <= end_date:
+                all_days.append({
+                    "date": str(current),
+                    "weekday": current.weekday(),
+                    "weekday_name": current.strftime('%A'),
+                    "date_str": current.strftime('%B %d')
+                })
+                current += timedelta(days=1)
+            
+            debug_info["all_days_in_range"] = all_days
+            debug_info["total_days"] = len(all_days)
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
 @app.route('/debug/find-event/<search_term>')
 def find_event_by_name(search_term):
