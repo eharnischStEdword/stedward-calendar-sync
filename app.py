@@ -3366,19 +3366,20 @@ def bulletin_events():
             if end_utc is not None:
                 if is_all_day:
                     # For all-day events, extract date and create datetime at noon Central
+                    # NOTE: Use event_end_date to avoid overwriting the week range's end_date
                     end_dict = event.get('end', {})
                     if 'date' in end_dict:
-                        end_date = datetime.fromisoformat(end_dict['date']).date()
+                        event_end_date = datetime.fromisoformat(end_dict['date']).date()
                     elif 'dateTime' in end_dict:
                         dt_str = end_dict['dateTime']
                         date_part = dt_str.split('T')[0]
-                        end_date = datetime.fromisoformat(date_part).date()
+                        event_end_date = datetime.fromisoformat(date_part).date()
                     else:
-                        end_date = utc_to_central(end_utc).date()
+                        event_end_date = utc_to_central(end_utc).date()
                     
                     central_tz = pytz.timezone('America/Chicago')
                     event_data['end'] = central_tz.localize(
-                        datetime.combine(end_date, datetime.min.time().replace(hour=12))
+                        datetime.combine(event_end_date, datetime.min.time().replace(hour=12))
                     )
                 else:
                     event_data['end'] = utc_to_central(end_utc)
