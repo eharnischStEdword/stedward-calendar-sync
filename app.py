@@ -3422,7 +3422,8 @@ def bulletin_events():
             day_count += 1
         
         logger.info(f"🔍 DEBUG: Bulletin week range: {start_date} to {end_date} ({len(formatted_days)} days total)")
-        logger.info(f"🔍 DEBUG: Formatted days list: {[f\"{d['day_name']} {d['date_str']} ({len(d['events'])} events)\" for d in formatted_days]}")
+        days_list = [f"{d['day_name']} {d['date_str']} ({len(d['events'])} events)" for d in formatted_days]
+        logger.info(f"🔍 DEBUG: Formatted days list: {days_list}")
         
         # CRITICAL: Verify we have exactly 7 days
         if len(formatted_days) != 7:
