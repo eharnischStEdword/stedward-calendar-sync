@@ -23,6 +23,9 @@ Documentation of past fixes and changes:
 
 - [Duplicate Fix (2024)](historical/duplicate-fix-2024.md) - Duplicate event prevention implementation
 - [Signature Fix (2024)](historical/signature-fix-2024.md) - Signature consistency fix
+- [Multi-Day Event Fix (2025)](historical/multiday-fix-2025.md) - Multi-day event duplication fix
+- [Background Sync Implementation](historical/background-sync-implementation.md) - Worker timeout fix and background sync implementation
+- [System Status Summary](historical/system-status-summary.md) - System status and behavior documentation
 
 **Note:** Historical docs are archived for reference. Implementation details may have changed since these were written.
 
