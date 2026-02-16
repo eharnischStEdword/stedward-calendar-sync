@@ -3132,33 +3132,30 @@ def bulletin_events():
             week_label = "Current Week"
         
         elif week_param == 'upcoming':
-            # Upcoming Saturday to following Sunday (9 days)
-            days_until_saturday = (5 - today.weekday()) % 7
-            if days_until_saturday == 0:  # Today is Saturday
-                start_date = today
-            else:
-                start_date = today + timedelta(days=days_until_saturday)
-            end_date = start_date + timedelta(days=8)
+            # Upcoming week (Sunday to Saturday, 7 days)
+            days_until_sunday = (6 - today.weekday()) % 7
+            if days_until_sunday == 0:  # Today is Sunday — go to next Sunday
+                days_until_sunday = 7
+            start_date = today + timedelta(days=days_until_sunday)
+            end_date = start_date + timedelta(days=6)
             week_label = "Upcoming Week"
         
         elif week_param == 'following':
-            # Week after upcoming (starts 9 days after upcoming Saturday)
-            days_until_saturday = (5 - today.weekday()) % 7
-            if days_until_saturday == 0:  # Today is Saturday
-                start_date = today + timedelta(days=7)
-            else:
-                start_date = today + timedelta(days=days_until_saturday + 7)
-            end_date = start_date + timedelta(days=8)
+            # Following week (Sunday to Saturday, 7 days — one week after upcoming)
+            days_until_sunday = (6 - today.weekday()) % 7
+            if days_until_sunday == 0:  # Today is Sunday
+                days_until_sunday = 7
+            start_date = today + timedelta(days=days_until_sunday + 7)
+            end_date = start_date + timedelta(days=6)
             week_label = "Following Week"
         
         else:
-            # Default to upcoming
-            days_until_saturday = (5 - today.weekday()) % 7
-            if days_until_saturday == 0:
-                start_date = today
-            else:
-                start_date = today + timedelta(days=days_until_saturday)
-            end_date = start_date + timedelta(days=8)
+            # Default to upcoming (Sunday to Saturday, 7 days)
+            days_until_sunday = (6 - today.weekday()) % 7
+            if days_until_sunday == 0:  # Today is Sunday
+                days_until_sunday = 7
+            start_date = today + timedelta(days=days_until_sunday)
+            end_date = start_date + timedelta(days=6)
             week_label = "Upcoming Week"
         
         # Create datetime objects at midnight in Central Time
