@@ -3397,12 +3397,13 @@ def bulletin_events():
                 events_by_day[day_key] = []
             events_by_day[day_key].append(event)
         
-        # Format for display — include all days in the week range
+        # Format for display — ALWAYS include all 7 days in the week range (even if no events)
         formatted_days = []
         current_date = start_date
         
         while current_date <= end_date:
             day_events = events_by_day.get(current_date, [])
+            # Always add the day, even if it has no events
             formatted_days.append({
                 'date': current_date,
                 'day_name': current_date.strftime('%A'),
@@ -3411,6 +3412,8 @@ def bulletin_events():
             })
             
             current_date += timedelta(days=1)
+        
+        logger.info(f"Bulletin week range: {start_date} to {end_date} ({len(formatted_days)} days)")
         
         # Render the bulletin template — always use full week boundaries for the date range
         return render_template('bulletin_events.html',
