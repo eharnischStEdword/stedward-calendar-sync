@@ -33,6 +33,9 @@ SHARED_MAILBOX=calendar@stedward.org
 SOURCE_CALENDAR=Calendar
 TARGET_CALENDAR=St. Edward Public Calendar
 
+# Optional: comma-separated emails allowed to use dashboard (e.g. rcarroll@stedward.org,eharnisch@stedward.org,ckloss@stedward.org)
+# ALLOWED_DASHBOARD_USERS=rcarroll@stedward.org,eharnisch@stedward.org,ckloss@stedward.org
+
 SYNC_CUTOFF_DAYS=1825
 SYNC_INTERVAL_MIN=23
 MAX_SYNC_REQUESTS_PER_HOUR=20
@@ -151,6 +154,7 @@ jobs:
 2. Check Azure AD app registration
 3. Ensure redirect URI matches exactly
 4. Verify account has calendar permissions
+5. To add a new dashboard user (e.g. ckloss@stedward.org), see [Adding dashboard users](adding-dashboard-users.md).
 
 ### Syncs Not Running
 1. Check scheduler is enabled

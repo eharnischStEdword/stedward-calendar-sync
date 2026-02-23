@@ -28,6 +28,12 @@ REDIRECT_URI = os.environ.get('REDIRECT_URI', "https://your-app-domain.onrender.
 SECRET_KEY = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 PORT = int(os.environ.get('PORT', 5000))
 
+# Optional: comma-separated list of emails allowed to use the dashboard (e.g. rcarroll@stedward.org,eharnisch@stedward.org,ckloss@stedward.org).
+# If set, only these users can sign in; if empty, any tenant user who can sign in is allowed.
+ALLOWED_DASHBOARD_USERS = [
+    e.strip().lower() for e in os.environ.get('ALLOWED_DASHBOARD_USERS', '').split(',') if e.strip()
+]
+
 # Rate Limiting
 MAX_SYNC_REQUESTS_PER_HOUR = int(os.environ.get('MAX_SYNC_REQUESTS_PER_HOUR', 20))
 

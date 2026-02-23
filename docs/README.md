@@ -15,6 +15,7 @@
 ## Guides
 
 - [Deployment](guides/deployment.md) - Deployment procedures
+- [Adding dashboard users](guides/adding-dashboard-users.md) - Add users (e.g. ckloss@stedward.org) for sign-in and event search
 - [Troubleshooting](guides/troubleshooting.md) - Problem diagnosis and solutions
 
 ## Historical Documentation

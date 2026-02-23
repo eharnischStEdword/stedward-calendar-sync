@@ -17,6 +17,7 @@ import json
 from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, redirect, session, request, copy_current_request_context, make_response
 import threading
+import requests
 
 # Import timezone utilities
 from utils import DateTimeUtils
@@ -647,6 +648,41 @@ def auth_callback():
         
         # Attempt token exchange
         if auth_manager and auth_manager.exchange_code_for_token(code):
+            # If allow-list is configured, verify the signed-in user is allowed
+            if getattr(config, 'ALLOWED_DASHBOARD_USERS', None) and config.ALLOWED_DASHBOARD_USERS:
+                allowed = config.ALLOWED_DASHBOARD_USERS
+                headers = auth_manager.get_headers()
+                if headers:
+                    try:
+                        r = requests.get(
+                            'https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName',
+                            headers=headers,
+                            timeout=10
+                        )
+                        if r.status_code == 200:
+                            data = r.json()
+                            mail = (data.get('mail') or data.get('userPrincipalName') or '').strip().lower()
+                            if mail not in allowed:
+                                logger.warning(f"User {mail} not in ALLOWED_DASHBOARD_USERS")
+                                session.clear()
+                                if auth_manager:
+                                    auth_manager.clear_tokens()
+                                return (
+                                    "Access denied: your account is not authorized to use this dashboard. "
+                                    "Contact your administrator to be added.",
+                                    403
+                                )
+                    except Exception as e:
+                        logger.error(f"Allowed-user check failed: {e}")
+                        session.clear()
+                        if auth_manager:
+                            auth_manager.clear_tokens()
+                        return "Authentication check failed. Please try again.", 500
+                else:
+                    session.clear()
+                    if auth_manager:
+                        auth_manager.clear_tokens()
+                    return "Authentication failed: could not verify user.", 401
             logger.info("OAuth authentication successful")
             return redirect('/')
         else:
