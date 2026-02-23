@@ -1,0 +1,4 @@
+# Git workflow (internal rule — do not add to public README)
+- Work on `main` only. Do not create or use feature branches.
+- Commit and push directly to `main`. Deploys (e.g. Render) are triggered from `main`.
+- When suggesting git commands, use `main`; do not suggest creating or pushing to other branches.

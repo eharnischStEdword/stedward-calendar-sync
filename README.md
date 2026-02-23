@@ -198,18 +198,11 @@ curl /history
 
 ## 🔧 Development
 
-### Branch policy
-**We work on `main` only.** There are no feature branches; all changes are committed and pushed directly to `main`. Deploys (e.g. Render) are triggered from `main`.
-
 ### Local Setup
 ```bash
 # Clone repository
 git clone <repository-url>
-cd stedward-calendar-sync
-
-# Ensure you're on main
-git checkout main
-git pull origin main
+cd calendar-sync-service
 
 # Install dependencies
 pip install -r requirements.txt
