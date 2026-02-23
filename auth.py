@@ -163,7 +163,58 @@ class MicrosoftAuth:
         logger.error("No access token available for headers")
         return None
     
-    def refresh_access_token(self):
+    def _refresh_persistent_token(self) -> bool:
+        """Refresh the persistent (env/disk) token only. Used by get_service_headers()."""
+        refresh_token = self.env_refresh_token
+        if not refresh_token:
+            logger.warning("No persistent refresh token available for service headers")
+            return False
+        token_url = f"https://login.microsoftonline.com/{config.TENANT_ID}/oauth2/v2.0/token"
+        data = {
+            'client_id': config.CLIENT_ID,
+            'client_secret': config.CLIENT_SECRET,
+            'refresh_token': refresh_token,
+            'grant_type': 'refresh_token',
+            'scope': ' '.join(config.GRAPH_SCOPES)
+        }
+        try:
+            response = requests.post(token_url, data=data, timeout=30)
+            if response.status_code != 200:
+                logger.error(f"Persistent token refresh failed: {response.status_code} - {response.text}")
+                return False
+            tokens = response.json()
+            new_access = tokens.get('access_token')
+            new_refresh = tokens.get('refresh_token', refresh_token)
+            expires_in = tokens.get('expires_in', 3600)
+            expires_at = DateTimeUtils.get_central_time() + timedelta(seconds=expires_in - 300)
+            self.env_access_token = new_access
+            self.env_refresh_token = new_refresh
+            os.environ['TOKEN_EXPIRES_AT'] = expires_at.isoformat()
+            self._save_tokens_to_disk(new_access, new_refresh, expires_at)
+            logger.info("Persistent token refreshed for service headers")
+            return True
+        except Exception as e:
+            logger.error(f"Persistent token refresh exception: {e}")
+            return False
+    
+    def get_service_headers(self):
+        """Get headers from the persistent (sync) token so calendar access works for any signed-in user.
+        Use for endpoints like event-search that should use the app's calendar identity."""
+        self._load_tokens_from_disk()
+        if not self.env_refresh_token:
+            logger.warning("No persistent token available for get_service_headers")
+            return None
+        expires_at_str = os.environ.get('TOKEN_EXPIRES_AT')
+        if not self.env_access_token or self._is_token_expired(expires_at_str, buffer_minutes=10):
+            if not self._refresh_persistent_token():
+                return None
+        if self.env_access_token:
+            return {
+                'Authorization': f'Bearer {self.env_access_token}',
+                'Content-Type': 'application/json'
+            }
+        return None
+    
         """Refresh the access token using refresh token"""
         if self._is_in_request_context():
             refresh_token = session.get('refresh_token')

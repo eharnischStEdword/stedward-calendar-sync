@@ -3626,7 +3626,7 @@ def find_event_by_name(search_term):
 
 @app.route('/event-search')
 def event_search():
-    """Search events with custom parameters"""
+    """Search events with custom parameters. Uses service (sync) token so any authenticated user can search."""
     try:
         if not auth_manager or not auth_manager.is_authenticated():
             return redirect('/')
@@ -3634,19 +3634,32 @@ def event_search():
         if not sync_engine:
             return jsonify({"error": "Sync engine not initialized"}), 500
         
+        # Use service (persistent) token so search works for any user, not just those with shared calendar access
+        headers = sync_engine.auth.get_service_headers()
+        if not headers:
+            return jsonify({"error": "No auth headers"}), 401
+        
+        # Get the public calendar ID using service token (reader.find_calendar_id uses session token)
+        calendars_url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars"
+        cal_response = requests.get(calendars_url, headers=headers, timeout=30)
+        if cal_response.status_code != 200:
+            return jsonify({"error": "Could not list calendars", "detail": cal_response.text[:200]}), 502
+        calendars = cal_response.json().get('value', [])
+        public_calendar_id = None
+        for cal in calendars:
+            if cal.get('name') == config.TARGET_CALENDAR:
+                public_calendar_id = cal.get('id')
+                break
+        if not public_calendar_id:
+            return jsonify({"error": "Public calendar not found"}), 404
+        
         # Get search parameters
         search_term = request.args.get('search', '').lower().strip()
         date_range = request.args.get('range', '30')  # Default 30 days
         
-        # Get the public calendar ID
-        public_calendar_id = sync_engine.reader.find_calendar_id(config.TARGET_CALENDAR)
-        if not public_calendar_id:
-            return jsonify({"error": "Public calendar not found"}), 404
-        
         # Calculate date range
         from datetime import timedelta
         import pytz
-        import requests
         
         central_tz = pytz.timezone('America/Chicago')
         today = DateTimeUtils.get_central_time().date()
@@ -3683,11 +3696,7 @@ def event_search():
         start_datetime = central_tz.localize(datetime.combine(start_date, datetime.min.time()))
         end_datetime = central_tz.localize(datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
         
-        # Get events from API
-        headers = sync_engine.auth.get_headers()
-        if not headers:
-            return jsonify({"error": "No auth headers"}), 401
-        
+        # Get events from API (same service headers)
         url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{public_calendar_id}/calendarView"
         
         params = {
