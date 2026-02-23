@@ -192,7 +192,8 @@ class CalendarReader:
                 
                 return calendar_id
         
-        logger.warning(f"Calendar '{calendar_name}' not found")
+        names = [c.get('name', '(no name)') for c in calendars]
+        logger.warning(f"Calendar '{calendar_name}' not found. Available: {names}")
         return None
     
     @RetryUtils.retry_with_backoff(max_retries=3, base_delay=1)

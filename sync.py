@@ -37,9 +37,7 @@ class ChangeTracker:
         self.cache_file = cache_file
         self.event_cache = {}  # signature -> event_data
         self.last_sync_time = None
-        # DISABLED FOR DEBUGGING - Force empty cache
-        logger.warning("⚠️ CACHE DISABLED FOR DEBUGGING - Starting with empty cache")
-        # self._load_cache()
+        self._load_cache()
     
     def _load_cache(self):
         """Load cached event data from disk"""
