@@ -214,7 +214,8 @@ class MicrosoftAuth:
                 'Content-Type': 'application/json'
             }
         return None
-    
+
+    def refresh_access_token(self):
         """Refresh the access token using refresh token"""
         if self._is_in_request_context():
             refresh_token = session.get('refresh_token')
