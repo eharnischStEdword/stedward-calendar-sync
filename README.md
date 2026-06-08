@@ -332,4 +332,4 @@ Comprehensive documentation is organized in the `/docs` directory:
 
 This is proprietary software, not open source. It is the intellectual property of Harnisch LLC and is licensed exclusively to St. Edward Church & School (Nashville, TN) for its internal operations. The license is non-transferable and non-sublicensable. No reproduction, distribution, modification, or publication is permitted without the express written consent of Harnisch LLC.
 
-See [LICENSE.txt](LICENSE.txt) for the full terms. Licensing inquiries: eric@ericharnisch.com
+See [LICENSE.txt](LICENSE.txt) for the full terms. Licensing inquiries: info@harnischllc.com
