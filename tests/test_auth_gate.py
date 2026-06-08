@@ -74,3 +74,9 @@ class TestAuthGate:
         # The gate must let an authenticated request through (it may then fail
         # for other reasons like an uninitialized sync engine, but not 401).
         assert resp.status_code != 401
+
+    def test_google_verification_file_is_public(self, client):
+        # Google Search Console site-ownership token must be reachable without auth.
+        resp = client.get('/google496a12bccfaf6424.html')
+        assert resp.status_code == 200
+        assert b'google-site-verification: google496a12bccfaf6424.html' in resp.data

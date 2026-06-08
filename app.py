@@ -104,6 +104,7 @@ def enforce_https():
 PUBLIC_PATHS = {
     '/', '/health', '/ready', '/health/detailed',
     '/auth/callback', '/logout', '/favicon.ico',
+    '/google496a12bccfaf6424.html',  # Google Search Console ownership verification
 }
 PUBLIC_PATH_PREFIXES = ('/static/', '/apple-touch-icon')
 
@@ -123,6 +124,16 @@ def require_authentication():
     if not auth_manager or not auth_manager.is_authenticated():
         return jsonify({"error": "Not authenticated", "authenticated": False}), 401
     return None
+
+
+@app.route('/google496a12bccfaf6424.html')
+def google_site_verification():
+    """Serve the Google Search Console site-ownership verification token."""
+    return (
+        'google-site-verification: google496a12bccfaf6424.html',
+        200,
+        {'Content-Type': 'text/html; charset=utf-8'},
+    )
 
 # State persistence functions
 def save_scheduler_state(paused: bool):
