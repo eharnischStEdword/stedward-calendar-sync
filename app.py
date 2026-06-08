@@ -98,6 +98,32 @@ def enforce_https():
         url = request.url.replace('http://', 'https://', 1)
         return redirect(url, code=301)
 
+# Authentication gate: deny by default, allow an explicit public allow-list.
+# Closes unauthenticated access to admin/debug/data endpoints such as /metrics,
+# /history, /version, /dry-run/*, /restart-scheduler and /api/investigate.
+PUBLIC_PATHS = {
+    '/', '/health', '/ready', '/health/detailed',
+    '/auth/callback', '/logout', '/favicon.ico',
+}
+PUBLIC_PATH_PREFIXES = ('/static/', '/apple-touch-icon')
+
+
+def _is_public_path(path):
+    """True for endpoints that must work without an authenticated session."""
+    if path in PUBLIC_PATHS:
+        return True
+    return any(path.startswith(prefix) for prefix in PUBLIC_PATH_PREFIXES)
+
+
+@app.before_request
+def require_authentication():
+    """Require an authenticated session for everything outside the allow-list."""
+    if _is_public_path(request.path):
+        return None
+    if not auth_manager or not auth_manager.is_authenticated():
+        return jsonify({"error": "Not authenticated", "authenticated": False}), 401
+    return None
+
 # State persistence functions
 def save_scheduler_state(paused: bool):
     """Save scheduler pause state to file"""
@@ -197,7 +223,7 @@ def ensure_components_initialized():
             logger.error(f"Failed to initialize components on first request: {e}")
 
 # Start background initialization if not in debug mode
-if not app.debug:
+if not app.debug and os.environ.get('DISABLE_BACKGROUND_INIT') != 'true':
     import threading
     init_thread = threading.Thread(target=initialize_calendar_sync_background, daemon=True)
     init_thread.start()
@@ -579,59 +605,8 @@ def sync_status():
 
 @app.route('/auth/callback')
 def auth_callback():
-    """OAuth callback with enhanced security"""
+    """OAuth callback for the Microsoft sign-in flow."""
     try:
-        # Enhanced bot/crawler detection
-        user_agent = request.headers.get('User-Agent', '').lower()
-        referrer = request.headers.get('Referer', '').lower()
-        
-        # Extended bot/crawler patterns including security scanners
-        bot_patterns = [
-            'googlebot', 'chrome-lighthouse', 'safebrowsing', 'crawler', 'bot',
-            'security', 'scanner', 'lighthouse', 'pagespeed', 'gtmetrix',
-            'webpagetest', 'pingdom', 'uptimerobot', 'monitor'
-        ]
-        is_bot = any(pattern in user_agent for pattern in bot_patterns)
-        
-        # Check for suspicious patterns that might trigger security warnings
-        suspicious_patterns = [
-            'google.com', 'chrome-error', 'security', 'safebrowsing',
-            'phishing', 'malware', 'virus', 'scan'
-        ]
-        is_suspicious = any(pattern in referrer for pattern in suspicious_patterns)
-        
-        # Return safe response for bots, crawlers, or suspicious requests
-        if is_bot or is_suspicious or 'google.com' in referrer:
-            safe_response = '''
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>St. Edward Calendar Sync - Secure Service</title>
-                <meta name="description" content="Secure calendar synchronization service for St. Edward Church and School">
-                <meta name="robots" content="noindex, nofollow">
-                <style>
-                    body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
-                    .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-                    h1 { color: #005921; margin-bottom: 20px; }
-                    p { color: #333; line-height: 1.6; }
-                    .secure-badge { background: #28a745; color: white; padding: 5px 10px; border-radius: 4px; font-size: 12px; display: inline-block; margin-top: 10px; }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>St. Edward Calendar Sync</h1>
-                    <p>This is a secure OAuth callback endpoint for the St. Edward Church calendar synchronization service.</p>
-                    <p>This service is used to securely synchronize calendar events between internal and public calendars.</p>
-                    <div class="secure-badge">🔒 Secure Service</div>
-                </div>
-            </body>
-            </html>
-            '''
-            return safe_response, 200, {'Content-Type': 'text/html; charset=utf-8'}
-        
-        # For legitimate OAuth requests, proceed with authentication
         ensure_components_initialized()
         
         code = request.args.get('code')
