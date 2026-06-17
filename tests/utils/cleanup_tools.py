@@ -19,6 +19,7 @@ Usage:
 Options:
     --dry-run    Show what would be deleted without actually deleting
     --verbose    Show detailed logging
+"""
 
 import argparse
 import logging
