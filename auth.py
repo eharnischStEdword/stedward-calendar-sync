@@ -28,17 +28,21 @@ class MicrosoftAuth:
     def __init__(self):
         # Set up persistent token storage on Render disk
         self.token_file = '/data/token_cache.json'
-        
-        # Try to load tokens from persistent storage first
+
+        # Load persistent tokens (disk first, env-var fallback for bootstrap)
+        self._ensure_tokens_loaded()
+        logger.info("Auth manager initialized (hybrid mode)")
+
+    def _ensure_tokens_loaded(self):
+        """Load the persistent sync token from disk, falling back to the
+        ACCESS_TOKEN / REFRESH_TOKEN env vars when there is no disk cache yet
+        (first boot after a deploy). Safe to call repeatedly: it keeps multiple
+        gunicorn workers converged on whatever token was last saved to disk.
+        """
         self._load_tokens_from_disk()
-        
-        # Fall back to environment variables if disk storage is empty
         if not self.env_refresh_token:
             self.env_access_token = os.environ.get('ACCESS_TOKEN')
             self.env_refresh_token = os.environ.get('REFRESH_TOKEN')
-            logger.info("Auth manager initialized (hybrid mode - using environment fallback)")
-        else:
-            logger.info("Auth manager initialized (hybrid mode - using persistent storage)")
     
     def _load_tokens_from_disk(self):
         """Load tokens from persistent disk storage"""
@@ -100,25 +104,29 @@ class MicrosoftAuth:
         return f"https://login.microsoftonline.com/{config.TENANT_ID}/oauth2/v2.0/authorize?" + urllib.parse.urlencode(params)
     
     def is_authenticated(self):
-        """Check if authenticated (session or environment)"""
+        """Check if authenticated.
+
+        In a web request the small signed 'authenticated' marker is the
+        per-browser gate; the actual tokens live on disk, not in the cookie.
+        In a background thread the persistent refresh token is the credential.
+        """
         if self._is_in_request_context():
-            # In web request - use session
-            return bool(session.get('refresh_token'))
+            return bool(session.get('authenticated'))
         else:
-            # In background thread - use environment
             return bool(self.env_refresh_token)
     
     def ensure_valid_token(self):
-        """Ensure we have a valid access token"""
-        if self._is_in_request_context():
-            access_token = session.get('access_token')
-            refresh_token = session.get('refresh_token')
-            token_expires_at = session.get('token_expires_at')
-        else:
-            access_token = self.env_access_token
-            refresh_token = self.env_refresh_token
-            token_expires_at = os.environ.get('TOKEN_EXPIRES_AT')
-        
+        """Ensure we have a valid access token.
+
+        Always uses the persistent (disk/env) token, which is the app's single
+        sync identity. Reloading from disk first keeps multiple gunicorn workers
+        in sync after any one of them refreshes.
+        """
+        self._ensure_tokens_loaded()
+        access_token = self.env_access_token
+        refresh_token = self.env_refresh_token
+        token_expires_at = os.environ.get('TOKEN_EXPIRES_AT')
+
         if not refresh_token:
             logger.warning("No refresh token available")
             return False
@@ -146,12 +154,9 @@ class MicrosoftAuth:
         if not self.ensure_valid_token():
             logger.error("Cannot get headers - no valid token")
             return None
-        
-        if self._is_in_request_context():
-            access_token = session.get('access_token')
-        else:
-            access_token = self.env_access_token
-        
+
+        access_token = self.env_access_token
+
         if access_token:
             headers = {
                 'Authorization': f'Bearer {access_token}',
@@ -200,7 +205,7 @@ class MicrosoftAuth:
     def get_service_headers(self):
         """Get headers from the persistent (sync) token so calendar access works for any signed-in user.
         Use for endpoints like event-search that should use the app's calendar identity."""
-        self._load_tokens_from_disk()
+        self._ensure_tokens_loaded()
         if not self.env_refresh_token:
             logger.warning("No persistent token available for get_service_headers")
             return None
@@ -216,12 +221,10 @@ class MicrosoftAuth:
         return None
 
     def refresh_access_token(self):
-        """Refresh the access token using refresh token"""
-        if self._is_in_request_context():
-            refresh_token = session.get('refresh_token')
-        else:
-            refresh_token = self.env_refresh_token
-        
+        """Refresh the access token using the persistent refresh token."""
+        self._ensure_tokens_loaded()
+        refresh_token = self.env_refresh_token
+
         if not refresh_token:
             logger.warning("No refresh token available")
             return False
@@ -247,38 +250,30 @@ class MicrosoftAuth:
                 expires_in = tokens.get('expires_in', 3600)
                 expires_at = DateTimeUtils.get_central_time() + timedelta(seconds=expires_in - 300)
                 
-                if self._is_in_request_context():
-                    # Update session
-                    session['access_token'] = new_access
-                    if tokens.get('refresh_token'):
-                        session['refresh_token'] = new_refresh
-                    session['token_expires_at'] = expires_at.isoformat()
-                else:
-                    # Update environment variables for scheduler
-                    self.env_access_token = new_access
-                    self.env_refresh_token = new_refresh
-                    
-                    # Store expiration time in environment for background threads
-                    os.environ['TOKEN_EXPIRES_AT'] = expires_at.isoformat()
-                    
-                    # Save to persistent storage instead of logging full tokens
-                    self._save_tokens_to_disk(new_access, new_refresh, expires_at)
-                    
-                    # Log a truncated version for debugging
-                    logger.info("="*60)
-                    logger.info("TOKENS REFRESHED - Saved to persistent storage")
-                    logger.info(f"ACCESS_TOKEN=<redacted>")
-                    if tokens.get('refresh_token'):
-                        logger.info(f"REFRESH_TOKEN=<redacted>")
-                    logger.info(f"TOKEN_EXPIRES_AT={expires_at.isoformat()}")
-                    logger.info("="*60)
+                # Single sync identity: always persist to env + disk.
+                self.env_access_token = new_access
+                self.env_refresh_token = new_refresh
+                os.environ['TOKEN_EXPIRES_AT'] = expires_at.isoformat()
+                self._save_tokens_to_disk(new_access, new_refresh, expires_at)
+
+                logger.info("="*60)
+                logger.info("TOKENS REFRESHED - Saved to persistent storage")
+                logger.info("ACCESS_TOKEN=<redacted>")
+                if tokens.get('refresh_token'):
+                    logger.info("REFRESH_TOKEN=<redacted>")
+                logger.info(f"TOKEN_EXPIRES_AT={expires_at.isoformat()}")
+                logger.info("="*60)
                 
                 logger.info(f"Token refreshed successfully. Expires: {DateTimeUtils.format_central_time(expires_at)}")
                 return True
             else:
                 logger.error(f"Token refresh failed: {response.status_code} - {response.text}")
-                if response.status_code in [400, 401]:
-                    logger.error("Refresh token invalid")
+                # Only discard the stored token when Microsoft says the refresh
+                # token itself is bad (invalid_grant). A bad client secret
+                # (invalid_client) must NOT wipe a still-valid refresh token --
+                # that is what turned a 2-minute secret swap into a full re-auth.
+                if response.status_code in [400, 401] and 'invalid_grant' in response.text:
+                    logger.error("Refresh token invalid (invalid_grant) - clearing")
                     self.clear_tokens()
                 return False
         except Exception as e:
@@ -303,14 +298,16 @@ class MicrosoftAuth:
             if response.status_code == 200:
                 tokens = response.json()
                 
-                # Store in session
-                session['access_token'] = tokens.get('access_token')
-                session['refresh_token'] = tokens.get('refresh_token')
+                # Store ONLY a small auth marker in the signed session cookie.
+                # The full tokens are large; putting them in the cookie pushed it
+                # past the ~4 KB browser limit, so the browser silently dropped
+                # the cookie and the dashboard login looped. The real tokens live
+                # in env + disk (below), the app's single sync identity.
+                session['authenticated'] = True
                 expires_in = tokens.get('expires_in', 3600)
                 expires_at = DateTimeUtils.get_central_time() + timedelta(seconds=expires_in - 300)
-                session['token_expires_at'] = expires_at.isoformat()
-                
-                # Also update environment variables for scheduler
+
+                # Also update environment variables + persistent storage
                 self.env_access_token = tokens.get('access_token')
                 self.env_refresh_token = tokens.get('refresh_token')
                 
@@ -339,6 +336,7 @@ class MicrosoftAuth:
         """Clear all tokens"""
         logger.info("Clearing authentication tokens")
         if self._is_in_request_context():
+            session.pop('authenticated', None)
             session.pop('access_token', None)
             session.pop('refresh_token', None)
             session.pop('token_expires_at', None)

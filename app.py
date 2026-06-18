@@ -264,31 +264,46 @@ def readiness_check():
 
 @app.route('/health/detailed')
 def detailed_health():
-    """Detailed health check"""
+    """Detailed health check.
+
+    Reports the REAL sync-credential health by probing the persistent token the
+    background sync uses (get_service_headers refreshes it against Microsoft),
+    NOT the browser session. This lets an uptime monitor or a quick curl tell
+    whether sync actually works without logging in or reading Render logs.
+    """
     checks = {}
-    
-    # Check authentication
+
+    # Actively probe the persistent sync credential against Microsoft.
+    credential_ok = False
     if auth_manager:
-        checks['authenticated'] = auth_manager.is_authenticated()
-    else:
-        checks['authenticated'] = False
-    
-    # Check sync engine
+        try:
+            credential_ok = auth_manager.get_service_headers() is not None
+        except Exception as e:
+            logger.error(f"Health credential probe failed: {e}")
+    checks['sync_credential_valid'] = credential_ok
     checks['sync_engine_loaded'] = sync_engine is not None
-    
-    # Check scheduler
-    if scheduler:
-        checks['scheduler_running'] = scheduler.is_running()
-    else:
-        checks['scheduler_running'] = False
-    
+    checks['scheduler_running'] = scheduler.is_running() if scheduler else False
+
+    # Surface the last sync outcome so health is meaningful at a glance.
+    last_sync = 'Never'
+    last_sync_result = None
+    if sync_engine:
+        try:
+            engine_status = sync_engine.get_status()
+            last_sync = engine_status.get('last_sync_time_display', 'Never')
+            last_sync_result = engine_status.get('last_sync_result')
+        except Exception as e:
+            logger.error(f"Health sync-status read failed: {e}")
+
     status = "healthy" if all(checks.values()) else "degraded"
-    
+
     return jsonify({
         "status": status,
         "timestamp": DateTimeUtils.get_central_time().isoformat(),
         "timezone": "America/Chicago",
-        "checks": checks
+        "checks": checks,
+        "last_sync": last_sync,
+        "last_sync_result": last_sync_result
     })
 
 @app.route('/status')
