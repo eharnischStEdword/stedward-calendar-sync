@@ -1,362 +1,390 @@
-# Calendar Sync Service
+# St. Edward Calendar Sync
 
-A secure, reliable calendar synchronization service that automatically syncs events from internal calendars to a public-facing calendar using Microsoft Graph API.
+Copies events from one private Microsoft 365 calendar to one or more public
+calendars, filtered by Outlook category.
 
-## 🚀 Quick Start
+Staff keep a single master calendar. Tagging an event with a category
+publishes it to the matching public calendar. Nothing is entered twice, and
+nothing untagged is ever exposed.
 
-The application is deployed and running with automatic synchronization every 23 minutes.
+---
 
-### Health Check Endpoints
-- **Basic Health**: `GET /health` - Responds immediately for deployment health checks
-- **Readiness Check**: `GET /ready` - Checks if sync services are fully initialized
-- **Detailed Health**: `GET /health/detailed` - Comprehensive system status
+## 1. What problem this solves
 
-## 🏗️ Architecture
+St. Edward Church & School runs its operations from one shared mailbox,
+`calendar@stedward.org`. Its `Calendar` holds everything: Masses, weddings,
+maintenance visits, staff meetings, private appointments.
 
-### Simplified Code Structure
-The application has been consolidated from 36+ files to 8 core files for better maintainability:
+The parish website needs to show some of those events. Handing the public a
+view of the master calendar would leak private entries, and asking staff to
+re-enter events into a second calendar guarantees the two drift apart.
+
+This service resolves that. A staff member tags an event with an Outlook
+category. Every 23 minutes the service copies the tagged events to the
+matching public calendar, updates the ones that changed, and removes the ones
+it previously copied that no longer qualify. The master calendar is never
+modified.
+
+**Two categories are live today:**
+
+| Outlook category | Copied to | Consumed by |
+|---|---|---|
+| `Public` | `St. Edward Public Calendar` | stedward.org parish calendar |
+| `SAS` | `Sundays At St. Edward` | the Sundays at St. Edward campaign site |
+
+An event tagged with both appears on both. An event tagged with neither
+appears on neither.
+
+---
+
+## 2. How an event actually flows
 
 ```
-calendar-sync-service/
-├── app.py              # Main Flask application with routes
-├── auth.py             # Microsoft OAuth authentication
-├── calendar_ops.py     # Calendar reading/writing operations
-├── sync.py             # Core synchronization engine
-├── utils.py            # Consolidated utilities (timezone, retry, logging)
-├── config.py           # Environment-based configuration
-├── gunicorn.conf.py    # Production server configuration
-└── requirements.txt    # Python dependencies
+  Outlook: calendar@stedward.org  ─┐
+  ┌─────────────────────────────┐  │
+  │ Calendar   (master, private)│  │  Staff tag an event: "Public", "SAS", both
+  │  • Daily Mass      [Public] │  │
+  │  • SAS Kickoff        [SAS] │  │
+  │  • Launch    [Public][SAS]  │  │
+  │  • Staff mtg   (no category)│  │
+  └─────────────────────────────┘  │
+                 │                 │
+                 ▼                 │  every 23 min, per configured pair:
+     ┌───────────────────────┐     │    1. read master, keep events whose
+     │  SyncEngine._do_sync  │     │       category matches AND showAs is busy
+     │  loops the pairs      │     │       AND not cancelled
+     └───────────────────────┘     │    2. read the target calendar
+          │            │           │    3. compare by signature + sourceEventId
+          ▼            ▼           │    4. add / update / delete
+  ┌──────────────┐ ┌────────────┐  │
+  │ St. Edward   │ │ Sundays At │  │
+  │ Public Cal.  │ │ St. Edward │  │
+  │ Daily Mass   │ │ SAS Kickoff│  │
+  │ Launch       │ │ Launch     │  │
+  └──────────────┘ └────────────┘  │
+        │                 │        │
+        ▼                 ▼        │
+   stedward.org    published .ics ─┘
+                   feed to campaign site
 ```
 
-### Key Components
+**An event qualifies only if all four hold:**
 
-#### **Authentication (`auth.py`)**
-- Microsoft OAuth 2.0 authentication flow
-- Token refresh and management
-- Persistent token storage
-- Bot detection for security
+1. It carries the pair's category (compared case-insensitively).
+2. `showAs` is one of `busy`, `tentative`, `oof`, `workingElsewhere`.
+   A `free` event is treated as a placeholder and skipped.
+3. It is not cancelled.
+4. It falls inside the sync window: `SYNC_CUTOFF_DAYS` back to
+   `SYNC_LOOKAHEAD_DAYS` ahead.
 
-#### **Calendar Operations (`calendar_ops.py`)**
-- `CalendarReader`: Fetches events from source calendars
-- `CalendarWriter`: Creates/updates events in target calendars
-- Timezone-aware date handling
-- Batch operations for performance
+---
 
-#### **Synchronization Engine (`sync.py`)**
-- `SyncEngine`: Core sync logic and coordination
-- `SyncScheduler`: Automated sync scheduling
-- Change tracking and conflict resolution
-- Comprehensive error handling and retry logic
+## 3. The safety rules that matter
 
-#### **Utilities (`utils.py`)**
-- `DateTimeUtils`: Timezone handling and formatting
-- `RetryUtils`: Exponential backoff retry logic
-- `StructuredLogger`: JSON-formatted logging
-- Circuit breaker pattern for API resilience
+Read this section before changing sync or delete logic. Each rule exists
+because its absence caused or nearly caused data loss.
 
-## 🔒 Security Features
+**The master calendar is never written to.** `MASTER_CALENDAR_PROTECTION`
+guards every write path in `calendar_ops.py`. Separately, `get_sync_pairs()`
+drops any pair whose target is `SOURCE_CALENDAR`, so a configuration typo
+cannot aim writes at the master.
 
-### OAuth Security
-- **HTTPS Enforcement**: All OAuth flows use HTTPS exclusively
-- **Bot Detection**: Prevents automated attacks on OAuth endpoints
-- **State Validation**: CSRF protection for OAuth callbacks
-- **Token Security**: Secure storage and automatic refresh
+**Deletions only ever touch events this service created.**
+`_is_synced_event()` gates every deletion. An event is "ours" only if it
+carries a `sourceEventId` extended property or a legacy `SYNC_ID:` body
+marker. This is what makes it safe for staff to have write access to a target
+calendar: anything a person adds by hand is invisible to the delete logic and
+survives every sync.
 
-### Security Headers
-- **HSTS**: HTTP Strict Transport Security (1-year max-age)
-- **CSP**: Content Security Policy with strict resource controls
-- **X-Frame-Options**: DENY (prevents clickjacking)
-- **X-Content-Type-Options**: nosniff
-- **X-XSS-Protection**: 1; mode=block
+**Mass deletions abort.** If a single pair plans more than
+`MAX_DELETIONS_WITHOUT_APPROVAL` (currently 150, in `sync.py`) deletions, the
+sync stops and changes nothing. This is per pair, so with N pairs the
+effective ceiling is N times that number.
 
-### Deployment Security
-- **Graceful Shutdown**: Proper signal handling for deployments
-- **Background Initialization**: Heavy operations don't block startup
-- **Health Check Isolation**: Fast health endpoints for deployment monitoring
+**Destructive HTTP routes require an explicit, validated target.**
+`/clear-target` and `/clear-synced-only` take a JSON body naming the calendar.
+There is deliberately no default: a missing target returns 400 rather than
+falling back to a calendar the caller did not intend. The name must match a
+configured sync target, which makes the master calendar and every unrelated
+calendar in the mailbox unreachable from these routes.
 
-## 📊 Monitoring & Observability
+**One failing pair does not stop the others.** `_sync_pair()` catches its own
+exceptions and returns a failure result. `_do_sync()` aggregates.
 
-### Health Endpoints
-```bash
-# Basic health check (responds immediately)
-curl /health
+---
 
-# Readiness check (sync services status)
-curl /ready
+## 4. Configuration
 
-# Detailed system status
-curl /status
-```
+All configuration is environment variables, read at process start
+(`config.py`). Changing one requires a restart or redeploy.
 
-### Debug Endpoints
-- `GET /debug` - Basic system information
-- `GET /metrics` - Performance metrics
-- `GET /history` - Sync operation history
-- `POST /validate-sync` - Manual sync validation
-
-### Logging
-- **Structured JSON logs** for easy parsing
-- **Security event logging** for audit trails
-- **Performance metrics** for optimization
-- **Error tracking** with full context
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-#### **Required for OAuth**
-```bash
-CLIENT_ID=your_client_id_here
-CLIENT_SECRET=your_microsoft_app_secret_here
-TENANT_ID=your_tenant_id_here
-REDIRECT_URI=https://your-app-domain.onrender.com/auth/callback
-```
-
-#### **Calendar Configuration**
-```bash
-SHARED_MAILBOX=your_shared_mailbox@yourdomain.org
-SOURCE_CALENDAR=Calendar
-TARGET_CALENDAR=Public Calendar
-SYNC_CATEGORY=Public            # Category that feeds TARGET_CALENDAR
-```
-
-#### **Additional Category Pairs (optional)**
-
-One source calendar can feed several target calendars, one per Outlook
-category. Staff tag an event in the master calendar and it lands on the
-matching calendar; an event carrying two categories lands on both.
+### Identity and access
 
 ```bash
-EXTRA_SYNC_PAIRS=SAS=Sundays At St. Edward
+CLIENT_ID=...            # Azure AD app registration
+CLIENT_SECRET=...
+TENANT_ID=...
+REDIRECT_URI=https://<host>/auth/callback
+SHARED_MAILBOX=calendar@stedward.org
 ```
 
-Format is `Category=Calendar Name`, with multiple pairs separated by
-semicolons. Leave it unset and the service syncs the single primary pair
-exactly as it always has.
+Authentication is **delegated** OAuth, not app-only: a human signs in once
+through the dashboard and the refresh token is persisted to `/data/token.json`.
+If that token is lost or revoked, syncing stops until someone signs in again.
 
-Safety rules applied to every pair:
-- A pair whose target is `SOURCE_CALENDAR` is dropped, so a typo cannot
-  aim writes at the master calendar.
-- Malformed and duplicate entries are ignored rather than guessed at.
-- Each pair only ever deletes events that this service created; anything a
-  person adds to a target calendar by hand is left alone.
-- One failing pair is reported and skipped without stopping the others.
+### Calendars
 
-#### **Sync Settings**
 ```bash
-SYNC_CUTOFF_DAYS=730            # 2 years of events
-SYNC_INTERVAL_MIN=23           # Sync every 23 minutes
-DRY_RUN_MODE=False             # Set to True for testing
+SOURCE_CALENDAR=Calendar                          # the master, read-only
+TARGET_CALENDAR=St. Edward Public Calendar        # primary pair's target
+SYNC_CATEGORY=Public                              # primary pair's category
+EXTRA_SYNC_PAIRS=SAS=Sundays At St. Edward        # optional, see below
 ```
 
-### Production Configuration
-- **Gunicorn Timeout**: 300 seconds for long sync operations
-- **Graceful Shutdown**: 30 seconds for cleanup
-- **Health Check**: Responds in <5 seconds
-- **Background Initialization**: Heavy operations in daemon threads
+`EXTRA_SYNC_PAIRS` adds pairs beyond the primary one. Format is
+`Category=Calendar Name`; separate multiple pairs with semicolons:
 
-## 🔄 Sync Process
-
-### Automatic Sync
-1. **Scheduler**: Runs every 23 minutes automatically
-2. **Authentication**: Validates Microsoft Graph tokens
-3. **Pair Resolution**: Builds the category/calendar list from config
-4. **Source Reading**: Fetches events from internal calendar
-5. **Filtering**: Only events tagged with that pair's category, within date range
-6. **Target Writing**: Creates/updates events in that pair's calendar
-7. **Change Tracking**: Monitors for conflicts and duplicates
-
-Steps 4 through 6 run once per configured pair. The primary pair owns the
-event cache, since updating it replaces its contents wholesale.
-
-### Manual Sync
-- **Web Interface**: Click "Sync Now" button
-- **API Endpoint**: `POST /sync`
-- **Real-time Status**: Immediate feedback on sync progress
-
-### Sync Validation
-- **Event Count Matching**: Ensures no data loss
-- **Privacy Checks**: Confirms no private events leaked
-- **Date Range Validation**: Events within configured limits
-- **Duplicate Detection**: Prevents duplicate events
-
-## 🚨 Troubleshooting
-
-### Common Issues
-
-#### **Authentication Failures**
-- **Check**: Token refresh and Microsoft Graph connectivity
-- **Debug**: Use `/debug` endpoint for detailed status
-- **Recovery**: Automatic retry with exponential backoff
-
-#### **Sync Performance Issues**
-- **Monitor**: `/metrics` endpoint for performance data
-- **Optimize**: Batch operations and caching
-- **Scale**: Adjust sync intervals if needed
-
-### Debug Commands
 ```bash
-# Check system status
-curl /status
-
-# View recent metrics
-curl /metrics
-
-# Validate current sync
-curl -X POST /validate-sync
-
-# Check sync history
-curl /history
+EXTRA_SYNC_PAIRS=SAS=Sundays At St. Edward;Youth=Youth Ministry Calendar
 ```
 
-## 📈 Performance
+`config.get_sync_pairs()` resolves this into a list, primary pair first, and
+applies these guards:
 
-### Optimizations
-- **Batch Operations**: Microsoft Graph batch API for efficiency
-- **Caching**: Calendar IDs cached for 1 hour
-- **Delta Queries**: Incremental sync when possible
-- **Background Processing**: Non-blocking web requests
+- Whitespace inside a name is collapsed, so a line break introduced by pasting
+  into a hosting panel textarea does not break the calendar lookup.
+- Calendar names are matched exactly first, then case-insensitively, so a wrong
+  capital produces a logged warning rather than a silent no-op.
+- A pair targeting `SOURCE_CALENDAR` is dropped.
+- Malformed and duplicate entries are ignored.
 
-### Benchmarks
-- **Health Check**: <100ms response time
-- **Sync Operation**: 30-100 seconds for full sync
-- **API Calls**: <500ms average latency
-- **Success Rate**: >95% under normal conditions
+Leave `EXTRA_SYNC_PAIRS` unset and the service behaves exactly as it did
+before multi-pair support existed, including the shape of its result objects.
 
-## 🔧 Development
+### Behavior
 
-### Local Setup
 ```bash
-# Clone repository
-git clone <repository-url>
-cd calendar-sync-service
+SYNC_INTERVAL_MIN=23         # minutes between automatic syncs
+SYNC_CUTOFF_DAYS=1825        # how far back to sync
+SYNC_LOOKAHEAD_DAYS=365      # how far ahead to sync
+DRY_RUN_MODE=False           # True plans changes and writes nothing
+MASTER_CALENDAR_PROTECTION=true
+MAX_SYNC_REQUESTS_PER_HOUR=20
+ALLOWED_DASHBOARD_USERS=     # optional comma-separated allowlist
+PORT=10000
+```
 
-# Install dependencies
+---
+
+## 5. Code map
+
+Eight core modules. Sizes are a rough guide to where complexity lives.
+
+| File | Lines | Responsibility |
+|---|---|---|
+| `app.py` | ~4000 | Flask routes, dashboard, ~67 endpoints (most are debug) |
+| `sync.py` | ~2500 | `SyncEngine`, `SyncScheduler`, `SyncHistory`, `ChangeTracker` |
+| `calendar_ops.py` | ~1250 | `CalendarReader` and `CalendarWriter` over Microsoft Graph |
+| `auth.py` | ~800 | OAuth flow, token refresh and persistence, request signing |
+| `utils.py` | ~850 | Timezone handling, retry with backoff, structured logging |
+| `signature_utils.py` | ~200 | Event signature generation, the basis of change detection |
+| `config.py` | ~120 | Environment configuration and pair resolution |
+| `gunicorn.conf.py` | ~35 | One worker, 3600s timeout, 30s graceful shutdown |
+
+### The sync path, in call order
+
+```
+SyncScheduler                     sync.py    every SYNC_INTERVAL_MIN
+  └─ SyncEngine.sync_calendars()             circuit breaker wrapper
+       └─ _do_sync()                         rate limit, lock, loop pairs
+            ├─ config.get_sync_pairs()       config.py
+            ├─ _sync_pair(category, target)  once per pair
+            │    ├─ reader.find_calendar_id()
+            │    ├─ reader.get_public_events(..., category=)   filters
+            │    ├─ reader.get_calendar_events(target)
+            │    ├─ _determine_sync_operations()   add / update / delete
+            │    ├─ _execute_sync_operations_batch()
+            │    └─ _handle_cancelled_occurrences() / _handle_modified_...()
+            └─ _merge_pair_results()         one result for the dashboard
+```
+
+### Result shapes
+
+A **single** configured pair returns its result unchanged, preserving the
+pre-multi-pair shape that the dashboard and history already consume:
+
+```json
+{"success": true, "message": "ok", "added": 3, "updated": 1, "deleted": 0,
+ "duration": 12.4, "category": "Public",
+ "target_calendar": "St. Edward Public Calendar"}
+```
+
+**Two or more** pairs return a merged result with a `pairs` list:
+
+```json
+{"success": false, "added": 3, "updated": 1, "deleted": 0,
+ "error": "SAS -> Sundays At St. Edward: Calendar not found",
+ "failed_pairs": ["SAS"],
+ "pairs": [
+   {"category": "Public", "target_calendar": "St. Edward Public Calendar",
+    "success": true, "added": 3, "updated": 1, "deleted": 0},
+   {"category": "SAS", "target_calendar": "Sundays At St. Edward",
+    "success": false, "error": "Calendar not found"}
+ ]}
+```
+
+Note `success` is `all(pairs)`. Anything judging overall health should read
+the `pairs` list, not the top-level flag, so one failing calendar does not
+report as a total outage.
+
+### Change detection
+
+Two independent mechanisms, because each covers a case the other misses:
+
+- **Signature matching** (`signature_utils.py`): normalized subject plus start
+  time. Detects an event whose content changed.
+- **Source ID tracking**: the `sourceEventId` extended property links a copy
+  back to its origin. Detects an origin event that was deleted or untagged, so
+  its copy can be removed.
+
+`ChangeTracker` caches the last-seen source events at `/data/event_cache.json`.
+Its `update_cache()` **replaces** the cache wholesale, so only the primary pair
+writes to it; letting a second pair write would erase the first pair's entries
+on every cycle.
+
+---
+
+## 6. The dashboard
+
+At `/`, behind Microsoft sign-in. Built for parish staff, not engineers.
+
+- **Status bar**: one sentence on overall health. A single failing calendar
+  shows amber and names that calendar, rather than red with no attribution.
+- **Calendar cards**: one per *configured* pair, not per pair that happened to
+  run. A calendar missing from the last run is flagged rather than absent,
+  which is the failure that would otherwise be invisible. Each card shows its
+  category, freshness, counts, and on failure the last known good sync time.
+- **Preview**: covers the primary pair only, and says so in its heading.
+  `preview_sync()` has not been made pair-aware; making preview cover every
+  pair is unfinished work.
+- **Advanced Actions**: three gated steps, nothing preselected. Pick a
+  calendar, pick a scope, type DELETE. The button label and the final browser
+  confirmation both name the calendar.
+
+---
+
+## 7. Endpoints worth knowing
+
+Roughly 67 routes exist; most are single-purpose debug endpoints accumulated
+during past incidents. These are the ones that matter.
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/` | GET | Dashboard |
+| `/health` | GET | Liveness, answers immediately |
+| `/ready` | GET | Readiness, checks initialization |
+| `/status` | GET | Full status including `sync_pairs` |
+| `/sync` | POST | Trigger a sync of every pair |
+| `/sync/preview` | POST | Plan changes for the primary pair, write nothing |
+| `/sync/progress` | GET | Progress of a running sync |
+| `/clear-target` | POST | Delete **all** events from a named target |
+| `/clear-synced-only` | POST | Delete only synced events from a named target |
+| `/history` | GET | Aggregate statistics |
+| `/metrics` | GET | Operational metrics |
+| `/debug/verify-config` | GET | Configuration sanity check |
+| `/debug/calendars` | GET | List calendars visible in the mailbox |
+
+Most `/debug/*` routes predate multi-pair support and report on the primary
+pair only. Treat their output as partial.
+
+---
+
+## 8. Running it
+
+### Locally
+
+```bash
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-# Set environment variables
-export CLIENT_ID=your_client_id
-export CLIENT_SECRET=your_client_secret
-export TENANT_ID=your_tenant_id
-
-# Run development server
+export CLIENT_ID=... CLIENT_SECRET=... TENANT_ID=... SHARED_MAILBOX=...
+export DRY_RUN_MODE=True          # strongly recommended locally
 python app.py
 ```
 
-### Code Structure
-- **Flask Routes**: All endpoints in `app.py`
-- **Business Logic**: Separated into focused modules
-- **Configuration**: Environment-based in `config.py`
-- **Utilities**: Consolidated in `utils.py`
+Then open the app, sign in with an account that can read the shared mailbox,
+and trigger a sync from the dashboard.
 
-## 📋 API Reference
-
-### Authentication
-- `GET /` - Main dashboard with OAuth login
-- `GET /auth/callback` - OAuth callback (with bot detection)
-- `GET /logout` - Clear session and tokens
-
-### Sync Operations
-- `POST /sync` - Trigger manual sync
-- `GET /sync/status` - Check sync status
-- `POST /scheduler/toggle` - Pause/resume automatic sync
-
-### Monitoring
-- `GET /health` - Basic health check
-- `GET /ready` - Service readiness check
-- `GET /status` - Detailed system status
-- `GET /metrics` - Performance metrics
-- `GET /history` - Sync history
-
-### Debug (Development)
-- `GET /debug` - System information
-- `POST /validate-sync` - Manual validation
-- `GET /debug/calendars` - Calendar listing
-- `GET /debug/events/<calendar>` - Event debugging
-
-## 🧪 Testing
-
-The project includes a comprehensive pytest test suite.
-
-### Running Tests
+### Tests
 
 ```bash
-# Run all tests
-pytest tests/ -v
-
-# Run specific tests
-pytest tests/test_signatures.py
-pytest tests/test_duplicates.py
-
-# Run by category
-pytest -m signature  # Signature tests only
-pytest -m duplicate   # Duplicate detection only
-pytest -m unit        # Unit tests only
+python -m pytest tests/ -q
 ```
 
-See `tests/README.md` for complete testing documentation.
+70 tests, no network access required. Coverage concentrates on the parts where
+a mistake is expensive: signature generation, duplicate detection, the auth
+gate on sensitive endpoints, pair resolution and its guards, category
+filtering, multi-pair routing, and the destructive-route target validation.
 
-### Test Coverage
+### Deployment
 
-- **Signature Tests**: Verify event signature generation consistency
-- **Duplicate Tests**: Ensure duplicate detection works correctly
-- **Integration Tests**: Test full sync workflows (require API access)
+Runs on Render. Deploys are triggered from the Render dashboard, which also
+holds the environment variables and the persistent `/data` disk. Gunicorn runs
+a single worker, since the scheduler lives in-process and multiple workers
+would sync concurrently.
 
-## 📚 Documentation
+After changing an environment variable, redeploy. The app reads configuration
+only at startup.
 
-Comprehensive documentation is organized in the `/docs` directory:
+---
 
-- **[Architecture](docs/architecture/system-overview.md)** - System design and components
-- **[Deployment Guide](docs/guides/deployment.md)** - Deployment procedures
-- **[Troubleshooting](docs/guides/troubleshooting.md)** - Common issues and solutions
-- **[Testing](tests/README.md)** - Test suite documentation
-- **[Historical Fixes](docs/README.md#historical-documentation)** - Archive of past bug fixes
+## 9. Known gaps
 
-### Quick Start
+Honest list. None are blocking; all are real.
 
-1. **Deploy**: Follow [Deployment Guide](docs/guides/deployment.md)
-2. **Configure**: Set environment variables
-3. **Authenticate**: Visit web interface and sign in
-4. **Monitor**: Check `/health/detailed` endpoint
+- `preview_sync()` covers the primary pair only, while executing a sync writes
+  to every pair. The preview heading says so, but the mismatch remains.
+- `/bulletin-events` and `/event-search` read the primary target calendar only,
+  so a second calendar's events do not appear in either.
+- `/admin/migrate-extended-properties` migrates the primary pair only.
+- Sync history stores per-pair detail inside each entry, but `/history` exposes
+  aggregates only, so per-calendar history is not visible in the UI.
+- `/debug/current-sync-status` references a `config.PUBLIC_CALENDAR` that does
+  not exist and always returns 500.
+- The footer and the auto-sync label say "every 15 minutes" while the interval
+  defaults to 23.
+- `MAX_DELETIONS_WITHOUT_APPROVAL` is 150 with a note to restore it to 50 after
+  a duplicate cleanup that has since finished.
+- Both destructive routes are reachable by any authenticated dashboard user;
+  the typed DELETE confirmation is a client-side gate only.
 
-### Getting Help
+---
 
-- Check [Troubleshooting Guide](docs/guides/troubleshooting.md) first
-- Review logs for error messages
-- Run test suite: `pytest tests/ -v`
+## 10. Troubleshooting
 
-## 🛡️ Security Considerations
+**A calendar's card says "Not included in the last sync."** The pair is
+configured but the run skipped it. Check the logs for `Calendar '<name>' not
+found`, which lists the calendar names actually present in the mailbox.
 
-### OAuth Security
-- **HTTPS Only**: All OAuth flows use HTTPS
-- **State Validation**: CSRF protection implemented
-- **Token Security**: Secure storage and refresh
-- **Bot Detection**: Prevents automated attacks
+**Tagged events are not appearing.** Confirm all four qualifying conditions in
+section 2. The most common cause is `showAs` set to `free`, which is skipped by
+design. The second most common is the event falling outside the sync window.
 
-### Data Protection
-- **Event Privacy**: Only public events synced
-- **No Sensitive Data**: Location and details filtered
-- **Audit Logging**: Security events tracked
-- **Access Control**: Microsoft Graph permissions only
+**Everything stopped syncing.** The delegated OAuth token likely expired or was
+revoked. Sign in again through the dashboard.
 
-### Deployment Security
-- **Security Headers**: Comprehensive HTTP security
-- **Graceful Shutdown**: Prevents data corruption
-- **Health Monitoring**: Continuous security checks
-- **Error Handling**: Secure error responses
+**An event keeps reappearing after deletion.** It was deleted from the target
+but still qualifies on the master, so the next sync recreates it. Remove the
+category on the master instead.
 
-## 📞 Support
+**Duplicates appeared.** Signature matching failed, usually because a subject
+or start time changed in a way that broke the match. `/debug/duplicates`
+reports them; the sync also cleans up duplicates it detects on the target.
 
-### Monitoring
-- **Health Checks**: Automatic monitoring via Render
-- **Logs**: Structured logging for debugging
-- **Metrics**: Performance tracking and alerting
-- **Audit Trail**: Security event logging
+---
 
-## 📄 License
+## License
 
-**Copyright © 2024-2026 Harnisch LLC. All Rights Reserved.**
+Proprietary. See `LICENSE.txt`.
 
-This is proprietary software, not open source. It is the intellectual property of Harnisch LLC and is licensed exclusively to St. Edward Church & School (Nashville, TN) for its internal operations. The license is non-transferable and non-sublicensable. No reproduction, distribution, modification, or publication is permitted without the express written consent of Harnisch LLC.
-
-See [LICENSE.txt](LICENSE.txt) for the full terms. Licensing inquiries: info@harnischllc.com
+Copyright (c) 2024-2026 Harnisch LLC. Licensed for use by St. Edward Church &
+School, Nashville, TN.
