@@ -94,6 +94,23 @@ class TestSyncPairs:
         cfg = reload_config(EXTRA_SYNC_PAIRS='  SAS = Sundays At St. Edward  ')
         assert cfg.get_sync_pairs()[1] == {'category': 'SAS', 'target': 'Sundays At St. Edward'}
 
+    def test_newline_inside_a_calendar_name_is_normalized(self):
+        """Hosting panels wrap long values; a stray newline must not break the match."""
+        cfg = reload_config(EXTRA_SYNC_PAIRS='SAS=Sundays\n   At St. Edward')
+        assert cfg.get_sync_pairs()[1] == {'category': 'SAS', 'target': 'Sundays At St. Edward'}
+
+    def test_doubled_spaces_inside_a_calendar_name_are_collapsed(self):
+        cfg = reload_config(EXTRA_SYNC_PAIRS='SAS=Sundays  At  St. Edward')
+        assert cfg.get_sync_pairs()[1]['target'] == 'Sundays At St. Edward'
+
+    def test_tabs_and_newlines_around_the_whole_value(self):
+        cfg = reload_config(EXTRA_SYNC_PAIRS='\n\tSAS=Sundays At St. Edward\n')
+        assert cfg.get_sync_pairs()[1]['target'] == 'Sundays At St. Edward'
+
+    def test_primary_calendar_name_is_normalized_too(self):
+        cfg = reload_config(TARGET_CALENDAR='St. Edward\n  Public Calendar')
+        assert cfg.get_sync_pairs()[0]['target'] == 'St. Edward Public Calendar'
+
 
 class TestCategoryFiltering:
     """CalendarReader.get_public_events() honours the requested category"""

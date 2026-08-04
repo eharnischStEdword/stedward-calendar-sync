@@ -13,13 +13,25 @@ from datetime import timedelta
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'production')
 DEBUG = ENVIRONMENT == 'development'
 
+def _clean_name(value):
+    """
+    Collapse every run of whitespace to one space and trim the ends.
+
+    Calendar names are pasted into hosting-panel textareas, which can wrap or
+    carry a stray newline. Outlook names never contain newlines or doubled
+    spaces, so normalizing here makes the lookup immune to how the value was
+    entered instead of failing to match a calendar that plainly exists.
+    """
+    return ' '.join((value or '').split())
+
+
 # Shared Mailbox Configuration
-SHARED_MAILBOX = os.environ.get('SHARED_MAILBOX', "your_shared_mailbox@yourdomain.org")
-SOURCE_CALENDAR = os.environ.get('SOURCE_CALENDAR', "Calendar")
-TARGET_CALENDAR = os.environ.get('TARGET_CALENDAR', "St. Edward Public Calendar")
+SHARED_MAILBOX = (os.environ.get('SHARED_MAILBOX', "your_shared_mailbox@yourdomain.org") or '').strip()
+SOURCE_CALENDAR = _clean_name(os.environ.get('SOURCE_CALENDAR', "Calendar"))
+TARGET_CALENDAR = _clean_name(os.environ.get('TARGET_CALENDAR', "St. Edward Public Calendar"))
 
 # Category the primary pair syncs (events tagged with it land on TARGET_CALENDAR)
-SYNC_CATEGORY = os.environ.get('SYNC_CATEGORY', "Public")
+SYNC_CATEGORY = _clean_name(os.environ.get('SYNC_CATEGORY', "Public"))
 
 # Additional category -> calendar pairs, beyond the primary one above.
 # Format: "Category=Calendar Name", multiple pairs separated by semicolons.
@@ -40,8 +52,8 @@ def get_sync_pairs():
     seen = set()
 
     def add(category, target):
-        category = (category or '').strip()
-        target = (target or '').strip()
+        category = _clean_name(category)
+        target = _clean_name(target)
         if not category or not target:
             return
         if target.lower() == SOURCE_CALENDAR.lower():
