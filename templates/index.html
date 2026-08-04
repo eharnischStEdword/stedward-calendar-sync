@@ -1186,16 +1186,21 @@
 
         function summarizePairs(status) {
             const pairs = (status && status.sync_pairs) || [];
-            const failed = pairs.filter(p => p.in_last_run && !p.success);
+            const stopped = pairs.filter(p => p.in_last_run && p.safety_triggered);
+            const failed = pairs.filter(p => p.in_last_run && !p.success && !p.safety_triggered);
             return {
                 total: pairs.length,
                 failed: failed.length,
-                failedNames: failed.map(p => p.target_calendar)
+                failedNames: failed.map(p => p.target_calendar),
+                stoppedNames: stopped.map(p => p.target_calendar)
             };
         }
 
         function describeCounts(pair) {
             if (!pair.in_last_run) return 'Not included in the last sync';
+            // An aborted run reports what it PLANNED, not what it did. Saying
+            // "114 added" for a sync that changed nothing is worse than useless.
+            if (pair.safety_triggered) return 'Nothing was changed';
             const total = (pair.added || 0) + (pair.updated || 0) + (pair.deleted || 0);
             if (!total) return 'no changes';
             return `${pair.added || 0} added &middot; ${pair.updated || 0} changed &middot; ${pair.deleted || 0} removed`;
@@ -1215,16 +1220,32 @@
             grid.innerHTML = currentPairs.map(pair => {
                 let state = 'ok', glyph = '&#9989;';
                 if (!pair.in_last_run) { state = 'warn'; glyph = '&#9888;&#65039;'; }
+                else if (pair.safety_triggered) { state = 'warn'; glyph = '&#9888;&#65039;'; }
                 else if (!pair.success) { state = 'fail'; glyph = '&#10060;'; }
 
-                const when = pair.in_last_run
-                    ? (pair.success
-                        ? `Updated ${escapeHtml(status.last_sync_time_display || 'recently')}`
-                        : `Did not update at ${escapeHtml(status.last_sync_time_display || 'last sync')}`)
-                    : 'Waiting for the next sync';
+                let when;
+                if (!pair.in_last_run) {
+                    when = 'Waiting for the next sync';
+                } else if (pair.safety_triggered) {
+                    when = `Stopped itself at ${escapeHtml(status.last_sync_time_display || 'last sync')}`;
+                } else if (pair.success) {
+                    when = `Updated ${escapeHtml(status.last_sync_time_display || 'recently')}`;
+                } else {
+                    when = `Did not update at ${escapeHtml(status.last_sync_time_display || 'last sync')}`;
+                }
 
                 let errorBlock = '';
-                if (pair.in_last_run && !pair.success) {
+                if (pair.in_last_run && pair.safety_triggered) {
+                    // Not a failure: a deliberate refusal to delete in bulk.
+                    const planned = pair.deletions_planned;
+                    errorBlock = `<div class="pair-error" style="background:#fff3cd;border-left-color:#DAAA00;color:#856404;">` +
+                        `<strong>Stopped for safety.</strong> This sync wanted to delete ` +
+                        `${planned == null ? 'an unusual number of' : escapeHtml(planned)} events, ` +
+                        `over the limit of ${escapeHtml(pair.threshold == null ? 150 : pair.threshold)}, ` +
+                        `so it changed nothing at all.` +
+                        `<div style="margin-top:0.35rem;">Someone should check why before letting it run.</div>` +
+                        `</div>`;
+                } else if (pair.in_last_run && !pair.success) {
                     const lastGood = pair.last_success_display
                         ? `<div style="margin-top:0.35rem;">Last good sync: ${escapeHtml(pair.last_success_display)}</div>`
                         : '<div style="margin-top:0.35rem;">No successful sync on record.</div>';
@@ -1328,6 +1349,9 @@
                 } else if (summary.total && summary.failed === summary.total) {
                     text = 'Sync failed. No calendars were updated.';
                     color = '#EF4444';
+                } else if (summary.stoppedNames.length) {
+                    text = `${summary.stoppedNames.join(' and ')} stopped for safety and changed nothing.`;
+                    color = '#DAAA00';
                 } else if (summary.failed === 1) {
                     const others = summary.total - 1;
                     const tail = others === 1 ? 'The other calendar is fine.'
@@ -1581,8 +1605,14 @@
                     // Update progress display
                     if (progress.in_progress) {
                         const percent = progress.percent || 0;
-                        const phase = progress.phase || 'syncing';
-                        showMessage(`🔄 Syncing... ${percent}% complete (${phase})`, 'info', 0);
+                        const phase = progress.phase && progress.phase !== 'Starting'
+                            ? progress.phase
+                            : 'Starting';
+                        const bar = '█'.repeat(Math.round(percent / 5)).padEnd(20, '░');
+                        showMessage(
+                            `🔄 ${phase}\n${bar} ${percent}%\nThis takes a few minutes. You can leave this page open.`,
+                            'info', 0
+                        );
                     } else {
                         // Sync completed - stop polling
                         clearInterval(progressPollInterval);

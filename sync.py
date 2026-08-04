@@ -974,6 +974,17 @@ class SyncEngine:
             pairs = config.get_sync_pairs()
             logger.info(f"🔁 Sync pairs: {', '.join(p['category'] + ' -> ' + p['target'] for p in pairs)}")
 
+            # Progress is counted in calendar-fetch rounds, because that is
+            # where the wall clock actually goes: one Graph round trip per
+            # weekly chunk per pair. Counting write operations instead reports
+            # 0% for the whole run, since most syncs change nothing.
+            window_start = DateTimeUtils.get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
+            window_end = DateTimeUtils.get_central_time() + timedelta(days=config.SYNC_LOOKAHEAD_DAYS)
+            chunks_per_pair = sum(1 for _ in self.generate_weekly_ranges(window_start, window_end))
+            self.sync_state['total'] = len(pairs) * (chunks_per_pair + 1)  # +1 per pair for its write phase
+            self.sync_state['progress'] = 0
+            self.sync_state['phase'] = 'Starting'
+
             pair_results = []
             for index, pair in enumerate(pairs):
                 pair_results.append(
@@ -1087,6 +1098,17 @@ class SyncEngine:
 
         return merged
 
+    def _advance_progress(self, phase: str):
+        """
+        Move the progress counter on by one unit and label the current phase.
+
+        Deliberately lock-free: these are a plain int and str read by a polling
+        endpoint, and taking sync_lock here would risk deadlocking against the
+        callers that already hold it.
+        """
+        self.sync_state['progress'] = self.sync_state.get('progress', 0) + 1
+        self.sync_state['phase'] = phase
+
     @staticmethod
     def _pair_failure(category: str, target_calendar_name: str, reason: str) -> Dict:
         """
@@ -1149,6 +1171,8 @@ class SyncEngine:
 
                 source_events.extend(week_source)
                 target_events.extend(week_target)
+
+                self._advance_progress(f"Reading {target_calendar_name}")
 
             if source_events is None:
                 return self._pair_failure(category, target_calendar_name,
@@ -1244,6 +1268,7 @@ class SyncEngine:
                 }
             
             # Execute sync operations
+            self._advance_progress(f"Updating {target_calendar_name}")
             result = self._execute_sync_operations_batch(target_id, to_add, to_update, to_delete)
             
             # Handle cancelled occurrences of recurring events
@@ -1322,11 +1347,8 @@ class SyncEngine:
             logger.error(f"❌ Sync failed for pair '{category}': {e}")
             return error_result
 
-        finally:
-            # Clear per-pair progress; sync_in_progress is owned by _do_sync
-            with self.sync_lock:
-                self.sync_state['phase'] = None
-                self.sync_state['progress'] = 0
+        # No finally-reset here: progress spans the whole run across every
+        # pair, and _do_sync owns clearing it.
 
     def _normalize_subject(self, subject: str) -> str:
         """Normalize event subject for matching - Uses shared utilities"""
@@ -2124,8 +2146,6 @@ class SyncEngine:
                 operation_details['add_success'] += batch_result['successful']
                 operation_details['add_failed'] += batch_result['failed']
                 
-                # Update progress
-                self.sync_state['progress'] = i + len(batch)
                 self.sync_state['last_checkpoint'] = DateTimeUtils.get_central_time()
                 
                 # Yield control to prevent timeout
@@ -2147,8 +2167,6 @@ class SyncEngine:
                         failed += 1
                         operation_details['update_failed'] += 1
                 
-                # Update progress
-                self.sync_state['progress'] = i + len(batch)
                 self.sync_state['last_checkpoint'] = DateTimeUtils.get_central_time()
                 
                 # Longer pause between update batches
@@ -2167,21 +2185,12 @@ class SyncEngine:
                 operation_details['delete_success'] += batch_result['successful']
                 operation_details['delete_failed'] += batch_result['failed']
                 
-                # Update progress
-                self.sync_state['progress'] = i + len(batch)
                 self.sync_state['last_checkpoint'] = DateTimeUtils.get_central_time()
                 
                 time.sleep(0.1)
         
-        # Clear state
-        self.sync_state['phase'] = None
-        self.sync_state['progress'] = 0
-        
         total = len(to_add) + len(to_update) + len(to_delete)
-        
-        # Update sync state with total operations
-        self.sync_state['total'] = total
-        
+
         # Count all-day events processed
         all_day_added = sum(1 for event in to_add if event.get('isAllDay', False))
         all_day_updated = sum(1 for source_event, _ in to_update if source_event.get('isAllDay', False))
@@ -2411,12 +2420,12 @@ class SyncEngine:
             return status
     
     def get_progress_percent(self):
-        """Calculate progress percentage"""
+        """Calculate progress percentage, clamped to 0-100"""
         total = self.sync_state.get('total', 0)
         progress = self.sync_state.get('progress', 0)
-        if total == 0:
+        if not total:
             return 0
-        return int((progress / total) * 100)
+        return max(0, min(100, int((progress / total) * 100)))
 
 
 class SyncScheduler:

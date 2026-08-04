@@ -346,7 +346,12 @@ def build_pair_status(last_sync_result):
             'updated': row.get('updated', 0) if row else 0,
             'deleted': row.get('deleted', 0) if row else 0,
             'message': row.get('message') if row else None,
-            'error': row.get('error') if row else None
+            'error': row.get('error') if row else None,
+            # An aborted run reports PLANNED counts in added/updated, so the UI
+            # must not present them as work that happened.
+            'safety_triggered': bool(row.get('safety_triggered')) if row else False,
+            'deletions_planned': row.get('deletions_planned') if row else None,
+            'threshold': row.get('threshold') if row else None
         }
         entry['last_success_display'] = find_last_success_display(pair['category'])
         pair_status.append(entry)

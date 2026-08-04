@@ -205,6 +205,126 @@ class TestCalendarLookup:
         assert self.make_reader().find_calendar_id('Youth Calendar') is None
 
 
+class TestSyncProgress:
+    """
+    Progress must reflect the work that actually takes time.
+
+    It previously counted only add/update/delete operations, and set the
+    denominator after the run finished, so the dashboard showed "0% complete"
+    for the entire sync. Most syncs change nothing, so there was nothing to
+    count; the wall clock goes to per-week calendar fetches.
+    """
+
+    def build_engine(self, monkeypatch, percent_log):
+        import sync as sync_module
+
+        engine = sync_module.SyncEngine(auth_manager=None)
+        cal_ids = {
+            'Calendar': 'id-source',
+            'St. Edward Public Calendar': 'id-public',
+            'Sundays At St. Edward': 'id-sas',
+        }
+        engine.reader.find_calendar_id = lambda name: cal_ids.get(name)
+
+        def get_calendar_events(calendar_id, select_fields=None, start=None, end=None):
+            percent_log.append(engine.get_progress_percent())
+            return []
+
+        engine.reader.get_calendar_events = get_calendar_events
+        engine.change_tracker.update_cache = lambda events: None
+        engine._execute_sync_operations_batch = lambda t, a, u, d: {
+            'success': True, 'message': 'ok', 'added': 0, 'updated': 0, 'deleted': 0,
+            'successful_operations': 0, 'failed_operations': 0
+        }
+        engine._handle_cancelled_occurrences = lambda s, t: 0
+        engine._handle_modified_occurrences = lambda s, t: 0
+        return engine
+
+    def test_progress_climbs_during_a_sync_that_changes_nothing(self, monkeypatch):
+        reload_config(EXTRA_SYNC_PAIRS='SAS=Sundays At St. Edward')
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        monkeypatch.setattr('config.SYNC_CUTOFF_DAYS', 30, raising=False)
+        monkeypatch.setattr('config.SYNC_LOOKAHEAD_DAYS', 30, raising=False)
+
+        seen = []
+        engine = self.build_engine(monkeypatch, seen)
+        engine._do_sync()
+
+        assert seen, 'no fetches happened'
+        # The old behaviour: every sample 0. The bar must actually move.
+        assert max(seen) > 0
+        assert seen == sorted(seen), 'progress went backwards'
+        assert max(seen) <= 100
+
+    def test_total_is_set_before_work_starts(self, monkeypatch):
+        reload_config()
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        monkeypatch.setattr('config.SYNC_CUTOFF_DAYS', 14, raising=False)
+        monkeypatch.setattr('config.SYNC_LOOKAHEAD_DAYS', 7, raising=False)
+
+        totals = []
+        engine = self.build_engine(monkeypatch, [])
+        original = engine.reader.get_calendar_events
+
+        def watch(calendar_id, **kwargs):
+            totals.append(engine.sync_state.get('total', 0))
+            return original(calendar_id, **kwargs)
+
+        engine.reader.get_calendar_events = watch
+        engine._do_sync()
+
+        assert totals and all(t > 0 for t in totals), 'denominator was 0 during the run'
+
+    def test_progress_does_not_reset_between_pairs(self, monkeypatch):
+        """Each pair used to zero the counter in its finally block."""
+        reload_config(EXTRA_SYNC_PAIRS='SAS=Sundays At St. Edward')
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        monkeypatch.setattr('config.SYNC_CUTOFF_DAYS', 30, raising=False)
+        monkeypatch.setattr('config.SYNC_LOOKAHEAD_DAYS', 30, raising=False)
+
+        seen = []
+        engine = self.build_engine(monkeypatch, seen)
+        engine._do_sync()
+
+        # Second half of the run belongs to the second calendar; if the counter
+        # had reset, the later samples would drop back toward zero.
+        assert seen[-1] >= seen[len(seen) // 2]
+
+    def test_phase_names_the_calendar_being_read(self, monkeypatch):
+        reload_config(EXTRA_SYNC_PAIRS='SAS=Sundays At St. Edward')
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        monkeypatch.setattr('config.SYNC_CUTOFF_DAYS', 14, raising=False)
+        monkeypatch.setattr('config.SYNC_LOOKAHEAD_DAYS', 7, raising=False)
+
+        phases = []
+        engine = self.build_engine(monkeypatch, [])
+        original = engine.reader.get_calendar_events
+
+        def watch(calendar_id, **kwargs):
+            phases.append(engine.sync_state.get('phase'))
+            return original(calendar_id, **kwargs)
+
+        engine.reader.get_calendar_events = watch
+        engine._do_sync()
+
+        joined = ' '.join(p for p in phases if p)
+        assert 'St. Edward Public Calendar' in joined
+        assert 'Sundays At St. Edward' in joined
+
+    def test_progress_is_cleared_when_the_run_ends(self, monkeypatch):
+        reload_config()
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        monkeypatch.setattr('config.SYNC_CUTOFF_DAYS', 14, raising=False)
+        monkeypatch.setattr('config.SYNC_LOOKAHEAD_DAYS', 7, raising=False)
+
+        engine = self.build_engine(monkeypatch, [])
+        engine._do_sync()
+
+        assert engine.sync_state['progress'] == 0
+        assert engine.sync_state['phase'] is None
+        assert engine.sync_in_progress is False
+
+
 class TestTwoPairSync:
     """A full _do_sync() cycle routes each category to its own target calendar"""
 

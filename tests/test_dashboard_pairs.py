@@ -110,6 +110,44 @@ class TestBuildPairStatus:
         assert len(rows) == 2
         assert not any(r['in_last_run'] for r in rows)
 
+    def test_aborted_run_is_marked_so_planned_counts_are_not_shown_as_done(self, monkeypatch):
+        """
+        The mass-deletion abort reports PLANNED adds in 'added' while changing
+        nothing. Without the safety_triggered flag the dashboard renders that
+        as "114 added" for a sync that touched no events at all.
+        """
+        configure(EXTRA_SYNC_PAIRS=TWO_PAIRS)
+        monkeypatch.setattr(app_module, 'sync_engine', None, raising=False)
+
+        rows = app_module.build_pair_status({
+            'pairs': [
+                {'category': 'Public', 'target_calendar': 'St. Edward Public Calendar',
+                 'success': False, 'safety_triggered': True, 'deletions_planned': 203,
+                 'threshold': 150, 'added': 114, 'updated': 0, 'deleted': 0,
+                 'message': 'SAFETY TRIGGERED: 203 deletions exceeds 150 threshold'},
+                {'category': 'SAS', 'target_calendar': 'Sundays At St. Edward',
+                 'success': True, 'added': 0, 'updated': 0, 'deleted': 0},
+            ]
+        })
+
+        public = next(r for r in rows if r['category'] == 'Public')
+        assert public['safety_triggered'] is True
+        assert public['deletions_planned'] == 203
+        assert public['threshold'] == 150
+
+    def test_normal_failure_is_not_flagged_as_a_safety_stop(self, monkeypatch):
+        configure(EXTRA_SYNC_PAIRS=TWO_PAIRS)
+        monkeypatch.setattr(app_module, 'sync_engine', None, raising=False)
+
+        rows = app_module.build_pair_status({
+            'pairs': [
+                {'category': 'Public', 'target_calendar': 'St. Edward Public Calendar',
+                 'success': False, 'error': 'Calendar not found'},
+            ]
+        })
+
+        assert rows[0]['safety_triggered'] is False
+
     def test_failure_detail_is_carried_through(self, monkeypatch):
         configure(EXTRA_SYNC_PAIRS=TWO_PAIRS)
         monkeypatch.setattr(app_module, 'sync_engine', None, raising=False)
