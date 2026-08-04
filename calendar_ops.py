@@ -1027,9 +1027,17 @@ class CalendarWriter:
             
         return api_event
     
-    def clear_synced_events_only(self, calendar_id):
-        """Delete only events that were created by sync (have SYNC_MARKER in body)"""
-        events = self.get_calendar_events(calendar_id)
+    def clear_synced_events_only(self, calendar_id, reader=None):
+        """
+        Delete only events that were created by sync.
+
+        Reading is a CalendarReader concern; this class has no
+        get_calendar_events, so the caller passes one in. Without it this
+        method raised AttributeError on every call, which meant the SAFE
+        delete option never worked while the destructive one did.
+        """
+        source = reader or CalendarReader(self.auth)
+        events = source.get_calendar_events(calendar_id) or []
         deleted = 0
         
         for event in events:

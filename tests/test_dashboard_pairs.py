@@ -166,6 +166,39 @@ class TestBuildPairStatus:
         assert 'not found' in sas['error']
 
 
+class TestRealWriterClearSynced:
+    """
+    Exercise the REAL CalendarWriter, not a stub.
+
+    The stub in the route test previously accepted a signature the real class
+    did not have, so the suite passed while every production call raised
+    AttributeError: CalendarWriter has no get_calendar_events. The safe delete
+    option was the broken one.
+    """
+
+    def test_clear_synced_events_only_runs_and_spares_hand_made_events(self):
+        from calendar_ops import CalendarWriter
+
+        writer = CalendarWriter(auth_manager=None)
+        deleted = []
+
+        class _Reader:
+            def get_calendar_events(self, calendar_id, **kwargs):
+                return [
+                    {'id': 'synced-1', 'body': {'content': '<!-- SYNC_ID:abc -->'}},
+                    {'id': 'by-hand', 'body': {'content': 'Parish council notes'}},
+                    {'id': 'legacy-1', 'body': {'content': 'Auto-synced from Calendar'}},
+                ]
+
+        writer.delete_event = lambda cal, eid, **kw: deleted.append(eid) or True
+
+        count = writer.clear_synced_events_only('cal-id', reader=_Reader())
+
+        assert count == 2
+        assert 'by-hand' not in deleted
+        assert sorted(deleted) == ['legacy-1', 'synced-1']
+
+
 class TestClearTargetGuard:
     """Destructive routes act only on an explicitly named, configured calendar"""
 
@@ -191,7 +224,7 @@ class TestClearTargetGuard:
                 deleted.append((calendar_id, event_id))
                 return True
 
-            def clear_synced_events_only(self, calendar_id):
+            def clear_synced_events_only(self, calendar_id, reader=None):
                 deleted.append((calendar_id, 'synced-sweep'))
                 return 7
 

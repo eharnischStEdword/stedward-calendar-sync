@@ -86,6 +86,17 @@ class TestSyncPairs:
             {'category': 'Public', 'target': 'St. Edward Public Calendar'}
         ]
 
+    def test_two_pairs_cannot_share_one_target_calendar(self):
+        """
+        Each pair treats events it did not create as orphans and deletes them,
+        so two categories aimed at one calendar would wipe and re-create it on
+        every cycle until the deletion cap stopped the sync entirely.
+        """
+        cfg = reload_config(EXTRA_SYNC_PAIRS='SAS=St. Edward Public Calendar')
+        targets = [p['target'] for p in cfg.get_sync_pairs()]
+        assert len(targets) == len(set(t.lower() for t in targets))
+        assert len(cfg.get_sync_pairs()) == 1
+
     def test_multiple_valid_extra_pairs(self):
         cfg = reload_config(EXTRA_SYNC_PAIRS='SAS=Sundays At St. Edward;Youth=Youth Calendar')
         assert [p['category'] for p in cfg.get_sync_pairs()] == ['Public', 'SAS', 'Youth']
@@ -323,6 +334,126 @@ class TestSyncProgress:
         assert engine.sync_state['progress'] == 0
         assert engine.sync_state['phase'] is None
         assert engine.sync_in_progress is False
+
+
+class TestDeletionBudget:
+    """The mass-deletion cap must bound the whole run, not each calendar"""
+
+    def build_engine(self, monkeypatch, deletions_per_pair):
+        import sync as sync_module
+
+        engine = sync_module.SyncEngine(auth_manager=None)
+        cal_ids = {
+            'Calendar': 'id-source',
+            'St. Edward Public Calendar': 'id-public',
+            'Sundays At St. Edward': 'id-sas',
+        }
+        engine.reader.find_calendar_id = lambda name: cal_ids.get(name)
+        engine.reader.get_calendar_events = lambda *a, **k: []
+        engine.change_tracker.update_cache = lambda events: None
+        engine._handle_cancelled_occurrences = lambda s, t: 0
+        engine._handle_modified_occurrences = lambda s, t: 0
+
+        # Every pair plans the same number of deletions
+        fake_deletes = [{'id': f'evt-{i}'} for i in range(deletions_per_pair)]
+        engine._determine_sync_operations = lambda s, t, m, check_instances=False: ([], [], list(fake_deletes))
+        engine._build_event_map = lambda events: ({}, [])
+
+        executed = []
+
+        def execute(target_id, to_add, to_update, to_delete):
+            executed.append((target_id, len(to_delete)))
+            return {'success': True, 'message': 'ok', 'added': 0, 'updated': 0,
+                    'deleted': len(to_delete), 'successful_operations': len(to_delete),
+                    'failed_operations': 0}
+
+        engine._execute_sync_operations_batch = execute
+        return engine, executed
+
+    def test_two_pairs_cannot_each_spend_the_full_budget(self, monkeypatch):
+        """100 + 100 deletions must trip a 150 run cap, not pass as 2 x 100."""
+        reload_config(EXTRA_SYNC_PAIRS='SAS=Sundays At St. Edward')
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        monkeypatch.setattr('config.SYNC_CUTOFF_DAYS', 7, raising=False)
+        monkeypatch.setattr('config.SYNC_LOOKAHEAD_DAYS', 7, raising=False)
+        monkeypatch.setattr('sync.MAX_RUN_DELETIONS', 150, raising=False)
+
+        engine, executed = self.build_engine(monkeypatch, deletions_per_pair=100)
+        result = engine._do_sync()
+
+        # First pair fits inside the budget, second must be refused
+        assert sum(count for _, count in executed) <= 150
+        assert any(p.get('safety_triggered') for p in result['pairs'])
+
+    def test_a_single_pair_within_budget_still_runs(self, monkeypatch):
+        reload_config(EXTRA_SYNC_PAIRS='SAS=Sundays At St. Edward')
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        monkeypatch.setattr('config.SYNC_CUTOFF_DAYS', 7, raising=False)
+        monkeypatch.setattr('config.SYNC_LOOKAHEAD_DAYS', 7, raising=False)
+        monkeypatch.setattr('sync.MAX_RUN_DELETIONS', 150, raising=False)
+
+        engine, executed = self.build_engine(monkeypatch, deletions_per_pair=10)
+        result = engine._do_sync()
+
+        assert len(executed) == 2
+        assert not any(p.get('safety_triggered') for p in result['pairs'])
+
+    def test_safety_abort_reports_a_reason_not_a_bare_failure(self, monkeypatch):
+        reload_config(EXTRA_SYNC_PAIRS='SAS=Sundays At St. Edward')
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        monkeypatch.setattr('config.SYNC_CUTOFF_DAYS', 7, raising=False)
+        monkeypatch.setattr('config.SYNC_LOOKAHEAD_DAYS', 7, raising=False)
+        monkeypatch.setattr('sync.MAX_RUN_DELETIONS', 5, raising=False)
+
+        engine, _ = self.build_engine(monkeypatch, deletions_per_pair=50)
+        result = engine._do_sync()
+
+        stopped = [p for p in result['pairs'] if p.get('safety_triggered')]
+        assert stopped
+        # Both keys populated: the dashboard reads one, /debug reads the other
+        assert stopped[0]['error']
+        assert 'SAFETY TRIGGERED' in stopped[0]['error']
+        assert 'Nothing was changed' in stopped[0]['error']
+
+
+class TestFailedRunFreshness:
+    """A run where nothing succeeded must not advance the freshness clock"""
+
+    def build_engine(self, monkeypatch, succeed):
+        import sync as sync_module
+
+        engine = sync_module.SyncEngine(auth_manager=None)
+        engine.reader.find_calendar_id = lambda name: None if not succeed else f'id-{name}'
+        engine.reader.get_calendar_events = lambda *a, **k: []
+        engine.change_tracker.update_cache = lambda events: None
+        engine._handle_cancelled_occurrences = lambda s, t: 0
+        engine._handle_modified_occurrences = lambda s, t: 0
+        engine._execute_sync_operations_batch = lambda t, a, u, d: {
+            'success': True, 'message': 'ok', 'added': 0, 'updated': 0, 'deleted': 0,
+            'successful_operations': 0, 'failed_operations': 0}
+        return engine
+
+    def test_total_failure_leaves_last_sync_time_alone(self, monkeypatch):
+        reload_config()
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        monkeypatch.setattr('config.SYNC_CUTOFF_DAYS', 7, raising=False)
+        monkeypatch.setattr('config.SYNC_LOOKAHEAD_DAYS', 7, raising=False)
+
+        engine = self.build_engine(monkeypatch, succeed=False)
+        engine._do_sync()
+
+        assert engine.last_sync_time is None, 'a failed run advanced the freshness clock'
+
+    def test_successful_run_sets_last_sync_time(self, monkeypatch):
+        reload_config()
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        monkeypatch.setattr('config.SYNC_CUTOFF_DAYS', 7, raising=False)
+        monkeypatch.setattr('config.SYNC_LOOKAHEAD_DAYS', 7, raising=False)
+
+        engine = self.build_engine(monkeypatch, succeed=True)
+        engine._do_sync()
+
+        assert engine.last_sync_time is not None
 
 
 class TestTwoPairSync:

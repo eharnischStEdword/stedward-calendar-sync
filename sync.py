@@ -29,6 +29,10 @@ from signature_utils import generate_event_signature, normalize_subject, normali
 
 logger = logging.getLogger(__name__)
 
+# Most deletions one sync run may perform across ALL calendars before it
+# refuses to proceed. Raised from 50 during a 2025 duplicate cleanup.
+MAX_RUN_DELETIONS = int(os.environ.get('MAX_RUN_DELETIONS', 150))
+
 
 class ChangeTracker:
     """Tracks changes to calendar events for efficient syncing"""
@@ -985,6 +989,9 @@ class SyncEngine:
             self.sync_state['progress'] = 0
             self.sync_state['phase'] = 'Starting'
 
+            # Deletion budget is spent across the whole run, not per pair
+            self._run_deletions_used = 0
+
             pair_results = []
             for index, pair in enumerate(pairs):
                 pair_results.append(
@@ -997,9 +1004,13 @@ class SyncEngine:
             duration = (DateTimeUtils.get_central_time() - start_time).total_seconds()
             result['duration'] = duration
 
-            # Update sync state
+            # Update sync state. last_sync_time means "when calendars were last
+            # actually updated", so a run where every pair failed must not
+            # advance it, or the freshness metric reports a stalled service as
+            # current.
             with self.sync_lock:
-                self.last_sync_time = DateTimeUtils.get_central_time()
+                if any(r.get('success') for r in pair_results):
+                    self.last_sync_time = DateTimeUtils.get_central_time()
                 self.last_sync_result = result
 
             # Add sync to history
@@ -1065,7 +1076,14 @@ class SyncEngine:
                     'updated': r.get('updated', 0),
                     'deleted': r.get('deleted', 0),
                     'message': r.get('message'),
-                    'error': r.get('error')
+                    'error': r.get('error'),
+                    # Carried through explicitly: this whitelist silently
+                    # dropped the safety-abort flag, so the dashboard could not
+                    # tell "refused to bulk-delete" from "failed".
+                    'safety_triggered': bool(r.get('safety_triggered')),
+                    'deletions_planned': r.get('deletions_planned'),
+                    'threshold': r.get('threshold'),
+                    'dry_run': bool(r.get('dry_run'))
                 }
                 for r in pair_results
             ]
@@ -1229,20 +1247,27 @@ class SyncEngine:
             
             logger.info(f"📋 SYNC PLAN: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
             
-            # SAFETY CHECK: Prevent mass deletions without manual approval
-            # TODO: Reset to 50 after duplicate cleanup completes
-            MAX_DELETIONS_WITHOUT_APPROVAL = 150  # Temporary for duplicate cleanup
-            if len(to_delete) > MAX_DELETIONS_WITHOUT_APPROVAL:
-                logger.error(f"🚨 SAFETY TRIGGERED: {len(to_delete)} deletions exceeds threshold of {MAX_DELETIONS_WITHOUT_APPROVAL}")
+            # SAFETY CHECK: Prevent mass deletions without manual approval.
+            # The budget is for the whole RUN, not per pair: with N pairs a
+            # per-pair check would quietly permit N times the intended cap.
+            MAX_DELETIONS_WITHOUT_APPROVAL = MAX_RUN_DELETIONS
+            already_used = getattr(self, '_run_deletions_used', 0)
+            if already_used + len(to_delete) > MAX_DELETIONS_WITHOUT_APPROVAL:
+                logger.error(f"🚨 SAFETY TRIGGERED: {len(to_delete)} deletions for '{target_calendar_name}' "
+                             f"({already_used} already planned this run) exceeds the run limit of {MAX_DELETIONS_WITHOUT_APPROVAL}")
                 logger.error("🛑 Sync cancelled to prevent mass deletion. Manual approval required.")
                 logger.error("💡 To proceed, either:")
                 logger.error("   1. Set DRY_RUN_MODE=True to review changes safely")
                 logger.error("   2. Temporarily increase MAX_DELETIONS_WITHOUT_APPROVAL in sync.py")
                 logger.error("   3. Manually review and approve the deletion list")
                 
+                safety_reason = (f'SAFETY TRIGGERED: {len(to_delete)} deletions on '
+                                 f'{target_calendar_name} exceeds the run limit of '
+                                 f'{MAX_DELETIONS_WITHOUT_APPROVAL}. Nothing was changed.')
                 return {
                     'success': False,
-                    'message': f'SAFETY TRIGGERED: {len(to_delete)} deletions exceeds {MAX_DELETIONS_WITHOUT_APPROVAL} threshold',
+                    'message': safety_reason,
+                    'error': safety_reason,
                     'safety_triggered': True,
                     'deletions_planned': len(to_delete),
                     'threshold': MAX_DELETIONS_WITHOUT_APPROVAL,
@@ -1269,6 +1294,7 @@ class SyncEngine:
             
             # Execute sync operations
             self._advance_progress(f"Updating {target_calendar_name}")
+            self._run_deletions_used = getattr(self, '_run_deletions_used', 0) + len(to_delete)
             result = self._execute_sync_operations_batch(target_id, to_add, to_update, to_delete)
             
             # Handle cancelled occurrences of recurring events
@@ -2278,9 +2304,17 @@ class SyncEngine:
                         if self.writer.delete_occurrence(target_id, series_id, occ_date):
                             deleted_count += 1
 
-            # Handle missing instances (deleted from source but still in target)
+            # Handle missing instances (deleted from source but still in target).
+            # Only touch occurrences this service created: an event a staff
+            # member entered directly on a target calendar has no counterpart on
+            # the master, so without this guard every one of its occurrences
+            # looks "missing from source" and gets deleted.
             for inst in target_instances:
                 if inst.get('isCancelled', False):
+                    continue
+
+                if not self._is_synced_event(inst):
+                    logger.debug(f"  Leaving hand-created occurrence alone: {inst.get('subject')}")
                     continue
 
                 key = _make_key(inst)

@@ -322,21 +322,33 @@ def build_pair_status(last_sync_result):
 
     result = last_sync_result or {}
     rows = result.get('pairs')
-    if not rows and len(configured) == 1 and result.get('message'):
+
+    # SyncEngine starts with a placeholder result meaning "nothing has run".
+    # Treating it as a completed run painted a red "Sync failed" dashboard on
+    # a service that had simply not synced yet.
+    never_run = not result or result.get('message') == 'Not synced yet'
+
+    if not rows and len(configured) == 1 and result.get('message') and not never_run:
         # Results recorded before multi-pair support carry no category, so
         # label the flat result as the one configured pair.
         row = dict(result)
         row.setdefault('category', configured[0]['category'])
         rows = [row]
 
+    # Keyed by category AND target: two pairs may share a category, and keying
+    # on category alone let one pair's row overwrite the other's, so a failing
+    # calendar could inherit its sibling's success.
     by_key = {}
     for row in (rows or []):
-        key = (row.get('category') or '').lower()
+        key = ((row.get('category') or '').lower(), (row.get('target_calendar') or '').lower())
         by_key[key] = row
 
     pair_status = []
     for pair in configured:
-        row = by_key.get(pair['category'].lower())
+        row = by_key.get((pair['category'].lower(), pair['target'].lower()))
+        if row is None and len(configured) == 1 and rows:
+            # Legacy rows carry no target name
+            row = rows[0]
         entry = {
             'category': pair['category'],
             'target_calendar': pair['target'],
@@ -376,7 +388,10 @@ def find_last_success_display(category):
                     stamp = entry.get('timestamp')
                     if not stamp:
                         return None
-                    return format_central_time(datetime.fromisoformat(stamp.replace('Z', '+00:00')))
+                    # SyncHistory stores a datetime, not a string
+                    if isinstance(stamp, str):
+                        stamp = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+                    return format_central_time(stamp)
     except Exception as exc:
         logger.debug(f"Could not resolve last success for {category}: {exc}")
 
@@ -678,8 +693,12 @@ def clear_target():
             f"🗑️ CLEAR ALL requested for '{target_name}' by {session.get('user_email', 'unknown user')}"
         )
 
-        # Get all events (2 years back)
-        events = sync_engine.reader.get_calendar_events(target_id)
+        # Sweep the configured sync window explicitly. Calling this with no
+        # range silently defaults to one year either side, so the UI's promise
+        # to delete EVERY event was false for anything older or further out.
+        sweep_start = DateTimeUtils.get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
+        sweep_end = DateTimeUtils.get_central_time() + timedelta(days=config.SYNC_LOOKAHEAD_DAYS)
+        events = sync_engine.reader.get_calendar_events(target_id, start=sweep_start, end=sweep_end) or []
         
         deleted = 0
         failed = 0
@@ -733,7 +752,7 @@ def clear_synced_only():
         )
 
         # Clear only synced events
-        deleted = sync_engine.writer.clear_synced_events_only(target_id)
+        deleted = sync_engine.writer.clear_synced_events_only(target_id, reader=sync_engine.reader)
 
         return jsonify({
             'success': True,

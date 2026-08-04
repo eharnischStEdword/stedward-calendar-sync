@@ -995,8 +995,8 @@
                             <div class="danger-step-title">Step 2. What should be deleted?</div>
                             <label class="danger-option-row">
                                 <input type="radio" name="danger-scope" value="all" onchange="validateDangerAction()">
-                                <span class="row-label">Everything on this calendar</span>
-                                <span class="row-help">Deletes every event, including any added by hand.</span>
+                                <span class="row-label">Everything in the sync window</span>
+                                <span class="row-help">Deletes every event the sync covers, including any added by hand.</span>
                             </label>
                             <label class="danger-option-row">
                                 <input type="radio" name="danger-scope" value="synced" onchange="validateDangerAction()">
@@ -1107,9 +1107,15 @@
             const message = document.createElement('div');
             message.className = `message ${type}`;
             
-            // Handle multi-line messages
+            // Multi-line messages carry calendar names and error text from the
+            // server; build them as text nodes so markup in a name cannot run.
             if (text.includes('\n')) {
-                message.innerHTML = text.split('\n').map(line => `<div>${line}</div>`).join('');
+                message.textContent = '';
+                text.split('\n').forEach(line => {
+                    const row = document.createElement('div');
+                    row.textContent = line;
+                    message.appendChild(row);
+                });
             } else {
                 message.textContent = text;
             }
@@ -1339,6 +1345,11 @@
                     <span class="row-label">${escapeHtml(pair.target_calendar)}</span>
                     <span class="row-help">events tagged ${escapeHtml(pair.category)}</span>
                 </label>`).join('');
+
+            // Re-validate: this refresh may have removed the calendar that was
+            // selected, and leaving the button enabled with its old label would
+            // aim a confirmed delete at something the label never named.
+            validateDangerAction();
         }
 
         function updateStatusDots(status) {
@@ -1875,7 +1886,7 @@
                 const spared = others.length
                     ? `<div style="margin-top:0.4rem;">${others.map(escapeHtml).join(' and ')} will not be touched.</div>`
                     : '';
-                const what = scope === 'all' ? 'EVERY event' : 'every event this sync created';
+                const what = scope === 'all' ? 'every event in the sync window' : 'every event this sync created';
                 summary.innerHTML = `You are about to delete ${what} from <strong>${escapeHtml(target)}</strong>.${spared}`;
 
                 // The button label carries the calendar name: it is the last
@@ -1896,6 +1907,15 @@
             const target = selectedDangerTarget();
             const scope = selectedDangerScope();
             if (!target || !scope) return;
+
+            // Final guard: the button label is the promise the user acted on,
+            // so refuse if a background refresh changed what is selected.
+            const btn = document.getElementById('danger-execute-btn');
+            if (btn && btn.textContent.indexOf(target) === -1) {
+                showMessage('❌ The selected calendar changed. Choose it again.', 'error');
+                validateDangerAction();
+                return;
+            }
 
             if (scope === 'all') {
                 await clearTargetCalendar(target);
@@ -1985,7 +2005,7 @@
 
         async function clearTargetCalendar(targetName) {
             // The last gate names the calendar: an unnamed warning trains people to dismiss it.
-            if (!confirm(`Last chance.\n\nThis deletes EVERY event from "${targetName}".\n\nThis cannot be undone.`)) {
+            if (!confirm(`Last chance.\n\nThis deletes every event in the sync window from "${targetName}", including any added by hand.\n\nThis cannot be undone.`)) {
                 return;
             }
             await postClear('/clear-target', targetName, '⏳ Clearing calendar...');

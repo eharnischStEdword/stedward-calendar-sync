@@ -5,9 +5,12 @@
 """
 Environment-based configuration for St. Edward Calendar Sync
 """
+import logging
 import os
 import secrets
 from datetime import timedelta
+
+logger = logging.getLogger(__name__)
 
 # Environment Detection
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'production')
@@ -50,27 +53,50 @@ def get_sync_pairs():
     """
     pairs = []
     seen = set()
+    used_targets = set()
 
-    def add(category, target):
+    def add(category, target, raw=None):
         category = _clean_name(category)
         target = _clean_name(target)
         if not category or not target:
+            logger.warning(f"Ignoring malformed sync pair: {raw!r}")
             return
         if target.lower() == SOURCE_CALENDAR.lower():
+            logger.warning(
+                f"Ignoring sync pair '{category}={target}': the target is the source calendar"
+            )
+            return
+        # One target may belong to exactly one pair. Two categories writing to
+        # the same calendar would make each pair treat the other's events as
+        # orphans and delete them, churning the calendar on every cycle.
+        if target.lower() in used_targets:
+            logger.warning(
+                f"Ignoring sync pair '{category}={target}': that calendar is already "
+                f"the target of another pair"
+            )
             return
         key = (category.lower(), target.lower())
         if key in seen:
+            logger.warning(f"Ignoring duplicate sync pair '{category}={target}'")
             return
         seen.add(key)
+        used_targets.add(target.lower())
         pairs.append({'category': category, 'target': target})
 
     add(SYNC_CATEGORY, TARGET_CALENDAR)
 
     for chunk in EXTRA_SYNC_PAIRS.split(';'):
+        if not chunk.strip():
+            continue
         if '=' not in chunk:
+            # Silently dropping this used to leave a calendar simply not
+            # syncing, with nothing anywhere to explain why.
+            logger.warning(
+                f"Ignoring sync pair {chunk.strip()!r}: expected the form 'Category=Calendar Name'"
+            )
             continue
         category, target = chunk.split('=', 1)
-        add(category, target)
+        add(category, target, raw=chunk)
 
     return pairs
 
