@@ -1523,8 +1523,38 @@
 
         function formatDate(dateObj) {
             if (!dateObj || !dateObj.dateTime) return 'Unknown';
-            const date = new Date(dateObj.dateTime);
-            return date.toLocaleString();
+
+            // Graph returns a naive timestamp plus a SEPARATE timeZone field,
+            // almost always "UTC". Handing that string straight to new Date()
+            // makes JS read it as the viewer's local clock, so a 7:00 AM parish
+            // event displayed as 12:00 PM, and anything late in the evening
+            // landed on the wrong DATE. That matters most here, because this is
+            // the list someone reads before approving deletions.
+            let raw = String(dateObj.dateTime);
+            const zone = String(dateObj.timeZone || 'UTC').toUpperCase();
+            const hasOffset = /([Zz]|[+-]\d{2}:?\d{2})$/.test(raw);
+
+            // JS parses at most 3 fractional digits; Graph sends 7
+            raw = raw.replace(/(\.\d{3})\d+/, '$1');
+
+            if (!hasOffset && zone === 'UTC') {
+                raw += 'Z';
+            }
+
+            const date = new Date(raw);
+            if (isNaN(date.getTime())) return dateObj.dateTime;
+
+            if (!hasOffset && zone !== 'UTC') {
+                // Unknown source zone: show it as given rather than guess
+                return date.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
+                       + ` (${dateObj.timeZone})`;
+            }
+
+            return date.toLocaleString('en-US', {
+                timeZone: 'America/Chicago',
+                dateStyle: 'medium',
+                timeStyle: 'short'
+            }) + ' CT';
         }
 
         async function executeSync() {
