@@ -1063,11 +1063,49 @@ class SyncEngine:
         if any(r.get('dry_run') for r in pair_results):
             merged['dry_run'] = True
 
-        merged['message'] = '; '.join(
-            f"{r.get('category')}: {r.get('message', 'no message')}" for r in pair_results
-        )
+        if any(r.get('safety_triggered') for r in pair_results):
+            merged['safety_triggered'] = True
+
+        # A pair can fail with only an 'error' set, so fall back to it rather
+        # than reporting the useless "no message" and losing the real cause.
+        def describe(pair_result):
+            text = pair_result.get('message') or pair_result.get('error') or 'no detail reported'
+            return f"{pair_result.get('category')}: {text}"
+
+        merged['message'] = '; '.join(describe(r) for r in pair_results)
+
+        # Surface a top-level error so /debug, history, and the dashboard stop
+        # reporting "Unknown" when one pair fails and the others succeed.
+        failures = [r for r in pair_results if not r.get('success', False)]
+        if failures:
+            merged['error'] = '; '.join(
+                f"{r.get('category')} -> {r.get('target_calendar')}: "
+                f"{r.get('error') or r.get('message') or 'failed with no detail'}"
+                for r in failures
+            )
+            merged['failed_pairs'] = [r.get('category') for r in failures]
 
         return merged
+
+    @staticmethod
+    def _pair_failure(category: str, target_calendar_name: str, reason: str) -> Dict:
+        """
+        Build a failed-pair result.
+
+        Both 'message' and 'error' are set: the dashboard reads one and the
+        debug endpoints read the other, and a result carrying only 'error' used
+        to surface to staff as the unhelpful "no message".
+        """
+        return {
+            'success': False,
+            'message': reason,
+            'error': reason,
+            'added': 0,
+            'updated': 0,
+            'deleted': 0,
+            'category': category,
+            'target_calendar': target_calendar_name
+        }
 
     def _sync_pair(self, category: str, target_calendar_name: str, update_cache: bool = True) -> Dict:
         """Sync one Outlook category from the source calendar into one target calendar."""
@@ -1079,13 +1117,18 @@ class SyncEngine:
             target_id = self.reader.find_calendar_id(target_calendar_name)
 
             if not source_id or not target_id:
-                return {"error": f"Required calendars not found ({config.SOURCE_CALENDAR} -> {target_calendar_name})",
-                        "success": False, "category": category, "target_calendar": target_calendar_name}
-            
+                missing = target_calendar_name if source_id else config.SOURCE_CALENDAR
+                return self._pair_failure(
+                    category, target_calendar_name,
+                    f"Calendar '{missing}' not found in the shared mailbox. Check the name spelling."
+                )
+
             # Safety check
             if source_id == target_id:
-                return {"error": "SAFETY ABORT: Source and target calendars are identical",
-                        "success": False, "category": category, "target_calendar": target_calendar_name}
+                return self._pair_failure(
+                    category, target_calendar_name,
+                    "SAFETY ABORT: Source and target calendars are identical"
+                )
 
             logger.info(f"▶️  Pair '{category}' -> '{target_calendar_name}'")
             logger.info(f"Source calendar ID: {source_id}")
@@ -1108,12 +1151,12 @@ class SyncEngine:
                 target_events.extend(week_target)
 
             if source_events is None:
-                return {"error": "Failed to retrieve source calendar events",
-                        "success": False, "category": category, "target_calendar": target_calendar_name}
+                return self._pair_failure(category, target_calendar_name,
+                                          "Failed to retrieve source calendar events")
 
             if target_events is None:
-                return {"error": "Failed to retrieve target calendar events",
-                        "success": False, "category": category, "target_calendar": target_calendar_name}
+                return self._pair_failure(category, target_calendar_name,
+                                          "Failed to retrieve target calendar events")
             
             logger.info(f"📊 Retrieved {len(source_events)} source events and {len(target_events)} target events")
             

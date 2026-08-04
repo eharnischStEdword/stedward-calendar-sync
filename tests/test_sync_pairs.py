@@ -345,6 +345,39 @@ class TestTwoPairSync:
         assert by_category['SAS']['added'] == 2
         assert result['success'] is False
 
+    def test_failing_pair_reports_a_readable_reason(self, monkeypatch):
+        """A failed pair must never surface to staff as 'no message'."""
+        reload_config(EXTRA_SYNC_PAIRS='SAS=Calendar That Does Not Exist')
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        engine, _, _ = self.build_engine(monkeypatch)
+
+        result = engine._do_sync()
+
+        assert 'no message' not in result['message']
+        assert 'Calendar That Does Not Exist' in result['message']
+        # Top-level error so /debug and history stop reporting "Unknown"
+        assert result['error']
+        assert result['failed_pairs'] == ['SAS']
+
+    def test_exception_in_one_pair_still_names_the_calendar(self, monkeypatch):
+        reload_config(EXTRA_SYNC_PAIRS='SAS=Sundays At St. Edward')
+        monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)
+        engine, _, _ = self.build_engine(monkeypatch)
+
+        original = engine._execute_sync_operations_batch
+
+        def explode_on_sas(target_id, to_add, to_update, to_delete):
+            if target_id == 'id-sas':
+                raise RuntimeError("Graph refused the write")
+            return original(target_id, to_add, to_update, to_delete)
+
+        engine._execute_sync_operations_batch = explode_on_sas
+        result = engine._do_sync()
+
+        assert 'Graph refused the write' in result['error']
+        assert 'Sundays At St. Edward' in result['error']
+        assert result['failed_pairs'] == ['SAS']
+
     def test_missing_target_calendar_is_reported_not_raised(self, monkeypatch):
         reload_config(EXTRA_SYNC_PAIRS='SAS=Calendar That Does Not Exist')
         monkeypatch.setattr('config.DRY_RUN_MODE', False, raising=False)

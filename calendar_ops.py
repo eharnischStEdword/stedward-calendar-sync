@@ -423,7 +423,9 @@ class CalendarReader:
         Passing category lets one source calendar feed several target calendars,
         e.g. "Public" -> public calendar and "SAS" -> Sundays At St. Edward.
         """
-        category = (category or 'Public').lower()
+        # Falls back to the configured primary category rather than a literal,
+        # so diagnostics cannot silently disagree with what the sync engine reads.
+        category = (category or config.SYNC_CATEGORY or 'Public').lower()
         # Get all events including expanded recurring occurrences
         all_events = self.get_calendar_events(calendar_id, start=start, end=end)
         
