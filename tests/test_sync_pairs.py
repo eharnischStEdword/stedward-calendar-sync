@@ -162,6 +162,32 @@ class TestCategoryFiltering:
         assert reader.get_public_events('cal-id', category='SAS') == []
 
 
+class TestCalendarLookup:
+    """find_calendar_id() tolerates a capitalization slip in configured names"""
+
+    @staticmethod
+    def make_reader():
+        reader = CalendarReader(auth_manager=None)
+        reader.get_calendars = lambda: [
+            {'name': 'Calendar', 'id': 'id-source'},
+            {'name': 'St. Edward Public Calendar', 'id': 'id-public'},
+            {'name': 'Sundays At St. Edward', 'id': 'id-sas'},
+        ]
+        return reader
+
+    def test_exact_name_wins(self):
+        assert self.make_reader().find_calendar_id('Sundays At St. Edward') == 'id-sas'
+
+    def test_wrong_capitalization_still_resolves(self):
+        assert self.make_reader().find_calendar_id('Sundays at St. Edward') == 'id-sas'
+
+    def test_surrounding_whitespace_is_tolerated(self):
+        assert self.make_reader().find_calendar_id('  Sundays At St. Edward ') == 'id-sas'
+
+    def test_genuinely_missing_calendar_returns_none(self):
+        assert self.make_reader().find_calendar_id('Youth Calendar') is None
+
+
 class TestTwoPairSync:
     """A full _do_sync() cycle routes each category to its own target calendar"""
 

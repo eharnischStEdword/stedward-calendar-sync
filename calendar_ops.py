@@ -181,17 +181,30 @@ class CalendarReader:
         if not calendars:
             return None
         
+        def remember(calendar_id):
+            # Cache the result for 1 hour
+            self._calendar_cache[calendar_name] = calendar_id
+            self._cache_expiry[calendar_name] = DateTimeUtils.get_central_time() + timedelta(hours=1)
+            return calendar_id
+
         for calendar in calendars:
             if calendar.get('name') == calendar_name:
                 calendar_id = calendar.get('id')
                 logger.info(f"Found calendar '{calendar_name}' with ID: {calendar_id}")
-                
-                # Cache the result for 1 hour
-                self._calendar_cache[calendar_name] = calendar_id
-                self._cache_expiry[calendar_name] = DateTimeUtils.get_central_time() + timedelta(hours=1)
-                
-                return calendar_id
-        
+                return remember(calendar_id)
+
+        # Fall back to a case-insensitive match. Calendar names are configured by
+        # hand, and a wrong capital would otherwise fail silently every cycle.
+        wanted = calendar_name.strip().lower()
+        for calendar in calendars:
+            if (calendar.get('name') or '').strip().lower() == wanted:
+                calendar_id = calendar.get('id')
+                logger.warning(
+                    f"Calendar '{calendar_name}' matched '{calendar.get('name')}' "
+                    f"only case-insensitively; consider correcting the configured name"
+                )
+                return remember(calendar_id)
+
         names = [c.get('name', '(no name)') for c in calendars]
         logger.warning(f"Calendar '{calendar_name}' not found. Available: {names}")
         return None
