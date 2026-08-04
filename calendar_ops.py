@@ -561,7 +561,8 @@ class CalendarReader:
             categories = event.get('categories', [])
             has_public_category = any(cat.lower() == category for cat in categories)
             
-            # Removed verbose filter check logging for performance - see speed optimization doc
+            # Per-event filter logging was removed for performance: it ran once
+            # per event per weekly chunk and dominated the logs.
             
             if not has_public_category:
                 stats['non_public'] += 1

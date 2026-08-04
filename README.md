@@ -72,7 +72,10 @@ appears on neither.
 
 1. It carries the pair's category (compared case-insensitively).
 2. `showAs` is one of `busy`, `tentative`, `oof`, `workingElsewhere`.
-   A `free` event is treated as a placeholder and skipped.
+   A `free` event is treated as a placeholder and skipped. The other three
+   qualify alongside `busy` because each still means the person is not free.
+   Graph's full set is `free`, `tentative`, `busy`, `oof`, `workingElsewhere`,
+   `unknown` ([reference](https://learn.microsoft.com/en-us/graph/api/resources/event)).
 3. It is not cancelled.
 4. It falls inside the sync window: `SYNC_CUTOFF_DAYS` back to
    `SYNC_LOOKAHEAD_DAYS` ahead.
@@ -247,6 +250,23 @@ Two independent mechanisms, because each covers a case the other misses:
   back to its origin. Detects an origin event that was deleted or untagged, so
   its copy can be removed.
 
+Mechanics worth knowing before touching either:
+
+- Copies are stamped twice. A `singleValueExtendedProperties` entry under the
+  GUID namespace `{66f5a359-4659-4830-9070-00047ec6ac6e}` carries
+  `sourceEventId` and `lastSynced`, and the event body is set to contain only
+  an HTML comment marker, `<!-- SYNC_ID:... -->`. The body carries no event
+  description, deliberately, so nothing private leaks to a public calendar.
+- **Extended properties are invisible unless you ask for them.**
+  `get_calendar_events()` passes `$expand` for that GUID namespace. Drop the
+  `$expand` and the properties are simply absent from the response, every copy
+  stops looking like ours, and deletion detection fails silently. This is the
+  single easiest way to break the sync without any error appearing.
+- The `SYNC_ID:` body marker is still load-bearing, not legacy trivia. Queries
+  that do not expand extended properties, such as the occurrence handling, rely
+  on it. `/admin/migrate-extended-properties` was written to retire it and has
+  never been run to completion.
+
 `ChangeTracker` caches the last-seen source events at `/data/event_cache.json`.
 Its `update_cache()` **replaces** the cache wholesale, so only the primary pair
 writes to it; letting a second pair write would erase the first pair's entries
@@ -368,6 +388,14 @@ found`, which lists the calendar names actually present in the mailbox.
 **Tagged events are not appearing.** Confirm all four qualifying conditions in
 section 2. The most common cause is `showAs` set to `free`, which is skipped by
 design. The second most common is the event falling outside the sync window.
+
+**The category looks right in Outlook but the event still will not sync.**
+The desktop calendar app can show a category ticked while Graph returns no
+categories at all for that event, so believe the API over the UI and check a
+debug endpoint before hunting anything else. The fix that reliably works is to
+re-apply the category in Outlook on the web: open the event, click Categorize,
+untick the category and save, then tick it again and save. The next sync picks
+it up.
 
 **Everything stopped syncing.** The delegated OAuth token likely expired or was
 revoked. Sign in again through the dashboard.

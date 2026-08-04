@@ -131,8 +131,8 @@ lsof -i :10000
 # Reinstall dependencies
 pip install -r requirements.txt --force-reinstall
 
-# Run import tests
-python test_utils_imports.py
+# Run the test suite (imports every module as a side effect)
+python -m pytest tests/ -q
 
 # If still failing, rollback deployment
 git revert HEAD

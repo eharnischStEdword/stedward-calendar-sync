@@ -51,6 +51,33 @@ PORT=10000
 TIMEOUT=300
 ```
 
+## Changing the sync window
+
+Reducing `SYNC_CUTOFF_DAYS` or `SYNC_LOOKAHEAD_DAYS` makes the next sync delete
+every previously synced event that now falls outside the window. Treat it as a
+data operation, not a config tweak.
+
+Before deploying the change:
+
+1. Export the target calendar to .ics and keep it for two weeks. Code rollback
+   does not bring deleted events back.
+2. Estimate the damage: `(days_removed / 30) x average_events_per_month`. If
+   that exceeds `MAX_RUN_DELETIONS` (150, `sync.py`, overridable by env), the
+   sync aborts and changes nothing, which is the safe outcome.
+
+Two behaviours that surprise people:
+
+- **Window membership is decided by an event's start date only.** An event that
+  starts before the cutoff is not synced at all, even if it runs into the
+  window. There are no partial syncs.
+- **HTTP 429 on the first sync after a window change is expected** and
+  self correcting. Graph allows roughly 1,000,000 requests per day and about
+  100 per second in burst, and sync operations are idempotent, so the next
+  scheduled run resumes safely.
+
+Reference timing, measured October 2025: a full sync took 365 seconds against a
+1,460 day window and 130 seconds against 545 days.
+
 ## Initial Deployment
 
 ### 1. Deploy Application
