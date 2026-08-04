@@ -33,6 +33,11 @@ SHARED_MAILBOX=calendar@stedward.org
 SOURCE_CALENDAR=Calendar
 TARGET_CALENDAR=St. Edward Public Calendar
 
+# Optional: additional category -> calendar pairs, semicolon separated.
+# Events tagged "SAS" in the source calendar are copied to the
+# "Sundays At St. Edward" calendar, in addition to the Public pair above.
+# EXTRA_SYNC_PAIRS=SAS=Sundays At St. Edward
+
 # Optional: comma-separated emails allowed to use dashboard (e.g. rcarroll@stedward.org,eharnisch@stedward.org,ckloss@stedward.org)
 # ALLOWED_DASHBOARD_USERS=rcarroll@stedward.org,eharnisch@stedward.org,ckloss@stedward.org
 
