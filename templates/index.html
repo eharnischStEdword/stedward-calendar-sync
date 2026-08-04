@@ -633,6 +633,7 @@
         .pair-card.ok   { border-left-color: #10B981; }
         .pair-card.warn { border-left-color: #DAAA00; }
         .pair-card.fail { border-left-color: #dc3545; }
+        .pair-card.idle { border-left-color: #9CA3AF; } /* never run yet, not a problem */
 
         .pair-name {
             font-size: 1.05rem;
@@ -1192,12 +1193,20 @@
                 total: pairs.length,
                 failed: failed.length,
                 failedNames: failed.map(p => p.target_calendar),
-                stoppedNames: stopped.map(p => p.target_calendar)
+                stoppedNames: stopped.map(p => p.target_calendar),
+                // Nothing has run since the process started. "Up to date" would
+                // be a claim the service cannot support.
+                neverSynced: pairs.length > 0 && !pairs.some(p => p.in_last_run)
             };
         }
 
-        function describeCounts(pair) {
-            if (!pair.in_last_run) return 'Not included in the last sync';
+        function describeCounts(pair, neverSynced) {
+            // "Not included in the last sync" implies a sync happened and
+            // skipped this calendar, which is a different, alarming problem.
+            if (!pair.in_last_run) {
+                return neverSynced ? 'Nothing has synced since the last restart'
+                                   : 'This calendar was skipped';
+            }
             // An aborted run reports what it PLANNED, not what it did. Saying
             // "114 added" for a sync that changed nothing is worse than useless.
             if (pair.safety_triggered) return 'Nothing was changed';
@@ -1217,9 +1226,15 @@
                 return;
             }
 
+            const neverSynced = summarizePairs(status).neverSynced;
+
             grid.innerHTML = currentPairs.map(pair => {
                 let state = 'ok', glyph = '&#9989;';
-                if (!pair.in_last_run) { state = 'warn'; glyph = '&#9888;&#65039;'; }
+                if (!pair.in_last_run) {
+                    // Waiting after a restart is normal; being skipped is not.
+                    state = neverSynced ? 'idle' : 'warn';
+                    glyph = neverSynced ? '&#8987;' : '&#9888;&#65039;';
+                }
                 else if (pair.safety_triggered) { state = 'warn'; glyph = '&#9888;&#65039;'; }
                 else if (!pair.success) { state = 'fail'; glyph = '&#10060;'; }
 
@@ -1261,7 +1276,7 @@
                         <div class="pair-category">Outlook category: ${escapeHtml(pair.category)}</div>
                         <hr class="pair-rule">
                         <div class="pair-when">${when}</div>
-                        <div class="pair-counts">${describeCounts(pair)}</div>
+                        <div class="pair-counts">${describeCounts(pair, neverSynced)}</div>
                         ${errorBlock}
                     </div>`;
             }).join('');
@@ -1349,6 +1364,9 @@
                 } else if (summary.total && summary.failed === summary.total) {
                     text = 'Sync failed. No calendars were updated.';
                     color = '#EF4444';
+                } else if (summary.neverSynced) {
+                    text = 'No sync has run yet. The first one starts automatically.';
+                    color = '#DAAA00';
                 } else if (summary.stoppedNames.length) {
                     text = `${summary.stoppedNames.join(' and ')} stopped for safety and changed nothing.`;
                     color = '#DAAA00';
