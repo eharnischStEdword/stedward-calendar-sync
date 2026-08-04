@@ -306,6 +306,78 @@ def detailed_health():
         "last_sync_result": last_sync_result
     })
 
+def build_pair_status(last_sync_result):
+    """
+    Describe every CONFIGURED calendar pair, not just the ones the last run
+    touched, so a pair that was skipped or has never run is still visible.
+
+    A single-pair result has no 'pairs' key (the merge returns it untouched to
+    keep the old shape), so the flat result stands in for that one pair.
+    """
+    try:
+        configured = config.get_sync_pairs()
+    except Exception as exc:
+        logger.error(f"Could not resolve sync pairs: {exc}")
+        return []
+
+    result = last_sync_result or {}
+    rows = result.get('pairs')
+    if not rows and len(configured) == 1 and result.get('message'):
+        # Results recorded before multi-pair support carry no category, so
+        # label the flat result as the one configured pair.
+        row = dict(result)
+        row.setdefault('category', configured[0]['category'])
+        rows = [row]
+
+    by_key = {}
+    for row in (rows or []):
+        key = (row.get('category') or '').lower()
+        by_key[key] = row
+
+    pair_status = []
+    for pair in configured:
+        row = by_key.get(pair['category'].lower())
+        entry = {
+            'category': pair['category'],
+            'target_calendar': pair['target'],
+            'in_last_run': row is not None,
+            'success': bool(row.get('success')) if row else False,
+            'added': row.get('added', 0) if row else 0,
+            'updated': row.get('updated', 0) if row else 0,
+            'deleted': row.get('deleted', 0) if row else 0,
+            'message': row.get('message') if row else None,
+            'error': row.get('error') if row else None
+        }
+        entry['last_success_display'] = find_last_success_display(pair['category'])
+        pair_status.append(entry)
+
+    return pair_status
+
+
+def find_last_success_display(category):
+    """Newest time this category last synced cleanly, for a failing card."""
+    try:
+        if not sync_engine or not getattr(sync_engine, 'history', None):
+            return None
+
+        for entry in reversed(getattr(sync_engine.history, 'history', []) or []):
+            entry_result = entry.get('result') or {}
+            rows = entry_result.get('pairs') or [entry_result]
+            for row in rows:
+                same_category = (row.get('category') or '').lower() == category.lower()
+                # Pre-multi-pair history rows carry no category; they are the primary pair
+                unlabelled = row.get('category') is None
+                if (same_category or unlabelled) and row.get('success'):
+                    stamp = entry.get('timestamp')
+                    if not stamp:
+                        return None
+                    return format_central_time(datetime.fromisoformat(stamp.replace('Z', '+00:00')))
+    except Exception as exc:
+        logger.debug(f"Could not resolve last success for {category}: {exc}")
+
+    return None
+
+
 @app.route('/status')
 def get_status():
     """Get current system status"""
@@ -353,7 +425,11 @@ def get_status():
             status['next_scheduled_sync'] = scheduler_status.get('next_scheduled_sync')
             status['next_scheduled_sync_display'] = scheduler_status.get('next_scheduled_sync_display', 'Unknown')
             status['scheduled_sync_count'] = scheduler_status.get('scheduled_sync_count', 0)
-        
+
+        # One entry per configured calendar pair, for the dashboard cards and
+        # the Advanced Actions calendar picker.
+        status['sync_pairs'] = build_pair_status(status.get('last_sync_result'))
+
         return jsonify(status)
         
     except Exception as e:
@@ -540,24 +616,63 @@ def _run_sync_background(dry_run=False):
     except Exception as e:
         logger.error(f"❌ Background sync failed: {e}", exc_info=True)
 
+def resolve_clear_target():
+    """
+    Resolve which calendar a destructive request may act on.
+
+    Returns (target_name, error_response). The caller must supply an explicit
+    target: there is deliberately no default, so a stale browser tab cannot
+    fall through and wipe the primary calendar. The name must match a
+    configured sync target, which makes the source calendar and every other
+    calendar in the mailbox unreachable from these routes by construction.
+    """
+    payload = request.get_json(silent=True) or {}
+    requested = config._clean_name(payload.get('target'))
+
+    if not requested:
+        return None, (jsonify({
+            'success': False,
+            'message': 'No calendar specified. Reload the dashboard and choose a calendar.'
+        }), 400)
+
+    allowed = [pair['target'] for pair in config.get_sync_pairs()]
+    for name in allowed:
+        if name.lower() == requested.lower():
+            return name, None
+
+    logger.warning(f"Refused clear request for non-target calendar: {requested!r}")
+    return None, (jsonify({
+        'success': False,
+        'message': f"'{requested}' is not a calendar this service manages.",
+        'allowed': allowed
+    }), 400)
+
+
 @app.route('/clear-target', methods=['POST'])
 def clear_target():
-    """Clear all events from target calendar"""
+    """Clear all events from a chosen target calendar"""
     try:
         # Initialize components on first request
         ensure_components_initialized()
-        
+
         if not sync_engine:
             return jsonify({'success': False, 'message': 'Sync engine not initialized'}), 500
-            
+
         if not auth_manager or not auth_manager.is_authenticated():
             return jsonify({'success': False, 'message': 'Not authenticated'}), 401
-        
-        # Target calendar
-        target_id = sync_engine.reader.find_calendar_id("St. Edward Public Calendar")
+
+        target_name, error = resolve_clear_target()
+        if error:
+            return error
+
+        target_id = sync_engine.reader.find_calendar_id(target_name)
         if not target_id:
-            return jsonify({'success': False, 'message': 'Target calendar not found'}), 404
-        
+            return jsonify({'success': False, 'message': f"Calendar '{target_name}' not found"}), 404
+
+        logger.warning(
+            f"🗑️ CLEAR ALL requested for '{target_name}' by {session.get('user_email', 'unknown user')}"
+        )
+
         # Get all events (2 years back)
         events = sync_engine.reader.get_calendar_events(target_id)
         
@@ -580,7 +695,8 @@ def clear_target():
             'success': True,
             'deleted': deleted,
             'failed': failed,
-            'message': f'Cleared {deleted} events'
+            'target': target_name,
+            'message': f"Deleted {deleted} events from {target_name}"
         })
     except Exception as e:
         logger.error(f"Clear target error: {e}")
@@ -588,29 +704,37 @@ def clear_target():
 
 @app.route('/clear-synced-only', methods=['POST'])
 def clear_synced_only():
-    """Clear only events that were created by sync"""
+    """Clear only events that were created by sync, on a chosen target calendar"""
     try:
         # Initialize components on first request
         ensure_components_initialized()
-        
+
         if not sync_engine:
             return jsonify({'success': False, 'message': 'Sync engine not initialized'}), 500
-            
+
         if not auth_manager or not auth_manager.is_authenticated():
             return jsonify({'success': False, 'message': 'Not authenticated'}), 401
-        
-        # Target calendar
-        target_id = sync_engine.reader.find_calendar_id("St. Edward Public Calendar")
+
+        target_name, error = resolve_clear_target()
+        if error:
+            return error
+
+        target_id = sync_engine.reader.find_calendar_id(target_name)
         if not target_id:
-            return jsonify({'success': False, 'message': 'Target calendar not found'}), 404
-        
+            return jsonify({'success': False, 'message': f"Calendar '{target_name}' not found"}), 404
+
+        logger.warning(
+            f"🗑️ CLEAR SYNCED requested for '{target_name}' by {session.get('user_email', 'unknown user')}"
+        )
+
         # Clear only synced events
         deleted = sync_engine.writer.clear_synced_events_only(target_id)
-        
+
         return jsonify({
             'success': True,
             'deleted': deleted,
-            'message': f'Cleared {deleted} synced events'
+            'target': target_name,
+            'message': f"Deleted {deleted} synced events from {target_name}"
         })
     except Exception as e:
         logger.error(f"Clear synced only error: {e}")

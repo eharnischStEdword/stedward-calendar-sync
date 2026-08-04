@@ -592,7 +592,158 @@
             background: #5a6268 !important;
         }
 
+        /* =============================================
+           MULTI-CALENDAR PAIR CARDS
+           Purpose: one card per configured category/calendar pair,
+                    so staff see every calendar the service keeps updated
+           Date: 2026-08-04
+           ============================================= */
+
+        .pairs-section {
+            margin-bottom: 2rem;
+        }
+
+        .section-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #1f2937;
+            margin: 0 0 0.35rem 0;
+        }
+
+        .section-note {
+            font-size: 0.85rem;
+            color: #6B7280;
+            margin-bottom: 1rem;
+        }
+
+        .pair-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); /* ADJUST CARD MIN WIDTH */
+            gap: 1rem;
+        }
+
+        .pair-card {
+            background: white;
+            border-radius: 10px;
+            padding: 1.25rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            border-left: 4px solid #10B981; /* state colour, overridden below */
+        }
+
+        .pair-card.ok   { border-left-color: #10B981; }
+        .pair-card.warn { border-left-color: #DAAA00; }
+        .pair-card.fail { border-left-color: #dc3545; }
+
+        .pair-name {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #1f2937;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .pair-category {
+            font-size: 0.85rem;
+            color: #6B7280;
+            margin-top: 0.15rem;
+        }
+
+        .pair-rule {
+            border: none;
+            border-top: 1px solid #E5E7EB;
+            margin: 0.75rem 0;
+        }
+
+        .pair-when {
+            font-size: 0.95rem;
+            color: #1f2937;
+            font-weight: 600;
+        }
+
+        .pair-counts {
+            font-size: 0.9rem;
+            color: #4b5563;
+            margin-top: 0.2rem;
+        }
+
+        .pair-error {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+            color: #721c24;
+            border-radius: 6px;
+            padding: 0.75rem;
+            margin-top: 0.75rem;
+            font-size: 0.9rem;
+        }
+
+        .pair-error details {
+            margin-top: 0.4rem;
+        }
+
+        .pair-error summary {
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        /* =============================================
+           ADVANCED ACTIONS: explicit calendar picker
+           Purpose: make the calendar being erased unmistakable
+           Date: 2026-08-04
+           ============================================= */
+
+        .danger-step-title {
+            font-weight: 600;
+            color: #1F2937;
+            margin: 1.25rem 0 0.5rem 0;
+        }
+
+        .danger-step.disabled {
+            opacity: 0.45;
+            pointer-events: none;
+        }
+
+        .danger-option-row {
+            display: block;
+            padding: 0.6rem;
+            border: 1px solid #E5E7EB;
+            border-radius: 6px;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            background: white;
+        }
+
+        .danger-option-row:hover {
+            background: #F9FAFB;
+        }
+
+        .danger-option-row .row-label {
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .danger-option-row .row-help {
+            display: block;
+            font-size: 0.85rem;
+            color: #6B7280;
+            margin-left: 1.5rem;
+        }
+
+        .danger-summary {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+            color: #721c24;
+            border-radius: 6px;
+            padding: 0.75rem;
+            margin-top: 1rem;
+            font-size: 0.95rem;
+        }
+
         @media (max-width: 768px) {
+            .pair-grid {
+                grid-template-columns: 1fr;
+            }
+
             .status-grid {
                 grid-template-columns: 1fr;
             }
@@ -709,12 +860,19 @@
                     </div>
                 </div>
 
+                <!-- One card per configured calendar pair -->
+                <div class="pairs-section">
+                    <h2 class="section-title">Calendars kept in sync</h2>
+                    <div class="section-note">Set by the system administrator. To add or change a calendar, contact Eric.</div>
+                    <div class="pair-grid" id="pair-grid"></div>
+                </div>
+
                 <!-- Messages area -->
                 <div class="messages-area" id="messages-area"></div>
 
                 <!-- Preview results section -->
                 <div id="preview-results" style="display: none;">
-                    <h3>📋 Sync Preview</h3>
+                    <h3>📋 Sync Preview <span id="preview-scope" style="font-weight: 400; font-size: 0.9rem; color: #6B7280;"></span></h3>
                     
                     <div class="preview-summary">
                         <div class="stat-box">
@@ -827,37 +985,35 @@
                             <strong>⚠️ Warning:</strong> These actions are irreversible and will permanently delete events from your calendar.
                         </div>
                         
-                        <div class="danger-option">
-                            <div class="danger-option-header">
-                                <input type="checkbox" id="confirmClear" onchange="validateDangerAction()">
-                                <label for="confirmClear" style="margin: 0; cursor: pointer;">
-                                    <strong>Clear all target calendar events</strong>
-                                </label>
-                            </div>
-                            <div class="danger-option-description">
-                                Will delete <span id="total-events-count">all</span> events from St. Edward Public Calendar
-                            </div>
+                        <div class="danger-step-title">Step 1. Which calendar?</div>
+                        <div id="danger-target-list">
+                            <div style="color: #6B7280; font-size: 0.9rem;">Loading calendars...</div>
                         </div>
-                        
-                        <div class="danger-option">
-                            <div class="danger-option-header">
-                                <input type="checkbox" id="confirmClearSynced" onchange="validateDangerAction()">
-                                <label for="confirmClearSynced" style="margin: 0; cursor: pointer;">
-                                    <strong>Clear only synced events</strong>
-                                </label>
-                            </div>
-                            <div class="danger-option-description">
-                                Will delete <span id="synced-events-count">synced</span> events created by this system
-                            </div>
-                        </div>
-                        
-                        <div style="margin-top: 1.5rem;">
-                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #1F2937;">
-                                Type "DELETE" to confirm:
+
+                        <div class="danger-step disabled" id="danger-step-scope">
+                            <div class="danger-step-title">Step 2. What should be deleted?</div>
+                            <label class="danger-option-row">
+                                <input type="radio" name="danger-scope" value="all" onchange="validateDangerAction()">
+                                <span class="row-label">Everything on this calendar</span>
+                                <span class="row-help">Deletes every event, including any added by hand.</span>
                             </label>
-                            <input type="text" id="danger-confirm-text" class="danger-confirm-input" placeholder="Type DELETE here" oninput="validateDangerAction()">
+                            <label class="danger-option-row">
+                                <input type="radio" name="danger-scope" value="synced" onchange="validateDangerAction()">
+                                <span class="row-label">Only events this sync created</span>
+                                <span class="row-help">Anything added by hand stays.</span>
+                            </label>
                         </div>
-                        
+
+                        <div class="danger-step disabled" id="danger-step-confirm">
+                            <div class="danger-summary" id="danger-summary"></div>
+                            <div style="margin-top: 1.5rem;">
+                                <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #1F2937;">
+                                    Type "DELETE" to confirm:
+                                </label>
+                                <input type="text" id="danger-confirm-text" class="danger-confirm-input" placeholder="Type DELETE here" oninput="validateDangerAction()">
+                            </div>
+                        </div>
+
                         <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
                             <button class="action-btn secondary" onclick="toggleDangerZone()" style="flex: 1;">
                                 Cancel
@@ -1012,6 +1168,143 @@
 
 
 
+        /* =============================================
+           CALENDAR PAIR RENDERING
+           Purpose: show one card per configured calendar, and keep the
+                    Advanced Actions picker in step with it
+           Date: 2026-08-04
+           ============================================= */
+
+        function escapeHtml(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // Latest pair rows seen, so the danger-zone picker and the cards agree
+        let currentPairs = [];
+
+        function summarizePairs(status) {
+            const pairs = (status && status.sync_pairs) || [];
+            const failed = pairs.filter(p => p.in_last_run && !p.success);
+            return {
+                total: pairs.length,
+                failed: failed.length,
+                failedNames: failed.map(p => p.target_calendar)
+            };
+        }
+
+        function describeCounts(pair) {
+            if (!pair.in_last_run) return 'Not included in the last sync';
+            const total = (pair.added || 0) + (pair.updated || 0) + (pair.deleted || 0);
+            if (!total) return 'no changes';
+            return `${pair.added || 0} added &middot; ${pair.updated || 0} changed &middot; ${pair.deleted || 0} removed`;
+        }
+
+        function renderPairs(status) {
+            const grid = document.getElementById('pair-grid');
+            if (!grid) return;
+
+            currentPairs = (status && status.sync_pairs) || [];
+
+            if (!currentPairs.length) {
+                grid.innerHTML = '<div style="color: #6B7280;">Calendar list unavailable</div>';
+                return;
+            }
+
+            grid.innerHTML = currentPairs.map(pair => {
+                let state = 'ok', glyph = '&#9989;';
+                if (!pair.in_last_run) { state = 'warn'; glyph = '&#9888;&#65039;'; }
+                else if (!pair.success) { state = 'fail'; glyph = '&#10060;'; }
+
+                const when = pair.in_last_run
+                    ? (pair.success
+                        ? `Updated ${escapeHtml(status.last_sync_time_display || 'recently')}`
+                        : `Did not update at ${escapeHtml(status.last_sync_time_display || 'last sync')}`)
+                    : 'Waiting for the next sync';
+
+                let errorBlock = '';
+                if (pair.in_last_run && !pair.success) {
+                    const lastGood = pair.last_success_display
+                        ? `<div style="margin-top:0.35rem;">Last good sync: ${escapeHtml(pair.last_success_display)}</div>`
+                        : '<div style="margin-top:0.35rem;">No successful sync on record.</div>';
+                    const detail = pair.message && pair.message !== pair.error
+                        ? `<details><summary>Show technical details</summary>${escapeHtml(pair.message)}</details>`
+                        : '';
+                    errorBlock = `<div class="pair-error">${escapeHtml(pair.error || 'Sync failed')}${lastGood}${detail}</div>`;
+                }
+
+                return `
+                    <div class="pair-card ${state}">
+                        <div class="pair-name"><span>${glyph}</span><span>${escapeHtml(pair.target_calendar)}</span></div>
+                        <div class="pair-category">Outlook category: ${escapeHtml(pair.category)}</div>
+                        <hr class="pair-rule">
+                        <div class="pair-when">${when}</div>
+                        <div class="pair-counts">${describeCounts(pair)}</div>
+                        ${errorBlock}
+                    </div>`;
+            }).join('');
+
+            // Preview only ever covers the primary pair; say so rather than
+            // letting the panel read as if it covered every calendar.
+            const scope = document.getElementById('preview-scope');
+            if (scope && currentPairs.length > 1) {
+                scope.textContent = `(${currentPairs[0].target_calendar} only)`;
+            }
+        }
+
+        function syncOutcomeMessage(result) {
+            const rows = result.pairs || [];
+            if (rows.length > 1) {
+                const parts = rows.map(r => {
+                    const moved = (r.added || 0) + (r.updated || 0) + (r.deleted || 0);
+                    return moved
+                        ? `${r.target_calendar}: ${r.added || 0} added, ${r.updated || 0} changed, ${r.deleted || 0} removed`
+                        : `${r.target_calendar}: no changes`;
+                });
+                return '✅ Sync completed!\n' + parts.join('\n');
+            }
+            return `✅ Sync completed! Added: ${result.added || 0}, Updated: ${result.updated || 0}, Deleted: ${result.deleted || 0}`;
+        }
+
+        // A mixed run is a warning, not an error: some calendars are current.
+        function describePartialFailure(result) {
+            const rows = result.pairs || [];
+            if (rows.length < 2) return null;
+
+            const failed = rows.filter(r => !r.success);
+            const ok = rows.filter(r => r.success);
+            if (!failed.length || !ok.length) return null;
+
+            return `⚠️ Sync finished. ${ok.map(r => r.target_calendar).join(' and ')} updated. ` +
+                   `${failed.map(r => r.target_calendar).join(' and ')} did not.`;
+        }
+
+        function renderDangerTargets(status) {
+            const list = document.getElementById('danger-target-list');
+            if (!list) return;
+
+            const pairs = (status && status.sync_pairs) || [];
+            if (!pairs.length) {
+                list.innerHTML = '<div style="color: #6B7280; font-size: 0.9rem;">No calendars available.</div>';
+                return;
+            }
+
+            // Preserve a selection across the 60-second status refresh
+            const chosen = (document.querySelector('input[name="danger-target"]:checked') || {}).value;
+
+            // Nothing is preselected, even with a single calendar: a default
+            // target is how a stray keypress erases the wrong one.
+            list.innerHTML = pairs.map(pair => `
+                <label class="danger-option-row">
+                    <input type="radio" name="danger-target" value="${escapeHtml(pair.target_calendar)}"
+                           ${chosen === pair.target_calendar ? 'checked' : ''}
+                           onchange="validateDangerAction()">
+                    <span class="row-label">${escapeHtml(pair.target_calendar)}</span>
+                    <span class="row-help">events tagged ${escapeHtml(pair.category)}</span>
+                </label>`).join('');
+        }
+
         function updateStatusDots(status) {
             // Update status header
             const statusBar = document.getElementById('status-bar');
@@ -1020,24 +1313,45 @@
             const autoSyncStatus = document.getElementById('auto-sync-status');
             
             if (statusHeaderText && statusIcon) {
+                // Derive state from the per-calendar rows, not the merged
+                // success flag: one failing calendar must not read as if
+                // nothing synced at all.
+                const summary = summarizePairs(status);
+                let text, color;
+
                 if (!status.authenticated) {
-                    statusHeaderText.textContent = 'System Status: Disconnected';
-                    statusIcon.style.color = '#EF4444';
-                    statusBar.style.borderLeftColor = '#EF4444';
+                    text = 'Not connected to Microsoft. Sign in again.';
+                    color = '#EF4444';
                 } else if (status.sync_in_progress) {
-                    statusHeaderText.textContent = 'System Status: Syncing...';
-                    statusIcon.style.color = '#F59E0B';
-                    statusBar.style.borderLeftColor = '#F59E0B';
-                } else if (status.last_sync_result && !status.last_sync_result.success) {
-                    statusHeaderText.textContent = 'System Status: Sync Error';
-                    statusIcon.style.color = '#EF4444';
-                    statusBar.style.borderLeftColor = '#EF4444';
+                    text = 'Syncing now...';
+                    color = '#F59E0B';
+                } else if (summary.total && summary.failed === summary.total) {
+                    text = 'Sync failed. No calendars were updated.';
+                    color = '#EF4444';
+                } else if (summary.failed === 1) {
+                    const others = summary.total - 1;
+                    const tail = others === 1 ? 'The other calendar is fine.'
+                                              : `The other ${others} calendars are fine.`;
+                    text = `${summary.failedNames[0]} did not update. ${tail}`;
+                    color = '#DAAA00';
+                } else if (summary.failed > 1) {
+                    text = `${summary.failed} of ${summary.total} calendars did not update.`;
+                    color = '#DAAA00';
+                } else if (!summary.total && status.last_sync_result && !status.last_sync_result.success) {
+                    text = 'System Status: Sync Error';
+                    color = '#EF4444';
                 } else {
-                    statusHeaderText.textContent = 'System Status: All Systems Go';
-                    statusIcon.style.color = '#10B981';
-                    statusBar.style.borderLeftColor = '#10B981';
+                    text = 'All calendars are up to date';
+                    color = '#10B981';
                 }
+
+                statusHeaderText.textContent = text;
+                statusIcon.style.color = color;
+                statusBar.style.borderLeftColor = color;
             }
+
+            renderPairs(status);
+            renderDangerTargets(status);
 
             // Update auto-sync status
             if (autoSyncStatus) {
@@ -1213,16 +1527,19 @@
                 } 
                 // Handle old synchronous response (success: true/false)
                 else if (result.success) {
-                    const msg = `✅ Sync completed! Added: ${result.added || 0}, Updated: ${result.updated || 0}, Deleted: ${result.deleted || 0}`;
-                    showMessage(msg, 'success');
-                    
+                    showMessage(syncOutcomeMessage(result), 'success');
+
                     const lastSyncElement = document.getElementById('last-sync-time');
                     if (lastSyncElement && result.last_sync_time_display) {
                         lastSyncElement.textContent = result.last_sync_time_display;
                     }
                 } else {
-                    // Only show as issue if it's actually an error
-                    showMessage('⚠️ Sync failed: ' + (result.message || result.error), 'error');
+                    const partial = describePartialFailure(result);
+                    if (partial) {
+                        showMessage(partial, 'warning');
+                    } else {
+                        showMessage('⚠️ Sync failed: ' + (result.message || result.error), 'error');
+                    }
                 }
                 
             } catch (error) {
@@ -1273,11 +1590,14 @@
                         
                         // Check result
                         if (progress.last_result && progress.last_result.success) {
-                            const result = progress.last_result;
-                            const msg = `✅ Sync completed! Added: ${result.added || 0}, Updated: ${result.updated || 0}, Deleted: ${result.deleted || 0}`;
-                            showMessage(msg, 'success');
+                            showMessage(syncOutcomeMessage(progress.last_result), 'success');
                         } else if (progress.last_result) {
-                            showMessage('⚠️ Sync failed: ' + (progress.last_result.message || 'Unknown error'), 'error');
+                            const partial = describePartialFailure(progress.last_result);
+                            if (partial) {
+                                showMessage(partial, 'warning');
+                            } else {
+                                showMessage('⚠️ Sync failed: ' + (progress.last_result.message || 'Unknown error'), 'error');
+                            }
                         }
                         
                         // Refresh status
@@ -1466,9 +1786,9 @@
             if (content.classList.contains('expanded')) {
                 content.classList.remove('expanded');
                 arrow.textContent = '▼';
-                // Reset form
-                document.getElementById('confirmClear').checked = false;
-                document.getElementById('confirmClearSynced').checked = false;
+                // Reset every step, so reopening never inherits a stale target
+                document.querySelectorAll('input[name="danger-target"]').forEach(el => { el.checked = false; });
+                document.querySelectorAll('input[name="danger-scope"]').forEach(el => { el.checked = false; });
                 document.getElementById('danger-confirm-text').value = '';
                 validateDangerAction();
             } else {
@@ -1477,27 +1797,64 @@
             }
         }
 
+        function selectedDangerTarget() {
+            const el = document.querySelector('input[name="danger-target"]:checked');
+            return el ? el.value : null;
+        }
+
+        function selectedDangerScope() {
+            const el = document.querySelector('input[name="danger-scope"]:checked');
+            return el ? el.value : null;
+        }
+
         function validateDangerAction() {
-            const clearAll = document.getElementById('confirmClear').checked;
-            const clearSynced = document.getElementById('confirmClearSynced').checked;
+            const target = selectedDangerTarget();
+            const scope = selectedDangerScope();
             const confirmText = document.getElementById('danger-confirm-text').value;
             const executeBtn = document.getElementById('danger-execute-btn');
-            
-            // Enable button only if one option is selected and DELETE is typed correctly
-            const isValid = (clearAll || clearSynced) && confirmText === 'DELETE';
-            executeBtn.disabled = !isValid;
+            const scopeStep = document.getElementById('danger-step-scope');
+            const confirmStep = document.getElementById('danger-step-confirm');
+            const summary = document.getElementById('danger-summary');
+
+            // Each step unlocks the next, so nobody types DELETE into a void
+            scopeStep.classList.toggle('disabled', !target);
+            confirmStep.classList.toggle('disabled', !(target && scope));
+
+            if (target && scope) {
+                const others = currentPairs
+                    .map(p => p.target_calendar)
+                    .filter(name => name !== target);
+                const spared = others.length
+                    ? `<div style="margin-top:0.4rem;">${others.map(escapeHtml).join(' and ')} will not be touched.</div>`
+                    : '';
+                const what = scope === 'all' ? 'EVERY event' : 'every event this sync created';
+                summary.innerHTML = `You are about to delete ${what} from <strong>${escapeHtml(target)}</strong>.${spared}`;
+
+                // The button label carries the calendar name: it is the last
+                // thing read before the click.
+                const verb = scope === 'all' ? 'Delete everything from' : 'Delete synced events from';
+                executeBtn.textContent = `${verb} ${target}`;
+                executeBtn.title = `${verb} ${target}`;
+            } else {
+                summary.innerHTML = '';
+                executeBtn.textContent = 'Confirm Deletion';
+                executeBtn.removeAttribute('title');
+            }
+
+            executeBtn.disabled = !(target && scope && confirmText === 'DELETE');
         }
 
         async function executeDangerAction() {
-            const clearAll = document.getElementById('confirmClear').checked;
-            const clearSynced = document.getElementById('confirmClearSynced').checked;
-            
-            if (clearAll) {
-                await clearTargetCalendar();
-            } else if (clearSynced) {
-                await clearSyncedEventsOnly();
+            const target = selectedDangerTarget();
+            const scope = selectedDangerScope();
+            if (!target || !scope) return;
+
+            if (scope === 'all') {
+                await clearTargetCalendar(target);
+            } else {
+                await clearSyncedEventsOnly(target);
             }
-            
+
             // Close danger zone after execution
             toggleDangerZone();
         }
@@ -1547,50 +1904,50 @@
             }, 60000);
         });
 
-        async function clearTargetCalendar() {
-            if (!confirm('FINAL WARNING: This will delete ALL events from the target calendar. Are you absolutely sure?')) {
-                return;
-            }
-            
+        async function postClear(endpoint, targetName, busyLabel) {
             const executeBtn = document.getElementById('danger-execute-btn');
+            const restoreLabel = executeBtn.textContent;
             executeBtn.disabled = true;
-            executeBtn.innerHTML = '⏳ Clearing calendar...';
-            
+            executeBtn.innerHTML = busyLabel;
+
             try {
-                const response = await fetch('/clear-target', {
-                    method: 'POST'
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ target: targetName })
                 });
                 const data = await response.json();
-                showMessage(`✅ Calendar cleared: ${data.deleted} events removed`, 'success');
+
+                if (!response.ok || !data.success) {
+                    showMessage('❌ ' + (data.message || 'Delete failed'), 'error');
+                    executeBtn.disabled = false;
+                    executeBtn.innerHTML = restoreLabel;
+                    return;
+                }
+
+                showMessage(`✅ Deleted ${data.deleted} events from ${data.target || targetName}`, 'success');
                 setTimeout(() => location.reload(), 2000);
             } catch (error) {
                 showMessage('❌ Error clearing calendar: ' + error, 'error');
                 executeBtn.disabled = false;
-                executeBtn.innerHTML = 'Confirm Deletion';
+                executeBtn.innerHTML = restoreLabel;
             }
         }
 
-        async function clearSyncedEventsOnly() {
-            if (!confirm('This will delete ONLY events created by sync. Are you sure?')) {
+        async function clearTargetCalendar(targetName) {
+            // The last gate names the calendar: an unnamed warning trains people to dismiss it.
+            if (!confirm(`Last chance.\n\nThis deletes EVERY event from "${targetName}".\n\nThis cannot be undone.`)) {
                 return;
             }
-            
-            const executeBtn = document.getElementById('danger-execute-btn');
-            executeBtn.disabled = true;
-            executeBtn.innerHTML = '⏳ Clearing synced events...';
-            
-            try {
-                const response = await fetch('/clear-synced-only', {
-                    method: 'POST'
-                });
-                const data = await response.json();
-                showMessage(`✅ Synced events cleared: ${data.deleted} events removed`, 'success');
-                setTimeout(() => location.reload(), 2000);
-            } catch (error) {
-                showMessage('❌ Error clearing synced events: ' + error, 'error');
-                executeBtn.disabled = false;
-                executeBtn.innerHTML = 'Confirm Deletion';
+            await postClear('/clear-target', targetName, '⏳ Clearing calendar...');
+        }
+
+        async function clearSyncedEventsOnly(targetName) {
+            if (!confirm(`This deletes every event the sync created on "${targetName}".\n\nEvents added by hand stay. Continue?`)) {
+                return;
             }
+            await postClear('/clear-synced-only', targetName, '⏳ Clearing synced events...');
         }
 
         // Clean up polling when page unloads
