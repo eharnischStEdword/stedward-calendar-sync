@@ -945,17 +945,17 @@ class SyncEngine:
             raise
     
     def _do_sync(self) -> Dict:
-        """Simple sync: Calendar A public events → Calendar B"""
+        """Sync every configured category from the source calendar to its own target calendar."""
         start_time = DateTimeUtils.get_central_time()
-        
+
         # Track this sync request for rate limiting
         current_time = DateTimeUtils.get_central_time()
         self.sync_request_times.append(current_time)
-        
+
         # Clean up old entries (older than 1 hour)
         cutoff_time = current_time - timedelta(hours=1)
         self.sync_request_times = [t for t in self.sync_request_times if t > cutoff_time]
-        
+
         # Check rate limit
         if len(self.sync_request_times) > config.MAX_SYNC_REQUESTS_PER_HOUR:
             return {
@@ -963,28 +963,134 @@ class SyncEngine:
                 "rate_limit_remaining": 0,
                 "retry_after": 3600  # seconds
             }
-        
+
         # Check if already syncing
         with self.sync_lock:
             if self.sync_in_progress:
                 return {"error": "Sync already in progress"}
             self.sync_in_progress = True
-        
+
+        try:
+            pairs = config.get_sync_pairs()
+            logger.info(f"🔁 Sync pairs: {', '.join(p['category'] + ' -> ' + p['target'] for p in pairs)}")
+
+            pair_results = []
+            for index, pair in enumerate(pairs):
+                pair_results.append(
+                    self._sync_pair(pair['category'], pair['target'], update_cache=(index == 0))
+                )
+
+            result = self._merge_pair_results(pair_results)
+
+            # Calculate duration
+            duration = (DateTimeUtils.get_central_time() - start_time).total_seconds()
+            result['duration'] = duration
+
+            # Update sync state
+            with self.sync_lock:
+                self.last_sync_time = DateTimeUtils.get_central_time()
+                self.last_sync_result = result
+
+            # Add sync to history
+            self.history.add_entry(result)
+
+            return result
+
+        except Exception as e:
+            import traceback
+            duration = (DateTimeUtils.get_central_time() - start_time).total_seconds()
+
+            error_result = {
+                'success': False,
+                'message': f'Sync failed: {str(e)}',
+                'error': str(e),
+                'traceback': traceback.format_exc(),
+                'duration': duration
+            }
+
+            with self.sync_lock:
+                self.last_sync_result = error_result
+
+            # Add failed sync to history
+            self.history.add_entry(error_result)
+
+            logger.error(f"❌ Sync failed: {e}")
+            return error_result
+
+        finally:
+            # Always clear sync state when done
+            with self.sync_lock:
+                self.sync_in_progress = False
+                self.sync_state['in_progress'] = False
+                self.sync_state['phase'] = None
+                self.sync_state['progress'] = 0
+
+    def _merge_pair_results(self, pair_results: List[Dict]) -> Dict:
+        """
+        Combine per-pair results into one result dict.
+
+        A single pair returns its own result untouched, so the dashboard and
+        history see exactly the shape they saw before multi-pair support.
+        """
+        if not pair_results:
+            return {'success': False, 'message': 'No sync pairs configured', 'added': 0, 'updated': 0, 'deleted': 0}
+
+        if len(pair_results) == 1:
+            return pair_results[0]
+
+        merged = {
+            'success': all(r.get('success', False) for r in pair_results),
+            'added': sum(r.get('added', 0) for r in pair_results),
+            'updated': sum(r.get('updated', 0) for r in pair_results),
+            'deleted': sum(r.get('deleted', 0) for r in pair_results),
+            'failed_operations': sum(r.get('failed_operations', 0) for r in pair_results),
+            'successful_operations': sum(r.get('successful_operations', 0) for r in pair_results),
+            'pairs': [
+                {
+                    'category': r.get('category'),
+                    'target_calendar': r.get('target_calendar'),
+                    'success': r.get('success', False),
+                    'added': r.get('added', 0),
+                    'updated': r.get('updated', 0),
+                    'deleted': r.get('deleted', 0),
+                    'message': r.get('message'),
+                    'error': r.get('error')
+                }
+                for r in pair_results
+            ]
+        }
+
+        if any(r.get('dry_run') for r in pair_results):
+            merged['dry_run'] = True
+
+        merged['message'] = '; '.join(
+            f"{r.get('category')}: {r.get('message', 'no message')}" for r in pair_results
+        )
+
+        return merged
+
+    def _sync_pair(self, category: str, target_calendar_name: str, update_cache: bool = True) -> Dict:
+        """Sync one Outlook category from the source calendar into one target calendar."""
+        start_time = DateTimeUtils.get_central_time()
+
         try:
             # Get calendar IDs
             source_id = self.reader.find_calendar_id(config.SOURCE_CALENDAR)
-            target_id = self.reader.find_calendar_id(config.TARGET_CALENDAR)
-            
+            target_id = self.reader.find_calendar_id(target_calendar_name)
+
             if not source_id or not target_id:
-                return {"error": "Required calendars not found"}
+                return {"error": f"Required calendars not found ({config.SOURCE_CALENDAR} -> {target_calendar_name})",
+                        "success": False, "category": category, "target_calendar": target_calendar_name}
             
             # Safety check
             if source_id == target_id:
-                return {"error": "SAFETY ABORT: Source and target calendars are identical"}
-            
+                return {"error": "SAFETY ABORT: Source and target calendars are identical",
+                        "success": False, "category": category, "target_calendar": target_calendar_name}
+
+            logger.info(f"▶️  Pair '{category}' -> '{target_calendar_name}'")
             logger.info(f"Source calendar ID: {source_id}")
             logger.info(f"Target calendar ID: {target_id}")
-            
+
             # Define overall date range for sync
             start_date = DateTimeUtils.get_central_time() - timedelta(days=config.SYNC_CUTOFF_DAYS)
             end_date = DateTimeUtils.get_central_time() + timedelta(days=config.SYNC_LOOKAHEAD_DAYS)
@@ -994,18 +1100,20 @@ class SyncEngine:
             target_events = []
             
             for start, end in self.generate_weekly_ranges(start_date, end_date):
-                logger.info(f"[Sync] Querying from {start.isoformat()} to {end.isoformat()}")
-                week_source = self.reader.get_public_events(source_id, start=start, end=end, include_instances=False) or []
+                logger.info(f"[Sync:{category}] Querying from {start.isoformat()} to {end.isoformat()}")
+                week_source = self.reader.get_public_events(source_id, start=start, end=end, include_instances=False, category=category) or []
                 week_target = self.reader.get_calendar_events(target_id, start=start, end=end) or []
-                
+
                 source_events.extend(week_source)
                 target_events.extend(week_target)
-            
+
             if source_events is None:
-                return {"error": "Failed to retrieve source calendar events"}
-            
+                return {"error": "Failed to retrieve source calendar events",
+                        "success": False, "category": category, "target_calendar": target_calendar_name}
+
             if target_events is None:
-                return {"error": "Failed to retrieve target calendar events"}
+                return {"error": "Failed to retrieve target calendar events",
+                        "success": False, "category": category, "target_calendar": target_calendar_name}
             
             logger.info(f"📊 Retrieved {len(source_events)} source events and {len(target_events)} target events")
             
@@ -1073,9 +1181,11 @@ class SyncEngine:
                     'threshold': MAX_DELETIONS_WITHOUT_APPROVAL,
                     'added': len(to_add),
                     'updated': len(to_update),
-                    'deleted': 0  # No deletions executed
+                    'deleted': 0,  # No deletions executed
+                    'category': category,
+                    'target_calendar': target_calendar_name
                 }
-            
+
             # Check dry run mode
             if config.DRY_RUN_MODE:
                 logger.info("🧪 DRY RUN MODE - No changes will be made")
@@ -1085,7 +1195,9 @@ class SyncEngine:
                     'dry_run': True,
                     'added': len(to_add),
                     'updated': len(to_update),
-                    'deleted': len(to_delete)
+                    'deleted': len(to_delete),
+                    'category': category,
+                    'target_calendar': target_calendar_name
                 }
             
             # Execute sync operations
@@ -1107,22 +1219,19 @@ class SyncEngine:
                     if 'operation_details' in result:
                         result['operation_details']['update_success'] += modified_occurrences
             
-            # Update cache if change tracking is enabled
-            if hasattr(self, 'change_tracker'):
+            # Update cache if change tracking is enabled.
+            # Only the primary pair owns the cache: update_cache() replaces it
+            # wholesale, so letting a secondary pair write would wipe the primary
+            # pair's entries on every cycle.
+            if update_cache and hasattr(self, 'change_tracker'):
                 self.change_tracker.update_cache(source_events)
-            
+
             # Calculate duration
             duration = (DateTimeUtils.get_central_time() - start_time).total_seconds()
             result['duration'] = duration
-            
-            # Update sync state
-            with self.sync_lock:
-                self.last_sync_time = DateTimeUtils.get_central_time()
-                self.last_sync_result = result
-            
-            # Add successful sync to history
-            self.history.add_entry(result)
-            
+            result['category'] = category
+            result['target_calendar'] = target_calendar_name
+
             # Log all-day event summary
             if 'all_day_events' in result:
                 all_day_summary = result['all_day_events']
@@ -1130,7 +1239,7 @@ class SyncEngine:
             
             # COMPREHENSIVE SYNC LOGGING
             logger.info("="*60)
-            logger.info("🎉 SYNC COMPLETED SUCCESSFULLY")
+            logger.info(f"🎉 PAIR COMPLETED: '{category}' -> '{target_calendar_name}'")
             logger.info("="*60)
             logger.info(f"⏱️  Duration: {duration:.2f} seconds")
             logger.info(f"📊 Operations Summary:")
@@ -1154,32 +1263,28 @@ class SyncEngine:
         except Exception as e:
             import traceback
             duration = (DateTimeUtils.get_central_time() - start_time).total_seconds()
-            
+
+            # One failing pair must not abort the others, so this is caught here
+            # and reported as that pair's result; _do_sync aggregates.
             error_result = {
                 'success': False,
-                'message': f'Sync failed: {str(e)}',
+                'message': f"Sync failed for '{category}' -> '{target_calendar_name}': {str(e)}",
                 'error': str(e),
                 'traceback': traceback.format_exc(),
-                'duration': duration
+                'duration': duration,
+                'category': category,
+                'target_calendar': target_calendar_name
             }
-            
-            with self.sync_lock:
-                self.last_sync_result = error_result
-            
-            # Add failed sync to history
-            self.history.add_entry(error_result)
-            
-            logger.error(f"❌ Sync failed: {e}")
+
+            logger.error(f"❌ Sync failed for pair '{category}': {e}")
             return error_result
-            
+
         finally:
-            # Always clear sync state when done
+            # Clear per-pair progress; sync_in_progress is owned by _do_sync
             with self.sync_lock:
-                self.sync_in_progress = False
-                self.sync_state['in_progress'] = False
                 self.sync_state['phase'] = None
                 self.sync_state['progress'] = 0
-    
+
     def _normalize_subject(self, subject: str) -> str:
         """Normalize event subject for matching - Uses shared utilities"""
         return normalize_subject(subject)

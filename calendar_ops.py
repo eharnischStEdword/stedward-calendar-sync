@@ -403,8 +403,14 @@ class CalendarReader:
             logger.error(f"Error getting instances: {e}")
             raise
     
-    def get_public_events(self, calendar_id: str, include_instances: bool = False, start: datetime = None, end: datetime = None) -> Optional[List[Dict]]:
-        """Get only public events from a calendar"""
+    def get_public_events(self, calendar_id: str, include_instances: bool = False, start: datetime = None, end: datetime = None, category: str = None) -> Optional[List[Dict]]:
+        """
+        Get only the events carrying a given Outlook category (default "Public").
+
+        Passing category lets one source calendar feed several target calendars,
+        e.g. "Public" -> public calendar and "SAS" -> Sundays At St. Edward.
+        """
+        category = (category or 'Public').lower()
         # Get all events including expanded recurring occurrences
         all_events = self.get_calendar_events(calendar_id, start=start, end=end)
         
@@ -465,7 +471,7 @@ class CalendarReader:
                 # Check if it meets sync criteria before adding (CASE-INSENSITIVE, EXPANDED BUSY VALUES)
                 categories = occ.get('categories', [])
                 show_as = occ.get('showAs', 'busy')
-                has_public = any(cat.lower() == 'public' for cat in categories)
+                has_public = any(cat.lower() == category for cat in categories)
                 is_busy = show_as.lower() in ['busy', 'tentative', 'oof', 'workingelsewhere']
                 if has_public and is_busy:
                     filtered_events.append(occ)
@@ -538,7 +544,7 @@ class CalendarReader:
             
             # Check if public (CASE-INSENSITIVE)
             categories = event.get('categories', [])
-            has_public_category = any(cat.lower() == 'public' for cat in categories)
+            has_public_category = any(cat.lower() == category for cat in categories)
             
             # Removed verbose filter check logging for performance - see speed optimization doc
             

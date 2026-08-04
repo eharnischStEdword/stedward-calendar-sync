@@ -117,7 +117,30 @@ REDIRECT_URI=https://your-app-domain.onrender.com/auth/callback
 SHARED_MAILBOX=your_shared_mailbox@yourdomain.org
 SOURCE_CALENDAR=Calendar
 TARGET_CALENDAR=Public Calendar
+SYNC_CATEGORY=Public            # Category that feeds TARGET_CALENDAR
 ```
+
+#### **Additional Category Pairs (optional)**
+
+One source calendar can feed several target calendars, one per Outlook
+category. Staff tag an event in the master calendar and it lands on the
+matching calendar; an event carrying two categories lands on both.
+
+```bash
+EXTRA_SYNC_PAIRS=SAS=Sundays At St. Edward
+```
+
+Format is `Category=Calendar Name`, with multiple pairs separated by
+semicolons. Leave it unset and the service syncs the single primary pair
+exactly as it always has.
+
+Safety rules applied to every pair:
+- A pair whose target is `SOURCE_CALENDAR` is dropped, so a typo cannot
+  aim writes at the master calendar.
+- Malformed and duplicate entries are ignored rather than guessed at.
+- Each pair only ever deletes events that this service created; anything a
+  person adds to a target calendar by hand is left alone.
+- One failing pair is reported and skipped without stopping the others.
 
 #### **Sync Settings**
 ```bash
@@ -137,10 +160,14 @@ DRY_RUN_MODE=False             # Set to True for testing
 ### Automatic Sync
 1. **Scheduler**: Runs every 23 minutes automatically
 2. **Authentication**: Validates Microsoft Graph tokens
-3. **Source Reading**: Fetches events from internal calendar
-4. **Filtering**: Only public events within date range
-5. **Target Writing**: Creates/updates events in public calendar
-6. **Change Tracking**: Monitors for conflicts and duplicates
+3. **Pair Resolution**: Builds the category/calendar list from config
+4. **Source Reading**: Fetches events from internal calendar
+5. **Filtering**: Only events tagged with that pair's category, within date range
+6. **Target Writing**: Creates/updates events in that pair's calendar
+7. **Change Tracking**: Monitors for conflicts and duplicates
+
+Steps 4 through 6 run once per configured pair. The primary pair owns the
+event cache, since updating it replaces its contents wholesale.
 
 ### Manual Sync
 - **Web Interface**: Click "Sync Now" button

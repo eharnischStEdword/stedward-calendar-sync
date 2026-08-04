@@ -18,6 +18,50 @@ SHARED_MAILBOX = os.environ.get('SHARED_MAILBOX', "your_shared_mailbox@yourdomai
 SOURCE_CALENDAR = os.environ.get('SOURCE_CALENDAR', "Calendar")
 TARGET_CALENDAR = os.environ.get('TARGET_CALENDAR', "St. Edward Public Calendar")
 
+# Category the primary pair syncs (events tagged with it land on TARGET_CALENDAR)
+SYNC_CATEGORY = os.environ.get('SYNC_CATEGORY', "Public")
+
+# Additional category -> calendar pairs, beyond the primary one above.
+# Format: "Category=Calendar Name", multiple pairs separated by semicolons.
+# Example: EXTRA_SYNC_PAIRS="SAS=Sundays At St. Edward"
+# Leave unset and the service behaves exactly as it did before this setting existed.
+EXTRA_SYNC_PAIRS = os.environ.get('EXTRA_SYNC_PAIRS', '')
+
+
+def get_sync_pairs():
+    """
+    Return the list of {category, target} pairs to sync, primary pair first.
+
+    Safety: a pair is dropped if it is malformed, duplicated, or points at the
+    source calendar, so a typo in EXTRA_SYNC_PAIRS can never make the sync
+    write to the master calendar.
+    """
+    pairs = []
+    seen = set()
+
+    def add(category, target):
+        category = (category or '').strip()
+        target = (target or '').strip()
+        if not category or not target:
+            return
+        if target.lower() == SOURCE_CALENDAR.lower():
+            return
+        key = (category.lower(), target.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        pairs.append({'category': category, 'target': target})
+
+    add(SYNC_CATEGORY, TARGET_CALENDAR)
+
+    for chunk in EXTRA_SYNC_PAIRS.split(';'):
+        if '=' not in chunk:
+            continue
+        category, target = chunk.split('=', 1)
+        add(category, target)
+
+    return pairs
+
 # Azure AD Configuration
 CLIENT_ID = os.environ.get('CLIENT_ID', "your_client_id_here")
 TENANT_ID = os.environ.get('TENANT_ID', "your_tenant_id_here")
