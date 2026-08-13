@@ -2079,12 +2079,21 @@ class SyncEngine:
             logger.debug(f"Skipping update for '{subject}' - only modification time differs")
             return False
         
-        # Quick check: compare modification times first (fastest check)
+        # Modification times are only comparable when both events carry one.
+        # get_calendar_events does not request lastModifiedDateTime, so both sides
+        # arrive as None here and `None == None` short-circuited every comparison
+        # below: an event whose signature already matched was never updated, no
+        # matter what changed inside it. Anything that alters the signature
+        # (subject, time, location) is handled as a delete plus an add, which is
+        # why this stayed invisible. A description edit changes no signature, so
+        # it silently never propagated.
+        # Even with both values present, the target's timestamp records when the
+        # sync last wrote it, not when a person edited the source, so it can only
+        # be trusted as an equality signal when both sides actually have one.
         source_modified = source_event.get('lastModifiedDateTime')
         target_modified = target_event.get('lastModifiedDateTime')
-        
-        if source_modified == target_modified:
-            # If modification times match, no changes needed
+
+        if source_modified and target_modified and source_modified == target_modified:
             return False
         
         # If we get here, there are changes - do detailed comparison using prepared data
