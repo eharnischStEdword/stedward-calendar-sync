@@ -42,6 +42,39 @@ SYNC_CATEGORY = _clean_name(os.environ.get('SYNC_CATEGORY', "Public"))
 # Leave unset and the service behaves exactly as it did before this setting existed.
 EXTRA_SYNC_PAIRS = os.environ.get('EXTRA_SYNC_PAIRS', '')
 
+# Target calendars that keep the real event description from the source event.
+# Anything not listed here gets a body containing only the sync marker, which has
+# always been the default: the public calendar is embedded on the website and its
+# source events routinely carry gate codes and door-access times.
+# Format: semicolon-separated calendar names, matched case-insensitively.
+# Example: COPY_BODY_TARGETS="Sundays At St. Edward"
+COPY_BODY_TARGETS = os.environ.get('COPY_BODY_TARGETS', '')
+
+
+def get_copy_body_targets():
+    """Return the normalized, lowercased target names that keep descriptions."""
+    names = set()
+    for chunk in COPY_BODY_TARGETS.split(';'):
+        name = _clean_name(chunk)
+        if not name:
+            continue
+        # Hard rail, not a preference. Descriptions on the public calendar is the
+        # exact exposure the marker-only body exists to prevent, so a typo or a
+        # well-meaning edit to this variable cannot switch it on.
+        if name.lower() == TARGET_CALENDAR.lower():
+            logger.warning(
+                f"Ignoring COPY_BODY_TARGETS entry {name!r}: the public calendar "
+                f"never carries source event descriptions"
+            )
+            continue
+        names.add(name.lower())
+    return names
+
+
+def copies_body(target_calendar_name):
+    """True if this target calendar should receive the source event's description."""
+    return _clean_name(target_calendar_name).lower() in get_copy_body_targets()
+
 
 def get_sync_pairs():
     """

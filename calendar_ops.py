@@ -10,6 +10,7 @@ import requests
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta, timezone
 import pytz
+import html
 import uuid
 
 import config
@@ -643,6 +644,10 @@ class CalendarWriter:
     
     def __init__(self, auth_manager):
         self.auth = auth_manager
+        # Off by default so every target calendar keeps the marker-only body
+        # unless it is explicitly opted in. SyncEngine._sync_pair sets this per
+        # pair from config.copies_body().
+        self.copy_body = False
     
     @RetryUtils.retry_with_backoff(max_retries=3, base_delay=1)
     def create_event(self, calendar_id: str, event_data: Dict) -> bool:
@@ -988,9 +993,8 @@ class CalendarWriter:
             'categories': event.get('categories', [])
         }
         
-        # SECURITY: DO NOT copy body/description content to public calendar
-        # Only include the sync marker for internal tracking
-        # This prevents sensitive information (like door access times) from being exposed
+        # Body is set near the end of this method, gated on self.copy_body.
+        # Default remains marker-only so nothing internal reaches the public calendar.
         
         # Add location if present (always include location field for consistency)
         if 'location' in event:
@@ -1020,11 +1024,36 @@ class CalendarWriter:
         # Create unique identifier from source event (for internal tracking only)
         sync_marker = f"<!-- SYNC_ID:{source_id} -->"
         
-        # Set body to contain ONLY the sync marker (no event description for security)
-        api_event['body'] = {
-            'contentType': 'HTML',
-            'content': sync_marker
-        }
+        # Body handling. Marker-only is the default and protects the public
+        # calendar, whose source events carry gate codes and door-access times.
+        # copy_body is switched on per target calendar (config.copies_body) for
+        # calendars that are meant to publish their descriptions.
+        if self.copy_body:
+            source_body = event.get('body') or {}
+            if isinstance(source_body, dict):
+                body_content = source_body.get('content', '') or ''
+                body_type = (source_body.get('contentType') or 'html').lower()
+            else:
+                body_content = str(source_body)
+                body_type = 'html'
+            # A plain-text body would render the marker as visible text, so escape
+            # the content and carry it as HTML instead.
+            if body_type == 'text':
+                body_content = html.escape(body_content)
+            # The marker is how clear_synced_events_only recognizes our own events,
+            # so it has to survive. Only append when absent, or re-preparing an
+            # already-synced body would stack duplicate markers on every pass.
+            if sync_marker not in body_content:
+                body_content = f"{body_content}\n{sync_marker}" if body_content.strip() else sync_marker
+            api_event['body'] = {
+                'contentType': 'HTML',
+                'content': body_content
+            }
+        else:
+            api_event['body'] = {
+                'contentType': 'HTML',
+                'content': sync_marker
+            }
             
         return api_event
     

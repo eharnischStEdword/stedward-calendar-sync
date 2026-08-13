@@ -812,6 +812,11 @@ class SyncEngine:
             # Get calendar IDs
             source_id = self.reader.find_calendar_id(config.SOURCE_CALENDAR)
             target_id = self.reader.find_calendar_id(config.TARGET_CALENDAR)
+
+            # Preview does not write, but it runs the same diff, so the flag has
+            # to match this pair or it would report phantom body changes left over
+            # from whichever pair synced last.
+            self.writer.copy_body = config.copies_body(config.TARGET_CALENDAR)
             
             if not source_id or not target_id:
                 raise Exception("Required calendars not found")
@@ -1155,6 +1160,11 @@ class SyncEngine:
             # Get calendar IDs
             source_id = self.reader.find_calendar_id(config.SOURCE_CALENDAR)
             target_id = self.reader.find_calendar_id(target_calendar_name)
+
+            # Per-pair, set before the diff so _needs_update compares the same
+            # body the writer is about to send. Assigned on every pair, never
+            # left over from the previous one.
+            self.writer.copy_body = config.copies_body(target_calendar_name)
 
             if not source_id or not target_id:
                 missing = target_calendar_name if source_id else config.SOURCE_CALENDAR
@@ -1646,7 +1656,16 @@ class SyncEngine:
                         update_data['recurrence'] = target_event['recurrence']
                     
                     # Update the event
-                    success = self.writer.update_event(target_calendar_id, target_id, update_data)
+                    # This migration rebuilds the target event from its own data, so keep
+                    # the body it already has rather than flattening it to the marker.
+                    # Without this, running the migration against a description-carrying
+                    # calendar would erase every description on it.
+                    previous_copy_body = self.writer.copy_body
+                    self.writer.copy_body = True
+                    try:
+                        success = self.writer.update_event(target_calendar_id, target_id, update_data)
+                    finally:
+                        self.writer.copy_body = previous_copy_body
                     
                     if success:
                         stats['actually_updated'] += 1
