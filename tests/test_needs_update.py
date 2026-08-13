@@ -149,3 +149,40 @@ class TestGraphFractionalSeconds:
         target = self.graph_target(e, source())
         target['start'] = {'dateTime': '2026-09-06T14:15:00Z', 'timeZone': 'UTC'}
         assert e._needs_update(source(), target) is False
+
+
+class TestGraphMaterializedDefaults:
+    """Graph returns isAllDay explicitly; _prepare_event_for_api only sets it when true.
+
+    So a timed event compared None (prepared, key absent) against False (target,
+    materialized by Graph) and reported an all-day flag change on every event
+    that is not all-day, which is nearly all of them. Same defect class as the
+    lastModifiedDateTime check: a field whose absence means 'default' compared
+    against a side that spells the default out.
+    """
+
+    def graph_target(self, engine_, source_event, is_all_day=False):
+        """A target as Graph hands it back, with isAllDay spelled out."""
+        t = target_from(engine_, source_event)
+        t['isAllDay'] = is_all_day
+        return t
+
+    def test_absent_flag_matches_explicit_false(self):
+        e = engine()
+        assert e._needs_update(source(), self.graph_target(e, source())) is False
+
+    def test_real_all_day_change_still_detected(self):
+        """A source that became all-day against a target that is not."""
+        e = engine()
+        target = self.graph_target(e, source(), is_all_day=False)
+        assert e._needs_update(source(isAllDay=True), target) is True
+
+    def test_all_day_source_matches_all_day_target(self):
+        e = engine()
+        target = self.graph_target(e, source(isAllDay=True), is_all_day=True)
+        assert e._needs_update(source(isAllDay=True), target) is False
+
+    def test_body_change_still_detected_against_materialized_target(self):
+        e = engine()
+        target = self.graph_target(e, source(body='Old text'))
+        assert e._needs_update(source(), target) is True

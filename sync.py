@@ -2127,7 +2127,12 @@ class SyncEngine:
             logger.info(f"  🕐 End time changed for '{subject}'")
             return True
         
-        if prepared_source_data.get('isAllDay') != target_event.get('isAllDay'):
+        # _prepare_event_for_api only sets isAllDay when it is true, so the
+        # prepared side has no key at all for a timed event. Graph spells the
+        # default out and returns False. Comparing those raw reported an all-day
+        # change on every event that is not all-day, which is nearly all of them.
+        # Both sides are read through the same default before comparing.
+        if bool(prepared_source_data.get('isAllDay', False)) != bool(target_event.get('isAllDay', False)):
             logger.info(f"  📅 All-day flag changed for '{subject}'")
             return True
         
