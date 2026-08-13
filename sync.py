@@ -2174,8 +2174,15 @@ class SyncEngine:
             # the same marker, so the two strings need to be seen side by side
             # before this can be normalized correctly. Bounded to the first few
             # per process so it cannot flood the log.
+            #
+            # Only ever runs when copy_body is off. On such a target both sides
+            # are marker-only by construction, so nothing a person typed can
+            # reach the log. On a copy_body target the prepared body IS the
+            # source description, and those routinely carry gate codes and
+            # door-access times, which is the exposure the marker-only body
+            # exists to prevent in the first place.
             global _BODY_DIFF_SAMPLES_LOGGED
-            if _BODY_DIFF_SAMPLES_LOGGED < 3:
+            if not self.writer.copy_body and _BODY_DIFF_SAMPLES_LOGGED < 3:
                 _BODY_DIFF_SAMPLES_LOGGED += 1
                 logger.info(f"  🔬 BODY DIFF SAMPLE for '{subject}'")
                 logger.info(f"     prepared({len(prepared_body)}): {prepared_body[:300]!r}")
