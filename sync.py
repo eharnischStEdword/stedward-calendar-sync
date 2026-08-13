@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 # refuses to proceed. Raised from 50 during a 2025 duplicate cleanup.
 MAX_RUN_DELETIONS = int(os.environ.get('MAX_RUN_DELETIONS', 150))
 
+# Temporary: bounds the body-diff diagnostic in _needs_update to the first few
+# mismatches per process. Remove with that diagnostic.
+_BODY_DIFF_SAMPLES_LOGGED = 0
+
 
 class ChangeTracker:
     """Tracks changes to calendar events for efficient syncing"""
@@ -2165,6 +2169,17 @@ class SyncEngine:
         target_body_normalized = target_body.strip().lower()
         
         if prepared_body_normalized != target_body_normalized:
+            # Temporary diagnostic. Every event on the public calendar is
+            # reporting a body change even though its prepared body is always
+            # the same marker, so the two strings need to be seen side by side
+            # before this can be normalized correctly. Bounded to the first few
+            # per process so it cannot flood the log.
+            global _BODY_DIFF_SAMPLES_LOGGED
+            if _BODY_DIFF_SAMPLES_LOGGED < 3:
+                _BODY_DIFF_SAMPLES_LOGGED += 1
+                logger.info(f"  🔬 BODY DIFF SAMPLE for '{subject}'")
+                logger.info(f"     prepared({len(prepared_body)}): {prepared_body[:300]!r}")
+                logger.info(f"     target({len(target_body)}): {target_body[:300]!r}")
             logger.info(f"  ✅ BODY CONTENT CHANGED for '{subject}'")
             return True
         
