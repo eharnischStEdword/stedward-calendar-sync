@@ -17,6 +17,8 @@ from typing import Dict, List, Tuple, Set, Optional
 from threading import Lock
 from collections import defaultdict
 import statistics
+import re
+import html as html_lib
 import pytz
 
 def get_utc_now_iso():
@@ -33,9 +35,32 @@ logger = logging.getLogger(__name__)
 # refuses to proceed. Raised from 50 during a 2025 duplicate cleanup.
 MAX_RUN_DELETIONS = int(os.environ.get('MAX_RUN_DELETIONS', 150))
 
-# Temporary: bounds the body-diff diagnostic in _needs_update to the first few
-# mismatches per process. Remove with that diagnostic.
-_BODY_DIFF_SAMPLES_LOGGED = 0
+_SYNC_MARKER_RE = re.compile(r'<!--\s*SYNC_ID:.*?-->', re.IGNORECASE | re.DOTALL)
+_HTML_TAG_RE = re.compile(r'<[^>]*>', re.DOTALL)
+
+
+def body_comparison_key(raw_body):
+    """The visible text of an event body, for deciding whether it changed.
+
+    Raw string comparison does not work here. A public-calendar body is written
+    as nothing but the SYNC_ID marker and reads back from Graph as an empty
+    string, so every event on that calendar compared a 169-character marker
+    against '' and reported a description change forever.
+
+    The marker is bookkeeping rather than content, so it comes out of both
+    sides. Markup and entity encoding come out too, because Outlook rewrites
+    the HTML of bodies it does store and those rewrites are not edits.
+
+    The tradeoff: an edit that changes only formatting, such as bolding a word
+    without changing its text, no longer counts as a change. That is worth it
+    against rewriting every event on the calendar every 23 minutes.
+    """
+    if not raw_body:
+        return ''
+    text = _SYNC_MARKER_RE.sub(' ', raw_body)
+    text = _HTML_TAG_RE.sub(' ', text)
+    text = html_lib.unescape(text)
+    return ' '.join(text.split()).strip().lower()
 
 
 class ChangeTracker:
@@ -2164,29 +2189,13 @@ class SyncEngine:
         prepared_body = prepared_source_data.get('body', {}).get('content', '') if isinstance(prepared_source_data.get('body'), dict) else ''
         target_body = target_event.get('body', {}).get('content', '') if isinstance(target_event.get('body'), dict) else ''
 
-        # Normalize body content for comparison
-        prepared_body_normalized = prepared_body.strip().lower()
-        target_body_normalized = target_body.strip().lower()
-        
+        # Compare what a reader would actually see, not the stored markup.
+        # See body_comparison_key: the marker never survives the round trip, so
+        # the raw strings never match on a marker-only calendar.
+        prepared_body_normalized = body_comparison_key(prepared_body)
+        target_body_normalized = body_comparison_key(target_body)
+
         if prepared_body_normalized != target_body_normalized:
-            # Temporary diagnostic. Every event on the public calendar is
-            # reporting a body change even though its prepared body is always
-            # the same marker, so the two strings need to be seen side by side
-            # before this can be normalized correctly. Bounded to the first few
-            # per process so it cannot flood the log.
-            #
-            # Only ever runs when copy_body is off. On such a target both sides
-            # are marker-only by construction, so nothing a person typed can
-            # reach the log. On a copy_body target the prepared body IS the
-            # source description, and those routinely carry gate codes and
-            # door-access times, which is the exposure the marker-only body
-            # exists to prevent in the first place.
-            global _BODY_DIFF_SAMPLES_LOGGED
-            if not self.writer.copy_body and _BODY_DIFF_SAMPLES_LOGGED < 3:
-                _BODY_DIFF_SAMPLES_LOGGED += 1
-                logger.info(f"  🔬 BODY DIFF SAMPLE for '{subject}'")
-                logger.info(f"     prepared({len(prepared_body)}): {prepared_body[:300]!r}")
-                logger.info(f"     target({len(target_body)}): {target_body[:300]!r}")
             logger.info(f"  ✅ BODY CONTENT CHANGED for '{subject}'")
             return True
         

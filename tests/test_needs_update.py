@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from sync import SyncEngine  # noqa: E402
+from sync import SyncEngine, body_comparison_key  # noqa: E402
 
 
 def engine(copy_body=True):
@@ -186,3 +186,62 @@ class TestGraphMaterializedDefaults:
         e = engine()
         target = self.graph_target(e, source(body='Old text'))
         assert e._needs_update(source(), target) is True
+
+
+class TestMarkerRoundTrip:
+    """The marker never survives the round trip to Outlook.
+
+    A public-calendar body is written as nothing but '<!-- SYNC_ID:... -->'
+    and Graph reads it back as ''. Comparing those raw reported a description
+    change on all 1,893 events on that calendar, every 23 minutes, forever.
+    These pin the exact pair of values taken from the live logs.
+    """
+
+    MARKER = '<!-- SYNC_ID:AAMkADFhZjE2NzRhLWExMmUtNGFhOC05MjMx -->'
+
+    def test_marker_only_against_empty_target_is_not_a_change(self):
+        """The 1,893 case, verbatim from the production logs."""
+        e = engine(copy_body=False)
+        target = target_from(e, source())
+        target['body'] = {'contentType': 'HTML', 'content': ''}
+        assert e._needs_update(source(), target) is False
+
+    def test_missing_body_key_on_target_is_not_a_change(self):
+        e = engine(copy_body=False)
+        target = target_from(e, source())
+        target.pop('body', None)
+        assert e._needs_update(source(), target) is False
+
+    def test_real_description_still_detected_through_the_marker(self):
+        """The feature this whole chain exists to deliver must still work."""
+        e = engine(copy_body=True)
+        target = target_from(e, source(body='Old text'))
+        target['body'] = {'contentType': 'HTML', 'content': 'Old text'}
+        assert e._needs_update(source(body='New text'), target) is True
+
+    def test_outlook_html_rewrite_is_not_a_change(self):
+        """Outlook stores a wrapped document; that rewrite is not an edit."""
+        e = engine(copy_body=True)
+        wrapped = (
+            '<html><head><meta http-equiv="Content-Type" content="text/html"></head>'
+            '<body><div>Coffee &amp; Donuts. Topic: Faith &amp; Family</div>'
+            f'{self.MARKER}</body></html>'
+        )
+        target = target_from(e, source())
+        target['body'] = {'contentType': 'HTML', 'content': wrapped}
+        assert e._needs_update(source(), target) is False
+
+
+class TestBodyComparisonKey:
+    def test_marker_only_collapses_to_empty(self):
+        assert body_comparison_key(TestMarkerRoundTrip.MARKER) == ''
+
+    def test_empty_and_none_collapse_to_empty(self):
+        assert body_comparison_key('') == ''
+        assert body_comparison_key(None) == ''
+
+    def test_entities_and_tags_are_normalized(self):
+        assert body_comparison_key('<p>Coffee &amp;  Donuts</p>') == 'coffee & donuts'
+
+    def test_distinct_text_stays_distinct(self):
+        assert body_comparison_key('<p>Old</p>') != body_comparison_key('<p>New</p>')
