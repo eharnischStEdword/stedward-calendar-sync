@@ -2107,12 +2107,23 @@ class SyncEngine:
             logger.info(f"  📝 Subject changed: '{prepared_subject}' != '{target_subject}'")
             return True
         
-        # Compare start/end times
-        if prepared_source_data.get('start') != target_event.get('start'):
+        # Compare start/end times.
+        # Graph returns seven fractional digits ('2026-09-06T14:15:00.0000000')
+        # and _prepare_event_for_api strips them before writing, so a raw dict
+        # comparison reports every single event as time-changed forever. Compare
+        # the same normalized form the writer actually sends. Timezone is left
+        # out on purpose: the writer always sends UTC and the reader always asks
+        # for UTC, so the string is the only part that carries information.
+        def _normalized_dt(value):
+            if not isinstance(value, dict):
+                return value
+            return (value.get('dateTime') or '').replace('Z', '').split('.')[0]
+
+        if _normalized_dt(prepared_source_data.get('start')) != _normalized_dt(target_event.get('start')):
             logger.info(f"  🕐 Start time changed for '{subject}'")
             return True
-        
-        if prepared_source_data.get('end') != target_event.get('end'):
+
+        if _normalized_dt(prepared_source_data.get('end')) != _normalized_dt(target_event.get('end')):
             logger.info(f"  🕐 End time changed for '{subject}'")
             return True
         

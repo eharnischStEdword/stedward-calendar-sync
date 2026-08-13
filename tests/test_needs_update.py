@@ -110,3 +110,42 @@ class TestOtherFields:
         e = engine()
         stale = target_from(e, source())
         assert e._needs_update(source(categories=['SAS', 'Public']), stale) is True
+
+
+class TestGraphFractionalSeconds:
+    """Graph returns seven fractional digits; the writer strips them.
+
+    Comparing the two raw made every event look time-changed, which turned the
+    first working sync into a 1,890-event rewrite of the public calendar,
+    repeating every 23 minutes.
+    """
+
+    def graph_target(self, engine_, source_event):
+        """A target as Graph hands it back, fractional seconds and all."""
+        t = target_from(engine_, source_event)
+        t['start'] = {'dateTime': '2026-09-06T14:15:00.0000000', 'timeZone': 'UTC'}
+        t['end'] = {'dateTime': '2026-09-06T15:25:00.0000000', 'timeZone': 'UTC'}
+        return t
+
+    def test_fractional_seconds_alone_are_not_a_change(self):
+        e = engine()
+        assert e._needs_update(source(), self.graph_target(e, source())) is False
+
+    def test_real_time_change_still_detected_against_graph_format(self):
+        e = engine()
+        target = self.graph_target(e, source())
+        moved = source()
+        moved['start'] = {'dateTime': '2026-09-06T15:15:00', 'timeZone': 'UTC'}
+        assert e._needs_update(moved, target) is True
+
+    def test_body_change_detected_against_graph_format(self):
+        """The case that matters: same time, new description."""
+        e = engine()
+        target = self.graph_target(e, source(body='Old text'))
+        assert e._needs_update(source(), target) is True
+
+    def test_trailing_z_is_not_a_change(self):
+        e = engine()
+        target = self.graph_target(e, source())
+        target['start'] = {'dateTime': '2026-09-06T14:15:00Z', 'timeZone': 'UTC'}
+        assert e._needs_update(source(), target) is False
