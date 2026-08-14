@@ -63,6 +63,37 @@ def body_comparison_key(raw_body):
     return ' '.join(text.split()).strip().lower()
 
 
+def dedupe_events_by_id(events):
+    """Collapse repeat sightings of one Graph event into a single row.
+
+    Calendars are fetched a week at a time. generate_weekly_ranges yields
+    (current, current + 7d) and then advances current by exactly 7 days, so one
+    window's end instant IS the next window's start instant, and the fetch is a
+    calendarView call, which returns every event that OVERLAPS the window. An
+    event in progress at a boundary instant therefore comes back from both
+    adjacent windows, and the weekly loop concatenates the results, so a single
+    physical event lands in the list twice under one Graph id.
+
+    Everything downstream keys on the event signature, never on the id, so those
+    extra sightings read as duplicate events and were condemned for deletion.
+    The id they carried was the surviving event's own id, so the delete removed
+    the only real copy and the next run put it back.
+
+    First sighting wins, order preserved. A row with no id is kept as-is because
+    there is nothing to compare it on.
+    """
+    seen_ids = set()
+    unique = []
+    for event in events:
+        event_id = event.get('id')
+        if event_id:
+            if event_id in seen_ids:
+                continue
+            seen_ids.add(event_id)
+        unique.append(event)
+    return unique
+
+
 class ChangeTracker:
     """Tracks changes to calendar events for efficient syncing"""
     
@@ -878,7 +909,18 @@ class SyncEngine:
             
             if target_events is None:
                 raise Exception("Failed to retrieve target calendar events")
-            
+
+            # Same boundary-overlap collapse as the live pair; preview has to plan
+            # the identical operations or it is not a preview.
+            source_seen, target_seen = len(source_events), len(target_events)
+            source_events = dedupe_events_by_id(source_events)
+            target_events = dedupe_events_by_id(target_events)
+            if source_seen != len(source_events) or target_seen != len(target_events):
+                logger.info(
+                    f"🧾 Preview: Collapsed weekly-window repeats - source {source_seen} -> "
+                    f"{len(source_events)}, target {target_seen} -> {len(target_events)}"
+                )
+
             logger.info(f"📊 Preview: Retrieved {len(source_events)} source events and {len(target_events)} target events")
             
             # Build target map for quick lookup and collect duplicate targets to delete
@@ -892,9 +934,15 @@ class SyncEngine:
             # Safely append duplicates detected in target to deletion list
             if duplicate_targets:
                 logger.info(f"🧹 Preview: Found {len(duplicate_targets)} duplicate target events to clean up")
-                # Ensure we only add events that still exist and have an id
-                to_delete.extend([e for e in duplicate_targets if e.get('id')])
-            
+                # Ensure we only add events that still exist and have an id, and
+                # that no id is queued twice (see _sync_pair for the reasoning).
+                planned_ids = {e.get('id') for e in to_delete if e.get('id')}
+                for dup in duplicate_targets:
+                    dup_id = dup.get('id')
+                    if dup_id and dup_id not in planned_ids:
+                        planned_ids.add(dup_id)
+                        to_delete.append(dup)
+
             logger.info(f"📋 PREVIEW: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
             
             # Format events for preview display
@@ -1238,7 +1286,21 @@ class SyncEngine:
             if target_events is None:
                 return self._pair_failure(category, target_calendar_name,
                                           "Failed to retrieve target calendar events")
-            
+
+            # Adjacent weekly windows share their boundary instant and calendarView
+            # returns anything overlapping the window, so an event in progress at a
+            # boundary arrives from both windows under one id. Collapse those before
+            # anything keys on signature, and before the counts are logged, so the
+            # retrieved figures are distinct events rather than sightings.
+            source_seen, target_seen = len(source_events), len(target_events)
+            source_events = dedupe_events_by_id(source_events)
+            target_events = dedupe_events_by_id(target_events)
+            if source_seen != len(source_events) or target_seen != len(target_events):
+                logger.info(
+                    f"🧾 Collapsed weekly-window repeats - source {source_seen} -> "
+                    f"{len(source_events)}, target {target_seen} -> {len(target_events)}"
+                )
+
             logger.info(f"📊 Retrieved {len(source_events)} source events and {len(target_events)} target events")
             
             # Removed for performance - see speed optimization plan
@@ -1281,9 +1343,17 @@ class SyncEngine:
             # Safely append duplicates detected in target to deletion list
             if duplicate_targets:
                 logger.info(f"🧹 Found {len(duplicate_targets)} duplicate target events to clean up")
-                # Ensure we only add events that still exist and have an id
-                to_delete.extend([e for e in duplicate_targets if e.get('id')])
-            
+                # Ensure we only add events that still exist and have an id, and
+                # that no id is queued twice: _determine_sync_operations already
+                # de-duplicated its own list, and a second DELETE on one id is
+                # counted as a failed operation.
+                planned_ids = {e.get('id') for e in to_delete if e.get('id')}
+                for dup in duplicate_targets:
+                    dup_id = dup.get('id')
+                    if dup_id and dup_id not in planned_ids:
+                        planned_ids.add(dup_id)
+                        to_delete.append(dup)
+
             logger.info(f"📋 SYNC PLAN: {len(to_add)} to add, {len(to_update)} to update, {len(to_delete)} to delete")
             
             # SAFETY CHECK: Prevent mass deletions without manual approval.
@@ -1743,29 +1813,80 @@ class SyncEngine:
 
         Returns a tuple of (event_map, duplicates_to_delete).
         - event_map keeps a single canonical event per signature
-        - duplicates_to_delete contains extra events sharing the same signature
+        - duplicates_to_delete contains SEPARATE events, under their own Graph
+          ids, that this sync created and that share a signature with the
+          canonical one
+
+        Two guards decide what counts as a duplicate, because a signature is only
+        subject, start and location: it carries no identity at all, so on its own
+        it cannot tell one event from another.
+
+        1. Same Graph id as the row already held. That is one physical event seen
+           twice, not two events. Condemning it puts the surviving event's own id
+           on the deletion list, which is what deleted live public-calendar events
+           every 23 minutes and re-created them on the following run.
+           dedupe_events_by_id already removes these before we get here; this is
+           the second line of defence, so no future caller can reintroduce it.
+
+        2. Not created by this sync. A staff member who types an event straight
+           into the target calendar can collide on subject, start and location
+           with a synced copy, and it is never ours to delete. Both sides are
+           checked, so a hand-created row can neither be deleted nor cause the
+           synced copy opposite it to be deleted.
+
+        First seen wins, deterministically. The tie-break this replaced compared
+        event.get('createdDateTime', '') on both sides, but createdDateTime is not
+        in the calendarView $select (calendar_ops.get_calendar_events), so both
+        sides were always '', '' < '' is always False, and the branch that logged
+        "keeping OLDER event" never once compared anything.
         """
         event_map: Dict[str, Dict] = {}
         duplicates_to_delete: List[Dict] = []
+        repeat_sightings = 0
+        protected_unsynced = 0
 
         for event in events:
             signature = self._create_event_signature(event)
 
             # Process all events now (including occurrences)
-            if signature in event_map:
-                # Keep the newer event based on creation time; mark the other as duplicate
-                existing = event_map[signature]
-                existing_created = existing.get('createdDateTime', '')
-                new_created = event.get('createdDateTime', '')
-                if new_created < existing_created:
-                    logger.info(f"Duplicate detected for signature '{signature}' - keeping OLDER event (new)")
-                    duplicates_to_delete.append(existing)
-                    event_map[signature] = event
-                else:
-                    logger.info(f"Duplicate detected for signature '{signature}' - keeping OLDER event (existing)")
-                    duplicates_to_delete.append(event)
-            else:
+            if signature not in event_map:
                 event_map[signature] = event
+                continue
+
+            existing = event_map[signature]
+
+            # Guard 1: one physical event, seen twice.
+            event_id = event.get('id')
+            if event_id and event_id == existing.get('id'):
+                repeat_sightings += 1
+                continue
+
+            # Guard 2: never touch anything this sync did not create, and never
+            # delete a synced event just because a hand-entered one looks like it.
+            if not self._is_synced_event(event) or not self._is_synced_event(existing):
+                protected_unsynced += 1
+                logger.info(
+                    f"🛡️ Signature collision on '{signature}' involves an event this "
+                    "sync did not create, leaving both in place"
+                )
+                continue
+
+            logger.info(
+                f"Duplicate detected for signature '{signature}': keeping the first "
+                "copy seen, removing the extra copy"
+            )
+            duplicates_to_delete.append(event)
+
+        if repeat_sightings:
+            logger.info(
+                f"🧾 Ignored {repeat_sightings} repeat sighting(s) of an event id already "
+                "seen (weekly fetch windows share their boundary instants)"
+            )
+        if protected_unsynced:
+            logger.info(
+                f"🛡️ Protected {protected_unsynced} signature collision(s) involving "
+                "non-synced target events from duplicate cleanup"
+            )
 
         return event_map, duplicates_to_delete
     
