@@ -480,22 +480,61 @@ def index():
             
             return f'''
             <!DOCTYPE html>
-            <html>
+            <html lang="en">
             <head>
-                <title>St. Edward Calendar Sync</title>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>Calendar Sync Administration | St. Edward Church &amp; School</title>
+                <meta name="description" content="Internal calendar administration tool for staff of St. Edward Church and School, Nashville, Tennessee.">
                 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
             </head>
-            <body style="font-family: Arial; text-align: center; margin-top: 100px; background: #f5f5f5;">
-                <div style="background: white; max-width: 500px; margin: 0 auto; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
-                    <h1 style="color: #005921;">🗓️ St. Edward Calendar Sync</h1>
-                    <p style="margin: 20px 0; color: #666;">Automated synchronization between internal and public calendars</p>
-                    <a href="{auth_url}" style="background: #0078d4; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 18px; display: inline-block;">
-                        Sign in with Microsoft
-                    </a>
-                    <p style="margin-top: 30px; font-size: 12px; color: #999;">
-                        St. Edward Church & School • Nashville, TN
+            <body style="font-family: Georgia, 'Times New Roman', serif; margin: 0; background: #f5f5f5; color: #222;">
+                <header style="background: #005921; color: #ffffff; padding: 24px 20px;">
+                    <div style="max-width: 640px; margin: 0 auto;">
+                        <div style="font-size: 20px; font-weight: bold;">St. Edward Church &amp; School</div>
+                        <div style="font-size: 14px; opacity: 0.85;">Nashville, Tennessee</div>
+                    </div>
+                </header>
+
+                <main style="max-width: 640px; margin: 0 auto; padding: 32px 20px 48px;">
+                    <h1 style="color: #005921; font-size: 26px; margin: 0 0 16px;">Calendar Sync Administration</h1>
+
+                    <p style="line-height: 1.6; margin: 0 0 16px;">
+                        This is an internal administration tool for the staff of St. Edward Church &amp; School.
+                        It copies events from the staff Outlook calendar to the public parish calendars, so that
+                        the calendar on our website stays current without anyone retyping events by hand.
                     </p>
-                </div>
+
+                    <p style="line-height: 1.6; margin: 0 0 24px;">
+                        There is nothing here for visitors. If you are looking for parish Mass times or
+                        upcoming events, please visit
+                        <a href="https://stedward.org" style="color: #005921;">stedward.org</a>.
+                    </p>
+
+                    <div style="background: #ffffff; border: 1px solid #dcdcdc; border-radius: 8px; padding: 24px;">
+                        <h2 style="font-size: 18px; margin: 0 0 12px;">Staff sign in</h2>
+                        <p style="line-height: 1.6; margin: 0 0 20px; font-size: 15px;">
+                            Authorized staff sign in with the parish Microsoft 365 account issued by
+                            St. Edward Church &amp; School.
+                        </p>
+                        <a href="{auth_url}" style="background: #005921; color: #ffffff; padding: 13px 26px; text-decoration: none; border-radius: 5px; font-size: 16px; display: inline-block;">
+                            Sign in with your parish account
+                        </a>
+                        <p style="margin: 20px 0 0; font-size: 13px; line-height: 1.6; color: #555;">
+                            Sign in takes place on Microsoft's own website at login.microsoftonline.com.
+                            This page never asks for your password, and it collects no personal information
+                            of any kind.
+                        </p>
+                    </div>
+                </main>
+
+                <footer style="border-top: 1px solid #dcdcdc; padding: 20px; font-size: 13px; color: #666;">
+                    <div style="max-width: 640px; margin: 0 auto; line-height: 1.6;">
+                        Operated by St. Edward Church &amp; School, Nashville, Tennessee.
+                        Parish website: <a href="https://stedward.org" style="color: #005921;">stedward.org</a>.
+                        Questions about this tool go to the parish communications office.
+                    </div>
+                </footer>
             </body>
             </html>
             '''
