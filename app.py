@@ -530,7 +530,7 @@ def index():
 
                 <footer style="border-top: 1px solid #dcdcdc; padding: 20px; font-size: 13px; color: #666;">
                     <div style="max-width: 640px; margin: 0 auto; line-height: 1.6;">
-                        Operated by St. Edward Church &amp; School, Nashville, Tennessee.
+                        Operated by St. Edward Church &amp; School, 188 Thompson Lane, Nashville, TN 37211.
                         Parish website: <a href="https://stedward.org" style="color: #005921;">stedward.org</a>.
                         Questions about this tool go to the parish communications office.
                     </div>
