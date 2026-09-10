@@ -290,8 +290,15 @@ class CalendarReader:
                         return None
                 
                 if not response.ok:
-                    logger.error(f"Failed to fetch events: {response.status_code} - {response.text}")
-                    break
+                    # Never hand back the pages collected so far. A partial read is
+                    # indistinguishable from a short calendar, so the sync would plan
+                    # deletions for every event it never got to see. Raising lets
+                    # retry_with_backoff try again, and a persistent failure aborts
+                    # the pair instead of corrupting it.
+                    raise Exception(
+                        f"Calendar page {request_count} failed: "
+                        f"{response.status_code} - {response.text[:200]}"
+                    )
                     
                 data = response.json()
                 events = data.get('value', [])
@@ -302,10 +309,14 @@ class CalendarReader:
                 # Check for next page
                 endpoint = data.get('@odata.nextLink')
                 
-                # Safety limit to prevent infinite loops
+                # Safety limit to prevent infinite loops. Same reasoning as the
+                # failed-page raise above: stopping quietly at the cap returns a
+                # truncated calendar that every caller reads as complete.
                 if request_count > 50:
-                    logger.warning("Hit pagination safety limit of 50 pages")
-                    break
+                    raise Exception(
+                        f"Pagination exceeded the 50 page safety limit for calendar "
+                        f"{calendar_id}; refusing to return a partial result"
+                    )
             
             logger.info(f"✅ Total events fetched: {len(all_events)}")
             
@@ -325,10 +336,16 @@ class CalendarReader:
             return all_events
             
         except Exception as e:
+            # Never return [] here. An empty list means "this calendar has no
+            # events", which is the one answer that makes the sync delete the
+            # target wholesale. A failed read has to stay distinguishable from a
+            # genuinely empty calendar, so this re-raises: the retry decorator
+            # gets its attempts, and _sync_pair and preview_sync turn a lasting
+            # failure into a reported pair failure that changes nothing.
             logger.error(f"Error fetching calendar events: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            return []
+            raise
     
     @RetryUtils.retry_with_backoff(max_retries=3, base_delay=1)
     def get_calendar_instances(self, calendar_id: str, start_date: str, end_date: str) -> Optional[List[Dict]]:
