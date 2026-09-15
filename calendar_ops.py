@@ -1007,7 +1007,18 @@ class CalendarWriter:
                 'timeZone': 'UTC'
             },
             'showAs': event.get('showAs', 'busy'),
-            'categories': event.get('categories', [])
+            'categories': event.get('categories', []),
+            # Synced copies are display-only: they exist to be read on a website,
+            # and nobody works out of the target calendars. Omitting this key let
+            # Graph apply the mailbox default reminder to every copy, which is how
+            # 2,995 of the 3,015 events on the public calendar ended up with an
+            # alert nobody asked for, firing in the shared mailbox for everyone
+            # who has it open.
+            # Safe to spell out: _needs_update (sync.py:2209) compares only
+            # subject, start, end, isAllDay, categories, location, body and
+            # recurrence, so this key cannot report a phantom change and churn
+            # the sync the way the isAllDay default once did.
+            'isReminderOn': False
         }
         
         # Body is set near the end of this method, gated on self.copy_body.
