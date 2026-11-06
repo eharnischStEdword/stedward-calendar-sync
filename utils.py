@@ -795,6 +795,12 @@ def is_omitted_from_bulletin(subject: str, starts_at_utc: datetime, location: st
     # -----------------------
     # SATURDAYS (wd=5)
     if wd == 5:
+        # Saturday Confession is entered as plain "Confession" (not "Adoration &
+        # Confession"), so the title check above never caught it. Match the
+        # title alone: the clock time moves with daylight saving and the slot
+        # has moved before. "First Confession" does not start with the word.
+        if subject_lower.startswith("confession"):
+            return True
         if hhmm == "07:00" and title == "Adoration & Confession" and has("Church"):
             return True
         if hhmm == "08:00" and title == "Mass- Daily":
