@@ -240,7 +240,7 @@ def _initialize_components_locked():
             from sync import SyncScheduler
             scheduler = SyncScheduler(sync_engine)
             # Not started here: background init or the first request starts it
-            logger.info("✅ Scheduler initialized (started by background init or first request)")
+            logger.info("✅ Scheduler initialized (started by the gunicorn worker hook or first request)")
         except Exception as e:
             logger.error(f"Failed to initialize scheduler: {e}")
     
@@ -263,13 +263,12 @@ def initialize_calendar_sync_background():
         
         _sync_ready = True
         logger.info("✅ Background calendar sync initialization completed")
-
-        # Start the scheduler here rather than waiting for someone to open the
-        # dashboard: after a deploy nothing else starts it, so overnight
-        # changes sat unsynced until the first page load.
-        if scheduler and not scheduler.is_running() and not scheduler_paused:
-            scheduler.start()
-            logger.info("✅ Scheduler started after background initialization")
+        # The scheduler is deliberately NOT started here. This runs at import,
+        # and under gunicorn that can be the master process: a thread started
+        # before the fork does not reach the worker, and a scheduler left
+        # running in the master would sync from a process that serves no
+        # requests, alongside the worker's own. gunicorn.conf.py starts it in
+        # post_worker_init; the first request is the fallback.
     except Exception as e:
         logger.error(f"❌ Background sync initialization failed: {e}")
 
@@ -283,6 +282,19 @@ def ensure_components_initialized():
             logger.info("✅ Components initialized on first request")
         except Exception as e:
             logger.error(f"Failed to initialize components on first request: {e}")
+
+def start_scheduler_if_idle(reason):
+    """Start the 23-minute scheduler unless it is already running or paused.
+
+    Called from gunicorn's post_worker_init hook (the normal path, so a deploy
+    syncs without waiting for a page load) and from the first request (the
+    fallback). Both go through here so the guard is identical.
+    """
+    if scheduler and not scheduler.is_running() and not scheduler_paused:
+        scheduler.start()
+        logger.info(f"✅ Scheduler started ({reason})")
+        return True
+    return False
 
 # Start background initialization if not in debug mode
 if not app.debug and os.environ.get('DISABLE_BACKGROUND_INIT') != 'true':
@@ -523,10 +535,8 @@ def index():
         # Initialize components on first request
         ensure_components_initialized()
         
-        # Start scheduler on first request (not during deployment)
-        if scheduler and not scheduler.is_running() and not scheduler_paused:
-            scheduler.start()
-            logger.info("✅ Scheduler started on first request")
+        # Fallback start; gunicorn's post_worker_init normally gets here first
+        start_scheduler_if_idle("first request")
         
         if not auth_manager or not auth_manager.is_authenticated():
             # Show auth page

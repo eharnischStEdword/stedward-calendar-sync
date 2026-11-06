@@ -1619,7 +1619,7 @@
                 
                 // Handle background sync response (status: "started")
                 if (result.status === "started") {
-                    showMessage('✅ Sync started successfully. Check progress below.', 'success');
+                    showMessage('✅ Sync started on the server. Progress shows below; closing this page does not stop it.', 'success');
                     // Start polling for progress
                     pollSyncProgress();
                 } 
@@ -1684,7 +1684,7 @@
                             : 'Starting';
                         const bar = '█'.repeat(Math.round(percent / 5)).padEnd(20, '░');
                         showMessage(
-                            `🔄 ${phase}\n${bar} ${percent}%\nThis takes a few minutes. You can leave this page open.`,
+                            `🔄 ${phase}\n${bar} ${percent}%\nRunning on the server, about 2 to 3 minutes. Closing this page does not stop it; the result shows here when it finishes.`,
                             'info', 0
                         );
                     } else {

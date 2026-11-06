@@ -31,3 +31,23 @@ max_requests_jitter = 0
 worker_connections = 1000
 
 print(f"Gunicorn binding to {bind}")
+
+
+def post_worker_init(worker):
+    """Start the 23-minute sync scheduler inside the worker, once the app is loaded.
+
+    Only a worker serves requests and only a worker should sync. A thread
+    started at import time can land in the master (before the fork) and never
+    reach the worker, or keep syncing from the master beside the worker's own.
+    This hook runs in the worker only, after gunicorn has imported app:app.
+    """
+    import sys
+    try:
+        calsync = sys.modules.get('app')
+        if calsync is None:
+            import app as calsync
+        calsync.ensure_components_initialized()
+        calsync.start_scheduler_if_idle("gunicorn worker start")
+    except Exception as e:
+        print(f"post_worker_init: scheduler not started: {e}", file=sys.stderr)
+
