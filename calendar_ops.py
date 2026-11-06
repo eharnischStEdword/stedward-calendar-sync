@@ -216,8 +216,11 @@ class CalendarReader:
         try:
             headers = self.auth.get_headers()
             if not headers:
-                return None
-            
+                # Same posture as the failed-page raise below: a None return
+                # is not an exception, so retry_with_backoff never retried it
+                # and every caller's `or []` read it as an empty calendar.
+                raise Exception("Authentication failed during event retrieval: no valid headers")
+
             # Use provided date range or calculate default range
             if start and end:
                 # Use provided date range
@@ -287,8 +290,10 @@ class CalendarReader:
                         response = requests.get(endpoint, headers=headers, params=params if request_count == 1 else None, timeout=30)
                     else:
                         logger.error("Authentication failed during event retrieval")
-                        return None
-                
+                        raise Exception(
+                            f"Authentication failed during event retrieval on page {request_count}"
+                        )
+
                 if not response.ok:
                     # Never hand back the pages collected so far. A partial read is
                     # indistinguishable from a short calendar, so the sync would plan
@@ -363,10 +368,12 @@ class CalendarReader:
         """
         headers = self.auth.get_headers()
         if not headers:
-            return None
-        
+            # Raise, never return None: the callers fall back to [] and would
+            # read an auth failure as a window with no occurrences.
+            raise Exception("Authentication failed during instance retrieval: no valid headers")
+
         url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/calendarView"
-        
+
         params = {
             'startDateTime': start_date,
             'endDateTime': end_date,
@@ -388,8 +395,8 @@ class CalendarReader:
                     response = requests.get(url, headers=headers, params=params, timeout=30)
                 else:
                     logger.error("Authentication failed during instance retrieval")
-                    return None
-            
+                    raise Exception("Authentication failed during instance retrieval")
+
             if response.status_code == 200:
                 data = response.json()
                 instances = data.get('value', [])
@@ -446,10 +453,13 @@ class CalendarReader:
         category = (category or config.SYNC_CATEGORY or 'Public').lower()
         # Get all events including expanded recurring occurrences
         all_events = self.get_calendar_events(calendar_id, start=start, end=end)
-        
+
+        # get_calendar_events raises on any failed read, so an empty answer here
+        # is a genuinely empty window and is reported as one. Returning None for
+        # it made "no events this week" and "the read failed" the same value.
         if not all_events:
-            return None
-        
+            return []
+
         # IMPORTANT: Filter out duplicate seriesMasters when we have occurrences
         # Group events by seriesMasterId to identify duplicates
         series_masters = {}
@@ -665,11 +675,45 @@ class CalendarWriter:
         # unless it is explicitly opted in. SyncEngine._sync_pair sets this per
         # pair from config.copies_body().
         self.copy_body = False
-    
+        # Optional CalendarReader for resolving the master calendar's Graph id
+        # (SyncEngine attaches its own, whose calendar cache is already warm).
+        self.reader = None
+        self._source_calendar_id = None
+        self._source_calendar_id_resolved = False
+
+    def _is_source_calendar(self, calendar_id: str) -> bool:
+        """
+        MASTER_CALENDAR_PROTECTION test shared by every write path.
+
+        Callers pass the opaque Graph id they got from find_calendar_id, while
+        config.SOURCE_CALENDAR is a display name, so the original comparison
+        `calendar_id == config.SOURCE_CALENDAR` could never be true and the
+        guard never fired. The name comparison stays, and the master calendar's
+        Graph id is resolved once, lazily, and compared as well. Fails closed:
+        if the id cannot be resolved the name comparison is all there is,
+        which is exactly what the guard was before.
+        """
+        if calendar_id == config.SOURCE_CALENDAR:
+            return True
+
+        if not self._source_calendar_id_resolved:
+            self._source_calendar_id_resolved = True
+            # Nothing to resolve with: no reader attached and no auth to build
+            # one from. Resolution is attempted once per writer, never per write.
+            if self.reader is not None or self.auth is not None:
+                try:
+                    reader = self.reader or CalendarReader(self.auth)
+                    self._source_calendar_id = reader.find_calendar_id(config.SOURCE_CALENDAR)
+                except Exception as e:
+                    logger.warning(f"Could not resolve the master calendar id for write protection: {e}")
+                    self._source_calendar_id = None
+
+        return bool(self._source_calendar_id) and calendar_id == self._source_calendar_id
+
     @RetryUtils.retry_with_backoff(max_retries=3, base_delay=1)
     def create_event(self, calendar_id: str, event_data: Dict) -> bool:
         """Create a new event in the specified calendar with retry logic"""
-        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
+        if config.MASTER_CALENDAR_PROTECTION and self._is_source_calendar(calendar_id):
             logger.error("PROTECTION: Attempted to write to source calendar!")
             return False
         
@@ -715,7 +759,7 @@ class CalendarWriter:
     @RetryUtils.retry_with_backoff(max_retries=3, base_delay=1)
     def update_event(self, calendar_id: str, event_id: str, event_data: Dict) -> bool:
         """Update an existing event with retry logic"""
-        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
+        if config.MASTER_CALENDAR_PROTECTION and self._is_source_calendar(calendar_id):
             logger.error("PROTECTION: Attempted to update in source calendar!")
             return False
         
@@ -761,7 +805,7 @@ class CalendarWriter:
     @RetryUtils.retry_with_backoff(max_retries=3, base_delay=1)
     def delete_event(self, calendar_id: str, event_id: str, suppress_notifications: bool = True) -> bool:
         """Delete an event from the calendar with retry logic"""
-        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
+        if config.MASTER_CALENDAR_PROTECTION and self._is_source_calendar(calendar_id):
             logger.error("PROTECTION: Attempted to delete from source calendar!")
             return False
         
@@ -823,7 +867,7 @@ class CalendarWriter:
         Returns:
             True if deletion successful, False otherwise
         """
-        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
+        if config.MASTER_CALENDAR_PROTECTION and self._is_source_calendar(calendar_id):
             logger.error("PROTECTION: Attempted to delete occurrence from source calendar!")
             return False
         
@@ -848,8 +892,8 @@ class CalendarWriter:
                 'endDateTime': end_window
             }
             
-            response = requests.get(url, headers=headers, params=params)
-            
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+
             if response.status_code != 200:
                 logger.error(f"❌ Failed to get occurrence: {response.status_code}")
                 logger.error(f"Response: {response.text}")
@@ -873,7 +917,7 @@ class CalendarWriter:
             occurrence_id = target_occurrence['id']
             delete_url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{calendar_id}/events/{occurrence_id}"
             
-            delete_response = requests.delete(delete_url, headers=headers)
+            delete_response = requests.delete(delete_url, headers=headers, timeout=30)
             
             if delete_response.status_code == 204:
                 logger.info(f"✅ Successfully deleted occurrence: {target_occurrence.get('subject', 'Unknown')} on {occurrence_date}")
@@ -901,7 +945,7 @@ class CalendarWriter:
         Returns:
             True if update successful, False otherwise
         """
-        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
+        if config.MASTER_CALENDAR_PROTECTION and self._is_source_calendar(calendar_id):
             logger.error("PROTECTION: Attempted to update occurrence in source calendar!")
             return False
         
@@ -1124,7 +1168,7 @@ class CalendarWriter:
     
     def batch_create_events(self, calendar_id: str, events: List[Dict], batch_size: int = 20) -> Dict:
         """Create multiple events in batches for better performance"""
-        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
+        if config.MASTER_CALENDAR_PROTECTION and self._is_source_calendar(calendar_id):
             logger.error("PROTECTION: Attempted to batch write to source calendar!")
             return {'successful': 0, 'failed': len(events), 'errors': ['Protected calendar']}
         
@@ -1241,7 +1285,7 @@ class CalendarWriter:
     
     def batch_delete_events(self, calendar_id: str, event_ids: List[str], batch_size: int = 20) -> Dict:
         """Delete multiple events in batches"""
-        if config.MASTER_CALENDAR_PROTECTION and calendar_id == config.SOURCE_CALENDAR:
+        if config.MASTER_CALENDAR_PROTECTION and self._is_source_calendar(calendar_id):
             logger.error("PROTECTION: Attempted to batch delete from source calendar!")
             return {'successful': 0, 'failed': len(event_ids), 'errors': ['Protected calendar']}
         

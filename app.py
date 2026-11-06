@@ -15,7 +15,9 @@ import sys
 import config
 import json
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 from flask import Flask, render_template, jsonify, redirect, session, request, copy_current_request_context, make_response
+from markupsafe import escape
 import threading
 import requests
 
@@ -90,6 +92,22 @@ def add_security_headers(response):
     
     return response
 
+# Uptime probes on the old onrender.com name must keep answering, so these
+# paths are never redirected to the canonical host.
+HOST_REDIRECT_EXEMPT = {'/health', '/health/detailed'}
+
+
+def canonical_host():
+    """Host (and port) from config.REDIRECT_URI, or None if it is unset or unparsable."""
+    try:
+        parts = urlsplit(getattr(config, 'REDIRECT_URI', '') or '')
+        if parts.scheme not in ('http', 'https'):
+            return None
+        return (parts.netloc or '').lower() or None
+    except Exception:
+        return None
+
+
 # HTTPS Enforcement Middleware
 @app.before_request
 def enforce_https():
@@ -97,6 +115,22 @@ def enforce_https():
     if request.headers.get('X-Forwarded-Proto') == 'http':
         url = request.url.replace('http://', 'https://', 1)
         return redirect(url, code=301)
+
+    # Render still serves the old stedward-calendar-sync.onrender.com name. A
+    # sign-in started there stores oauth_state in a cookie scoped to that host,
+    # Microsoft returns the user to REDIRECT_URI on the canonical host, and the
+    # callback fails with "Invalid state parameter". Send the old name to the
+    # canonical host before anything writes to the session.
+    try:
+        target = canonical_host()
+        host = (request.host or '').lower()
+        if (target and host.endswith('.onrender.com') and host != target
+                and request.path not in HOST_REDIRECT_EXEMPT):
+            query = request.query_string.decode('utf-8', 'ignore')
+            url = f"https://{target}{request.path}" + (f"?{query}" if query else '')
+            return redirect(url, code=301)
+    except Exception as e:
+        logger.warning(f"Canonical host redirect skipped: {e}")
 
 # Authentication gate: deny by default, allow an explicit public allow-list.
 # Closes unauthenticated access to admin/debug/data endpoints such as /metrics,
@@ -169,8 +203,18 @@ scheduler_paused = load_scheduler_state()  # Load state on startup
 _components_initialized = False
 _sync_ready = False
 
+# initialize_components() runs on the import-time background thread AND on the
+# main thread at import; without this lock both can pass the "is None" checks
+# and build two SyncEngines, leaving the scheduler bound to one the routes
+# never see.
+_init_lock = threading.Lock()
+
 def initialize_components():
     """Initialize sync components safely"""
+    with _init_lock:
+        return _initialize_components_locked()
+
+def _initialize_components_locked():
     global sync_engine, scheduler, auth_manager
     
     if auth_manager is None:
@@ -195,8 +239,8 @@ def initialize_components():
         try:
             from sync import SyncScheduler
             scheduler = SyncScheduler(sync_engine)
-            # Don't start scheduler immediately - let it start on first request
-            logger.info("✅ Scheduler initialized (will start on first request)")
+            # Not started here: background init or the first request starts it
+            logger.info("✅ Scheduler initialized (started by background init or first request)")
         except Exception as e:
             logger.error(f"Failed to initialize scheduler: {e}")
     
@@ -219,6 +263,13 @@ def initialize_calendar_sync_background():
         
         _sync_ready = True
         logger.info("✅ Background calendar sync initialization completed")
+
+        # Start the scheduler here rather than waiting for someone to open the
+        # dashboard: after a deploy nothing else starts it, so overnight
+        # changes sat unsynced until the first page load.
+        if scheduler and not scheduler.is_running() and not scheduler_paused:
+            scheduler.start()
+            logger.info("✅ Scheduler started after background initialization")
     except Exception as e:
         logger.error(f"❌ Background sync initialization failed: {e}")
 
@@ -435,7 +486,12 @@ def get_status():
                     status['last_sync_time_display'] = format_central_time(last_sync_dt)
                 except:
                     status['last_sync_time_display'] = "Unknown"
-        
+
+        # SyncEngine.get_status() carries a placeholder scheduler_running=True
+        # that the update above copies in; the scheduler itself is the only
+        # source of truth, so set it after the merge.
+        status["scheduler_running"] = bool(scheduler.is_running()) if scheduler else False
+
         # Add scheduler details to status
         if scheduler:
             scheduler_status = scheduler.get_scheduler_status()
@@ -594,9 +650,19 @@ def trigger_sync():
             "progress": sync_engine.get_progress_percent() if hasattr(sync_engine, 'get_progress_percent') else 0
         }), 409
     
-    # Parse request body
-    dry_run = request.json.get('dry_run', False) if request.json else False
-    
+    # Parse request body. silent=True: a bodiless POST (the Test Sync page,
+    # curl without a Content-Type) must not 415 before it gets here.
+    payload = request.get_json(silent=True) or {}
+    dry_run = bool(payload.get('dry_run', False))
+
+    # The background run only honors config.DRY_RUN_MODE, so a dry_run flag
+    # here would be echoed back and then ignored by a live sync. Refuse it.
+    if dry_run and not getattr(config, 'DRY_RUN_MODE', False):
+        return jsonify({
+            "error": "dry_run is not supported on /sync; POST /sync/preview to see the plan without writing anything",
+            "preview": "/sync/preview"
+        }), 400
+
     # Start sync in background thread
     sync_thread = threading.Thread(
         target=_run_sync_background,
@@ -623,7 +689,15 @@ def preview_sync():
     
     if not sync_engine:
         return jsonify({"error": "Sync engine not initialized"}), 500
-    
+
+    # preview_sync rewrites the shared writer's copy_body; running it during a
+    # live sync would strip descriptions mid-write.
+    if getattr(sync_engine, 'sync_in_progress', False):
+        return jsonify({
+            "status": "already_running",
+            "message": "Sync is in progress; try the preview again when it finishes"
+        }), 409
+
     try:
         # Run sync in dry-run mode to get preview
         preview_result = sync_engine.preview_sync()
@@ -724,6 +798,12 @@ def clear_target():
         if error:
             return error
 
+        if getattr(sync_engine, 'sync_in_progress', False):
+            return jsonify({
+                'success': False,
+                'message': 'Sync is in progress; try again when it finishes.'
+            }), 409
+
         target_id = sync_engine.reader.find_calendar_id(target_name)
         if not target_id:
             return jsonify({'success': False, 'message': f"Calendar '{target_name}' not found"}), 404
@@ -782,6 +862,12 @@ def clear_synced_only():
         if error:
             return error
 
+        if getattr(sync_engine, 'sync_in_progress', False):
+            return jsonify({
+                'success': False,
+                'message': 'Sync is in progress; try again when it finishes.'
+            }), 409
+
         target_id = sync_engine.reader.find_calendar_id(target_name)
         if not target_id:
             return jsonify({'success': False, 'message': f"Calendar '{target_name}' not found"}), 404
@@ -834,48 +920,53 @@ def auth_callback():
             logger.warning("OAuth callback state mismatch or missing")
             return "Authentication failed: Invalid state parameter", 400
         
-        # Attempt token exchange
-        if auth_manager and auth_manager.exchange_code_for_token(code):
-            # If allow-list is configured, verify the signed-in user is allowed
-            if getattr(config, 'ALLOWED_DASHBOARD_USERS', None) and config.ALLOWED_DASHBOARD_USERS:
-                allowed = config.ALLOWED_DASHBOARD_USERS
-                headers = auth_manager.get_headers()
-                if headers:
-                    try:
-                        r = requests.get(
-                            'https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName',
-                            headers=headers,
-                            timeout=10
-                        )
-                        if r.status_code == 200:
-                            data = r.json()
-                            mail = (data.get('mail') or data.get('userPrincipalName') or '').strip().lower()
-                            if mail not in allowed:
-                                logger.warning(f"User {mail} not in ALLOWED_DASHBOARD_USERS")
-                                session.clear()
-                                if auth_manager:
-                                    auth_manager.clear_tokens()
-                                return (
-                                    "Access denied: your account is not authorized to use this dashboard. "
-                                    "Contact your administrator to be added.",
-                                    403
-                                )
-                    except Exception as e:
-                        logger.error(f"Allowed-user check failed: {e}")
-                        session.clear()
-                        if auth_manager:
-                            auth_manager.clear_tokens()
-                        return "Authentication check failed. Please try again.", 500
-                else:
-                    session.clear()
-                    if auth_manager:
-                        auth_manager.clear_tokens()
-                    return "Authentication failed: could not verify user.", 401
-            logger.info("OAuth authentication successful")
-            return redirect('/')
-        else:
+        # Attempt token exchange. Nothing is stored yet: the tokens become the
+        # sync identity only after the allow-list check below has passed, so a
+        # rejected sign-in can neither replace nor delete the scheduler's
+        # credential. Every rejection branch clears only this browser session.
+        tokens = auth_manager.exchange_code_for_token(code) if auth_manager else None
+        if not tokens:
             logger.error("OAuth token exchange failed")
             return "Authentication failed: Could not exchange token", 400
+
+        # If allow-list is configured, verify the signed-in user is allowed
+        if getattr(config, 'ALLOWED_DASHBOARD_USERS', None) and config.ALLOWED_DASHBOARD_USERS:
+            allowed = config.ALLOWED_DASHBOARD_USERS
+            access_token = tokens.get('access_token')
+            if not access_token:
+                session.clear()
+                return "Authentication failed: could not verify user.", 401
+            try:
+                r = requests.get(
+                    'https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName',
+                    headers={'Authorization': f'Bearer {access_token}'},
+                    timeout=30
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    mail = (data.get('mail') or data.get('userPrincipalName') or '').strip().lower()
+                    if mail not in allowed:
+                        logger.warning(f"User {mail} not in ALLOWED_DASHBOARD_USERS")
+                        session.clear()
+                        return (
+                            "Access denied: your account is not authorized to use this dashboard. "
+                            "Contact your administrator to be added.",
+                            403
+                        )
+                else:
+                    # Anything but 200 (429 throttle, 5xx, 403) is a failed
+                    # check, not a passed one.
+                    logger.error(f"Allowed-user check failed: Graph /me returned {r.status_code}")
+                    session.clear()
+                    return "Authentication check failed. Please try again.", 500
+            except Exception as e:
+                logger.error(f"Allowed-user check failed: {e}")
+                session.clear()
+                return "Authentication check failed. Please try again.", 500
+
+        auth_manager.store_tokens(tokens)
+        logger.info("OAuth authentication successful")
+        return redirect('/')
             
     except Exception as e:
         logger.error(f"Auth callback error: {e}")
@@ -883,11 +974,15 @@ def auth_callback():
 
 @app.route('/logout')
 def logout():
-    """Clear session and tokens"""
+    """End this browser session only.
+
+    The persistent sync credential on disk is shared by every user and by the
+    scheduler; it is never touched here (this route is public, so anyone could
+    otherwise stop the sync by fetching /logout). Only an invalid_grant from
+    Microsoft discards it, inside refresh_access_token.
+    """
     try:
         session.clear()
-        if auth_manager:
-            auth_manager.clear_tokens()
         return redirect('/')
     except Exception as e:
         logger.error(f"Logout error: {e}")
@@ -1340,10 +1435,10 @@ def debug_event_by_id(event_id):
         
         # Fetch the specific event
         url = f"https://graph.microsoft.com/v1.0/users/{config.SHARED_MAILBOX}/calendars/{source_id}/events/{event_id}"
-        response = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {auth_manager.get_access_token()}"}
-        )
+        headers = auth_manager.get_headers()
+        if not headers:
+            return jsonify({"error": "No valid token"}), 401
+        response = requests.get(url, headers=headers, timeout=30)
         
         if response.status_code != 200:
             return jsonify({"error": f"Failed to fetch event: {response.status_code}", "details": response.text}), response.status_code
@@ -3437,18 +3532,24 @@ def bulletin_events():
                         logger.info(f"Added {len(next_events)} more events from pagination")
                         next_link = next_data.get('@odata.nextLink')
                     else:
-                        break
-                
+                        # A truncated week must not print as a complete one.
+                        raise RuntimeError(
+                            f"Calendar page fetch failed: {next_response.status_code} - {next_response.text[:200]}"
+                        )
+
                 logger.info(f"Total events fetched: {len(all_events)}")
                 if all_events:
                     logger.info(f"Sample event: {all_events[0].get('subject', 'No Subject')} at {all_events[0].get('start', {}).get('dateTime', 'No Time')}")
             else:
-                logger.error(f"Failed to get calendar view: {response.status_code} - {response.text}")
-                all_events = []
-                
+                # Includes a 401 whose refresh failed. A failed read must surface
+                # as an error, never as a blank week at HTTP 200.
+                raise RuntimeError(
+                    f"Calendar read failed: {response.status_code} - {response.text[:200]}"
+                )
+
         except Exception as e:
             logger.error(f"Error fetching calendar view: {e}")
-            all_events = []
+            raise
         
         # Process events for bulletin
         from utils import normalize_location, is_omitted_from_bulletin
@@ -3619,9 +3720,19 @@ def bulletin_events():
             # For all-day events, event_start_central is already set to noon on the correct date
             # So we can safely use .date() without timezone shift issues
             day_key = event['start'].date()
-            if day_key not in events_by_day:
-                events_by_day[day_key] = []
-            events_by_day[day_key].append(event)
+            last_day = day_key
+            if event['is_all_day'] and event['end'] is not None:
+                # Graph ends an all-day event at midnight AFTER its last day
+                # (exclusive), so a multi-day event covers start..end-1. List it
+                # on every one of those days that falls inside the week; a
+                # single-day event still lands only on its own date.
+                last_day = max(event['end'].date() - timedelta(days=1), day_key)
+            day = max(day_key, start_date)
+            while day <= min(last_day, end_date):
+                if day not in events_by_day:
+                    events_by_day[day] = []
+                events_by_day[day].append(event)
+                day += timedelta(days=1)
         
         # Format for display — ALWAYS include all 7 days in the week range (even if no events)
         formatted_days = []
@@ -3874,9 +3985,11 @@ def event_search():
             end_date = today + timedelta(days=30)
             range_text = "Next 30 Days"
         
-        # Build title
+        # Build title. search_term comes straight from the query string and is
+        # interpolated into HTML below, so escape it once here.
+        safe_search_term = escape(search_term)
         if search_term:
-            title = f"Events containing '{search_term}' - {range_text}"
+            title = f"Events containing '{safe_search_term}' - {range_text}"
         else:
             title = f"All Events - {range_text}"
         
@@ -3899,8 +4012,23 @@ def event_search():
         
         events = []
         if response.status_code == 200:
-            events = response.json().get('value', [])
-        
+            data = response.json()
+            events = data.get('value', [])
+
+            # Follow pagination the way /bulletin-events does: Graph caps a
+            # page and sends @odata.nextLink for the rest, and a year-long
+            # range easily exceeds one page.
+            next_link = data.get('@odata.nextLink')
+            while next_link:
+                next_response = requests.get(next_link, headers=headers, timeout=30)
+                if next_response.status_code != 200:
+                    raise RuntimeError(
+                        f"Calendar page fetch failed: {next_response.status_code} - {next_response.text[:200]}"
+                    )
+                next_data = next_response.json()
+                events.extend(next_data.get('value', []))
+                next_link = next_data.get('@odata.nextLink')
+
         # Process events for display
         event_list = []
         for event in events:
@@ -3912,13 +4040,23 @@ def event_search():
             
             event_start_str = event.get('start', {}).get('dateTime', '')
             if event_start_str:
-                event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
-                event_start_central = utc_to_central(event_start)
-                
+                if event.get('isAllDay'):
+                    # Graph returns an all-day start as midnight UTC; converting
+                    # that to Central lands on the previous evening. Take the
+                    # date from the string instead, as /bulletin-events does.
+                    event_date = datetime.fromisoformat(event_start_str.split('T')[0]).date()
+                    event_start_central = central_tz.localize(
+                        datetime.combine(event_date, datetime.min.time())
+                    )
+                else:
+                    event_start = datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
+                    event_start_central = utc_to_central(event_start)
+
                 event_list.append({
                     'date': event_start_central.strftime('%A, %B %d, %Y'),
                     'time': event_start_central.strftime('%-I:%M %p') if not event.get('isAllDay') else 'All Day',
-                    'subject': event.get('subject', 'No Title'),
+                    # Subjects come from Graph and go straight into HTML below
+                    'subject': escape(event.get('subject', 'No Title')),
                     'datetime_obj': event_start_central
                 })
         
@@ -4031,7 +4169,7 @@ def event_search():
                 '''
         else:
             if search_term:
-                html += f'<p>No events found containing "{search_term}" in this date range.</p>'
+                html += f'<p>No events found containing "{safe_search_term}" in this date range.</p>'
             else:
                 html += '<p>No events found in this date range.</p>'
         
@@ -4042,9 +4180,10 @@ def event_search():
             
             <textarea id="plaintext" style="position: absolute; left: -9999px;">'''
         
-        # Add plain text version for copying
+        # Add plain text version for copying (still inside HTML: a textarea
+        # decodes entities, so escaping keeps the copied text correct)
         if search_term:
-            html += f"Events containing '{search_term}':\n\n"
+            html += f"Events containing '{safe_search_term}':\n\n"
         for event in event_list:
             html += f"{event['date']}\n{event['time']} - {event['subject']}\n\n"
         

@@ -293,7 +293,11 @@
             showLoading(resultDiv);
 
             try {
-                const response = await fetch('/sync', { method: 'POST' });
+                const response = await fetch('/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}'
+                });
                 const data = await response.json();
 
                 if (!response.ok) {
@@ -301,10 +305,12 @@
                     return;
                 }
 
-                const isSuccess = data.success || data.status === 'success';
+                // /sync starts the work in the background and answers 202 {status: 'started'}
+                const isStarted = response.status === 202 || data.status === 'started';
+                const isSuccess = isStarted || data.success || data.status === 'success';
                 let html = `
                     <div class="result ${isSuccess ? 'success' : 'error'}">
-                        <h3>${isSuccess ? '✅ Sync Completed' : '❌ Sync Failed'}</h3>
+                        <h3>${isStarted ? '✅ Sync Started' : isSuccess ? '✅ Sync Completed' : '❌ Sync Failed'}</h3>
                         <pre>${JSON.stringify(data, null, 2)}</pre>
                     </div>
                 `;
@@ -331,17 +337,23 @@
 
                 let html = `<div class="result info">`;
                 
-                if (data.recent_syncs && data.recent_syncs.length > 0) {
-                    html += '<h3>Recent Sync Operations:</h3>';
-                    data.recent_syncs.slice(0, 5).forEach(sync => {
-                        html += `
-                            <div style="margin: 10px 0; padding: 10px; background: white; border-radius: 4px;">
-                                <div><strong>Time:</strong> ${new Date(sync.timestamp).toLocaleString()}</div>
-                                <div><strong>Status:</strong> <span class="status-badge ${sync.success}">${sync.success ? 'SUCCESS' : 'FAILED'}</span></div>
-                                <div><strong>Message:</strong> ${escapeHtml(sync.message)}</div>
-                            </div>
-                        `;
-                    });
+                // /history returns the rolling statistics (total_syncs, successful_syncs,
+                // failed_syncs, total_operations, last_sync_display, ...), not a list of runs
+                if (data.total_syncs > 0) {
+                    const ops = data.total_operations || {};
+                    const allGood = !data.failed_syncs;
+                    html += `<h3>Sync History (last ${escapeHtml(data.period_hours || 24)} hours):</h3>`;
+                    html += `
+                        <div style="margin: 10px 0; padding: 10px; background: white; border-radius: 4px;">
+                            <div><strong>Total syncs:</strong> ${escapeHtml(data.total_syncs)}</div>
+                            <div><strong>Successful:</strong> ${escapeHtml(data.successful_syncs || 0)}</div>
+                            <div><strong>Failed:</strong> <span class="status-badge ${allGood}">${escapeHtml(data.failed_syncs || 0)}</span></div>
+                            <div><strong>Validation failures:</strong> ${escapeHtml(data.validation_failures || 0)}</div>
+                            <div><strong>Last sync:</strong> ${escapeHtml(data.last_sync_display || data.last_sync || 'Never')}</div>
+                            <div><strong>Last successful sync:</strong> ${escapeHtml(data.last_successful_sync_display || data.last_successful_sync || 'Never')}</div>
+                            <div><strong>Operations:</strong> ${escapeHtml(ops.added || 0)} added, ${escapeHtml(ops.updated || 0)} updated, ${escapeHtml(ops.deleted || 0)} deleted, ${escapeHtml(ops.failed || 0)} failed</div>
+                        </div>
+                    `;
                 } else {
                     html += '<p>No recent sync history available.</p>';
                 }

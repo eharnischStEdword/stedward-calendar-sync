@@ -88,9 +88,13 @@ Read this section before changing sync or delete logic. Each rule exists
 because its absence caused or nearly caused data loss.
 
 **The master calendar is never written to.** `MASTER_CALENDAR_PROTECTION`
-guards every write path in `calendar_ops.py`. Separately, `get_sync_pairs()`
-(`config.py:79`) drops any pair whose target is `SOURCE_CALENDAR`, so a
-configuration typo cannot aim writes at the master.
+guards every write path in `calendar_ops.py` through
+`CalendarWriter._is_source_calendar`, which compares the calendar id a caller
+passes against both the configured name and the master calendar's Graph id
+(resolved once through the reader's cache). Until 2026-11-06 the guard
+compared the Graph id to the display name and could never fire. Separately,
+`get_sync_pairs()` (`config.py:79`) drops any pair whose target is
+`SOURCE_CALENDAR`, so a configuration typo cannot aim writes at the master.
 
 **The public calendar never receives a source description.** This is the one
 rule that protects people rather than data. Source events routinely carry gate
@@ -108,8 +112,9 @@ body marker. This is what makes it safe for staff to have write access to a
 target calendar: anything a person adds by hand is invisible to the delete
 logic and survives every sync.
 
-That gate now also covers duplicate cleanup, which previously ran on the raw
-unfiltered target list. `_build_event_map` (`sync.py:1811`) refuses to condemn
+That gate also covers duplicate cleanup, the cancelled-occurrence pass
+(both of its loops), and the extended-property migration route, each of which
+once deleted without it. `_build_event_map` (`sync.py:1811`) refuses to condemn
 a signature collision when either side fails `_is_synced_event`, checked on
 both sides, so a hand-entered event can neither be deleted nor cause the synced
 event opposite it to be deleted.
@@ -501,50 +506,77 @@ declaring victory is how a broken deploy looks healthy.
 ## 9. Known gaps
 
 Honest list. None are blocking; all are real. Ordered by what would hurt most.
+The 2026-11-06 review closed the items that used to head this list (a failed
+or unauthenticated read reported as an empty calendar, a browser logout or a
+rejected sign-in wiping the sync credential, duplicate scheduler jobs after a
+pause or restart, a run with every write failed recorded as a success).
 
-- **A failed page fetch is reported as success.** `get_calendar_events`
-  (`calendar_ops.py:292-294`) does `if not response.ok: break` and returns the
-  pages it already collected, so the retry decorator at `calendar_ops.py:213`
-  never sees the failure. One transient 503 on any window makes the events it
-  would have returned look orphaned to `_identify_events_to_delete`, which
-  plans them for deletion. `MAX_RUN_DELETIONS` is the only backstop. This is
-  the highest-value follow-up in this list and it deserves its own change,
-  because it alters error handling on every fetch in the service.
+- **The dashboard says Authenticated after the sync credential dies.**
+  `is_authenticated()` inside a request reads only the browser session flag,
+  so when the refresh token is revoked or consent lapses the page keeps its
+  green status and an aging last-sync time. `/health/detailed` is the honest
+  probe: `sync_credential_valid` is the field to trust.
+- **A stale `sourceEventId` on a copy that still matches by signature is
+  deleted and re-added the next run.** `_identify_events_to_delete` runs on
+  the full synced list rather than the leftover set. The fix is a one-line
+  argument change in `_determine_sync_operations`; it is deferred because how
+  often Graph regenerates ids under series edits was not verified.
 - **`clear_synced_events_only` cannot match anything on the public calendar.**
   It finds the sync's own events by searching the body for `SYNC_ID:`
-  (`calendar_ops.py:1076`), and a marker-only body appears to read back empty.
+  (`calendar_ops.py`), and a marker-only body appears to read back empty.
   It fails closed, deleting nothing, so the SAFE clear option silently does
-  less than the destructive one. Flagged in commit `0d337dc`, still true.
-- **The occurrence pass cannot identify public-calendar events either.**
-  `get_calendar_instances` does not `$expand` extended properties
-  (`calendar_ops.py:353`), so `_is_synced_event(inst)` at `sync.py:2512` falls
-  through to the body marker and returns False for every public copy. Also
-  fails closed: cancelled and missing occurrences are simply never cleaned up
-  on that calendar.
-- **`SYNC_INTERVAL_MIN` is dead configuration.** Defined at `config.py:177`,
-  read by nothing, while `sync.py:2701` hardcodes 23 minutes.
-- **The dashboard says 15 minutes.** `templates/index.html:1041` and
-  `templates/index.html:1415`.
+  less than the destructive one.
+- **The occurrence pass cannot identify public-calendar events.**
+  `get_calendar_instances` does not `$expand` extended properties, so
+  `_is_synced_event(inst)` returns False for every public copy and both loops
+  of `_handle_cancelled_occurrences` leave them alone. Fails closed. The same
+  function still returns `None` on a non-200 first page and a partial list on
+  a failed later page; its two callers swallow that.
+- **Synced copies carry no location.** `location` is not in the main
+  `$select`, so every copy this service writes has an empty location, the
+  website calendar shows no room, and the bulletin page prints none. The same
+  omission means two distinct events with the same subject and start collapse
+  to one (`source_signatures_seen`). Fixing it means adding `location` to the
+  `$select` and dropping it from the signature in the same change, or every
+  existing copy mismatches at once.
+- **`/dry-run/enable`, `/dry-run/disable` and `/restart-scheduler` are GET
+  routes that change state**, and dry-run mode is not shown on the dashboard,
+  so a sync that writes nothing still looks healthy.
+- **`tests/utils/cleanup_tools.py` deletes by subject and date with no
+  synced-event gate.** `docs/guides/deployment.md` still points at it. Do not
+  run it on a calendar that holds hand-entered events.
+- **Writer retries never fire.** The write paths return False on 429 and 5xx
+  instead of raising, so `retry_with_backoff` sees a normal return; the retry
+  helper also ignores `Retry-After`.
+- **The scheduler's own recent-syncs list marks every attempt successful**
+  (`_scheduled_sync_with_health_check`), separate from the history the
+  dashboard reads, which is now honest.
+- **`SYNC_INTERVAL_MIN` is dead configuration.** Defined in `config.py`, read
+  by nothing, while `sync.py` hardcodes 23 minutes. **The dashboard says 15
+  minutes** (`templates/index.html`).
+- **`SYNC_LOOKAHEAD_DAYS` above 365 is ignored**: the reader's future cutoff
+  is hardcoded to one year.
+- **Boolean settings accept only the literal `true`.** `1`, `yes` or `on`
+  silently turn a safety flag off.
+- **The Python runtime is unpinned on Render.** The code needs 3.11 or newer
+  (`fromisoformat` on Graph's seven-digit fractional seconds);
+  `docs/guides/deployment.md` promises 3.9 and drifts from the live service in
+  its `REDIRECT_URI` path and timeout values too.
+- **`/health/detailed` is public and includes the last sync's error text.**
 - **`preview_sync()` covers the primary pair only**, while executing a sync
   writes to every pair. The preview heading says so, but the mismatch remains.
-- **Two genuinely distinct events with the same subject, start and location
-  collapse to one.** `location` is not in the main `$select`, so the signature
-  cannot separate two rooms at the same hour, and `source_signatures_seen`
-  (`sync.py:2074-2091`) skips the second. Harmless for deletion now that the
-  id and synced guards are in place, but only one of the two is created. Fixing
-  it means adding `location` to both sides at once, never one.
 - `/bulletin-events` and `/event-search` read the primary target calendar only,
   so a second calendar's events do not appear in either.
 - `/admin/migrate-extended-properties` migrates the primary pair only, and has
   never been run to completion.
 - Sync history stores per-pair detail inside each entry, but `/history` exposes
   aggregates only, so per-calendar history is not visible in the UI.
-- `/debug/current-sync-status` references `config.PUBLIC_CALENDAR`
-  (`app.py:2248`), which does not exist in `config.py`, and always returns 500.
+- `/debug/current-sync-status` references `config.PUBLIC_CALENDAR`, which does
+  not exist in `config.py`, and always returns 500.
 - Both destructive routes are reachable by any authenticated dashboard user;
   the typed DELETE confirmation is a client-side gate only.
-- `app.py` (4170 lines) and `sync.py` (2833 lines) are past the size where a
-  single file is workable. Splitting them is deferred, not dismissed.
+- `app.py` and `sync.py` are past the size where a single file is workable.
+  Splitting them is deferred, not dismissed.
 
 ---
 

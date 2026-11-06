@@ -1492,9 +1492,13 @@
             // Show events to add
             if (preview.add_count > 0) {
                 const addList = document.getElementById('add-list');
-                addList.innerHTML = preview.events_to_add.map(event => 
-                    `<li><strong>${event.subject}</strong> - ${formatDate(event.start)}${event.location ? ` (${event.location.displayName || event.location})` : ''}</li>`
-                ).join('');
+                addList.innerHTML = preview.events_to_add.map(event => {
+                    // Graph often sends location as {} (truthy, no displayName),
+                    // so only show it when there is an actual place name
+                    const loc = event.location && event.location.displayName;
+                    const where = (typeof loc === 'string' && loc.trim() !== '') ? ` (${escapeHtml(loc)})` : '';
+                    return `<li><strong>${escapeHtml(event.subject)}</strong> - ${escapeHtml(formatDate(event.start, event.isAllDay))}${where}</li>`;
+                }).join('');
                 document.getElementById('events-to-add').style.display = 'block';
             }
             
@@ -1502,7 +1506,7 @@
             if (preview.update_count > 0) {
                 const updateList = document.getElementById('update-list');
                 updateList.innerHTML = preview.events_to_update.map(event => 
-                    `<li><strong>${event.subject}</strong> - ${formatDate(event.start)}<br><small style="color: #666;">Changes: ${event.changes.join(', ')}</small></li>`
+                    `<li><strong>${escapeHtml(event.subject)}</strong> - ${escapeHtml(formatDate(event.start, event.isAllDay))}<br><small style="color: #666;">Changes: ${(event.changes || []).map(escapeHtml).join(', ')}</small></li>`
                 ).join('');
                 document.getElementById('events-to-update').style.display = 'block';
             }
@@ -1511,7 +1515,7 @@
             if (preview.delete_count > 0) {
                 const deleteList = document.getElementById('delete-list');
                 deleteList.innerHTML = preview.events_to_delete.map(event => 
-                    `<li><strong>${event.subject}</strong> - ${formatDate(event.start)}</li>`
+                    `<li><strong>${escapeHtml(event.subject)}</strong> - ${escapeHtml(formatDate(event.start, event.isAllDay))}</li>`
                 ).join('');
                 document.getElementById('events-to-delete').style.display = 'block';
             }
@@ -1521,8 +1525,19 @@
             resultsDiv.scrollIntoView({ behavior: 'smooth' });
         }
 
-        function formatDate(dateObj) {
+        function formatDate(dateObj, isAllDay) {
             if (!dateObj || !dateObj.dateTime) return 'Unknown';
+
+            // All-day copies sit at 00:00 UTC, which is the previous evening
+            // in Central. Show the calendar date as written, no zone shift.
+            // Entries without the flag are treated as timed.
+            if (isAllDay === true) {
+                const day = String(dateObj.dateTime).slice(0, 10);
+                const dayDate = new Date(day + 'T12:00:00Z');
+                if (!isNaN(dayDate.getTime())) {
+                    return dayDate.toLocaleDateString('en-US', { timeZone: 'UTC', dateStyle: 'medium' }) + ' (all day)';
+                }
+            }
 
             // Graph returns a naive timestamp plus a SEPARATE timeZone field,
             // almost always "UTC". Handing that string straight to new Date()

@@ -66,8 +66,12 @@ class DateTimeUtils:
         
         try:
             dt = datetime.fromisoformat(dt_str)
-            if tz_str != 'UTC':
-                tz = pytz.timezone(tz_str)
+            # Always hand back an aware value. A naive one cannot be compared
+            # against the aware cutoffs the callers use, and the comparison
+            # error was being swallowed, which made the date-range validator
+            # pass everything.
+            if dt.tzinfo is None:
+                tz = pytz.UTC if tz_str == 'UTC' else pytz.timezone(tz_str)
                 dt = tz.localize(dt)
             return dt
         except Exception as e:

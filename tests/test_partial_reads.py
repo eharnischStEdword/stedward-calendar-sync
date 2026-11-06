@@ -135,6 +135,76 @@ class TestAFailedPageIsNotAShortCalendar:
         )
 
 
+class TestAnAuthFailureIsNotAnEmptyCalendar:
+    """The two returns the failed-page fix left behind. Neither raised, so the
+    retry decorator never fired and _sync_pair's `or []` read the None as a
+    week with nothing on it: deletions planned on a source miss, duplicates
+    created on a target miss."""
+
+    def test_a_401_that_cannot_be_refreshed_raises(self, monkeypatch, window):
+        start, end = window
+        reader, _ = reader_over(monkeypatch, [FakeResponse(401, text='Unauthorized')])
+
+        with pytest.raises(Exception):
+            reader.get_calendar_events('cal-id', start=start, end=end)
+
+    def test_a_401_that_cannot_be_refreshed_raises_mid_pagination(self, monkeypatch, window):
+        """Page 1 arrives, page 2 is a 401 and the refresh fails. The events
+        from page 1 must not come back as the whole calendar."""
+        start, end = window
+        page_one = FakeResponse(200, {
+            'value': [event('Mass')],
+            '@odata.nextLink': 'https://graph.microsoft.com/v1.0/nextpage'
+        })
+        reader, _ = reader_over(monkeypatch, [page_one, FakeResponse(401, text='Unauthorized')])
+
+        with pytest.raises(Exception):
+            reader.get_calendar_events('cal-id', start=start, end=end)
+
+    def test_no_headers_at_all_raises_before_any_request(self, monkeypatch, window):
+        """get_headers() returns None when the token refresh itself failed."""
+        start, end = window
+
+        class NoHeadersAuth(FakeAuth):
+            def get_headers(self):
+                return None
+
+        def must_not_be_called(*args, **kwargs):
+            raise AssertionError('no request should go out without headers')
+
+        monkeypatch.setattr(calendar_ops.requests, 'get', must_not_be_called)
+        reader = CalendarReader(auth_manager=NoHeadersAuth())
+
+        with pytest.raises(Exception, match='Authentication failed'):
+            reader.get_calendar_events('cal-id', start=start, end=end)
+
+    def test_instances_read_with_no_headers_raises(self, monkeypatch):
+        """get_calendar_instances had the same pair of None returns."""
+
+        class NoHeadersAuth(FakeAuth):
+            def get_headers(self):
+                return None
+
+        reader = CalendarReader(auth_manager=NoHeadersAuth())
+
+        with pytest.raises(Exception, match='Authentication failed'):
+            reader.get_calendar_instances('cal-id', '2026-09-01T00:00:00Z', '2026-09-08T00:00:00Z')
+
+    def test_instances_401_that_cannot_be_refreshed_raises(self, monkeypatch):
+        reader, _ = reader_over(monkeypatch, [FakeResponse(401, text='Unauthorized')])
+
+        with pytest.raises(Exception, match='Authentication failed'):
+            reader.get_calendar_instances('cal-id', '2026-09-01T00:00:00Z', '2026-09-08T00:00:00Z')
+
+    def test_an_empty_week_from_get_public_events_is_a_list_not_none(self, monkeypatch, window):
+        """Downstream, get_public_events turned an empty read into None, the
+        same value the failed reads used. Empty is now spelled []."""
+        start, end = window
+        reader, _ = reader_over(monkeypatch, [FakeResponse(200, {'value': []})])
+
+        assert reader.get_public_events('cal-id', start=start, end=end) == []
+
+
 class TestAnEmptyCalendarIsStillAllowedToBeEmpty:
     """The correction must not swing the other way: a parish calendar with
     nothing on it is a legitimate answer, not an error."""

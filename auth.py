@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 import urllib.parse
 from datetime import datetime, timedelta
@@ -22,12 +23,20 @@ from utils import DateTimeUtils, RetryUtils, structured_logger
 
 logger = logging.getLogger(__name__)
 
+# One lock for every read, write and refresh of the token cache. Every
+# MicrosoftAuth instance in the process shares the same file, and the scheduler
+# thread and the Flask thread both refresh, so the lock is module-level and
+# re-entrant (refresh -> save, refresh -> clear).
+_TOKEN_LOCK = threading.RLock()
+
 class MicrosoftAuth:
     """Microsoft OAuth authentication handler"""
     
     def __init__(self):
         # Set up persistent token storage on Render disk
         self.token_file = '/data/token_cache.json'
+        self.env_access_token = None
+        self.env_refresh_token = None
 
         # Load persistent tokens (disk first, env-var fallback for bootstrap)
         self._ensure_tokens_loaded()
@@ -35,52 +44,65 @@ class MicrosoftAuth:
 
     def _ensure_tokens_loaded(self):
         """Load the persistent sync token from disk, falling back to the
-        ACCESS_TOKEN / REFRESH_TOKEN env vars when there is no disk cache yet
-        (first boot after a deploy). Safe to call repeatedly: it keeps multiple
-        gunicorn workers converged on whatever token was last saved to disk.
+        ACCESS_TOKEN / REFRESH_TOKEN env vars only when there is no disk cache
+        at all (first boot after a deploy). A cache file that exists but could
+        not be read keeps whatever is already in memory: that is a transient
+        read failure, not a reason to switch identity to the bootstrap token.
+        Safe to call repeatedly: it keeps multiple gunicorn workers converged
+        on whatever token was last saved to disk.
         """
-        self._load_tokens_from_disk()
-        if not self.env_refresh_token:
-            self.env_access_token = os.environ.get('ACCESS_TOKEN')
-            self.env_refresh_token = os.environ.get('REFRESH_TOKEN')
-    
+        with _TOKEN_LOCK:
+            self._load_tokens_from_disk()
+            if not self.env_refresh_token and not os.path.exists(self.token_file):
+                self.env_access_token = os.environ.get('ACCESS_TOKEN')
+                self.env_refresh_token = os.environ.get('REFRESH_TOKEN')
+
     def _load_tokens_from_disk(self):
-        """Load tokens from persistent disk storage"""
-        try:
-            if os.path.exists(self.token_file):
-                with open(self.token_file, 'r') as f:
-                    cached = json.load(f)
-                self.env_access_token = cached.get('access_token')
-                self.env_refresh_token = cached.get('refresh_token')
-                
-                # Also load expiration time to environment
-                expires_at = cached.get('expires_at')
-                if expires_at:
-                    os.environ['TOKEN_EXPIRES_AT'] = expires_at
-                
-                logger.info("✅ Loaded tokens from persistent storage")
-            else:
-                self.env_access_token = None
-                self.env_refresh_token = None
-                logger.info("No persistent token cache found")
-        except Exception as e:
-            logger.warning(f"Failed to load tokens from disk: {e}")
-            self.env_access_token = None
-            self.env_refresh_token = None
-    
+        """Load tokens from persistent disk storage.
+
+        Only a successfully parsed file replaces the tokens in memory. A missing
+        or unreadable file leaves memory untouched, so a refresh whose disk save
+        failed, or a read that lands mid-write, does not discard a live token.
+        """
+        with _TOKEN_LOCK:
+            try:
+                if os.path.exists(self.token_file):
+                    with open(self.token_file, 'r') as f:
+                        cached = json.load(f)
+                    self.env_access_token = cached.get('access_token')
+                    self.env_refresh_token = cached.get('refresh_token')
+
+                    # Also load expiration time to environment
+                    expires_at = cached.get('expires_at')
+                    if expires_at:
+                        os.environ['TOKEN_EXPIRES_AT'] = expires_at
+
+                    logger.info("✅ Loaded tokens from persistent storage")
+                else:
+                    logger.info("No persistent token cache found")
+            except Exception as e:
+                logger.warning(f"Failed to load tokens from disk: {e}")
+
     def _save_tokens_to_disk(self, access_token, refresh_token, expires_at):
-        """Save tokens to persistent disk storage"""
-        try:
-            token_data = {
-                'access_token': access_token,
-                'refresh_token': refresh_token,
-                'expires_at': expires_at.isoformat()
-            }
-            with open(self.token_file, 'w') as f:
-                json.dump(token_data, f)
-            logger.info("✅ Tokens saved to persistent storage")
-        except Exception as e:
-            logger.error(f"Failed to save tokens to disk: {e}")
+        """Save tokens to persistent disk storage.
+
+        Written to a temp file and renamed into place so a reader never sees a
+        half-written cache and a crash mid-write leaves the old file intact.
+        """
+        with _TOKEN_LOCK:
+            try:
+                token_data = {
+                    'access_token': access_token,
+                    'refresh_token': refresh_token,
+                    'expires_at': expires_at.isoformat()
+                }
+                tmp_file = self.token_file + '.tmp'
+                with open(tmp_file, 'w') as f:
+                    json.dump(token_data, f)
+                os.replace(tmp_file, self.token_file)
+                logger.info("✅ Tokens saved to persistent storage")
+            except Exception as e:
+                logger.error(f"Failed to save tokens to disk: {e}")
     
     def _is_in_request_context(self):
         """Check if we're in a Flask request context"""
@@ -170,6 +192,10 @@ class MicrosoftAuth:
     
     def _refresh_persistent_token(self) -> bool:
         """Refresh the persistent (env/disk) token only. Used by get_service_headers()."""
+        with _TOKEN_LOCK:
+            return self._refresh_persistent_token_locked()
+
+    def _refresh_persistent_token_locked(self) -> bool:
         refresh_token = self.env_refresh_token
         if not refresh_token:
             logger.warning("No persistent refresh token available for service headers")
@@ -221,7 +247,15 @@ class MicrosoftAuth:
         return None
 
     def refresh_access_token(self):
-        """Refresh the access token using the persistent refresh token."""
+        """Refresh the access token using the persistent refresh token.
+
+        Serialized on the token lock so the scheduler thread and a request
+        thread cannot refresh and write the cache at the same time.
+        """
+        with _TOKEN_LOCK:
+            return self._refresh_access_token_locked()
+
+    def _refresh_access_token_locked(self):
         self._ensure_tokens_loaded()
         refresh_token = self.env_refresh_token
 
@@ -281,7 +315,14 @@ class MicrosoftAuth:
             return False
     
     def exchange_code_for_token(self, auth_code):
-        """Exchange authorization code for tokens"""
+        """Exchange an authorization code for tokens.
+
+        Returns the token dict Microsoft sent back, or None. It stores nothing:
+        not in memory, on disk or in the session. The caller decides whether
+        this sign-in is allowed to become the sync identity and then calls
+        store_tokens(); a rejected sign-in must never touch the persistent
+        credential the scheduler runs on.
+        """
         token_url = f"https://login.microsoftonline.com/{config.TENANT_ID}/oauth2/v2.0/token"
         
         data = {
@@ -297,59 +338,76 @@ class MicrosoftAuth:
             response = requests.post(token_url, data=data, timeout=30)
             if response.status_code == 200:
                 tokens = response.json()
-                
-                # Store ONLY a small auth marker in the signed session cookie.
-                # The full tokens are large; putting them in the cookie pushed it
-                # past the ~4 KB browser limit, so the browser silently dropped
-                # the cookie and the dashboard login looped. The real tokens live
-                # in env + disk (below), the app's single sync identity.
-                session['authenticated'] = True
-                expires_in = tokens.get('expires_in', 3600)
-                expires_at = DateTimeUtils.get_central_time() + timedelta(seconds=expires_in - 300)
-
-                # Also update environment variables + persistent storage
-                self.env_access_token = tokens.get('access_token')
-                self.env_refresh_token = tokens.get('refresh_token')
-                
-                # Store expiration time in environment for background threads
-                os.environ['TOKEN_EXPIRES_AT'] = expires_at.isoformat()
-                
-                # Save to persistent storage instead of logging full tokens
-                self._save_tokens_to_disk(tokens.get('access_token'), tokens.get('refresh_token'), expires_at)
-                
-                # Log a truncated version for debugging
-                logger.info("="*60)
-                logger.info("AUTHENTICATION SUCCESSFUL - Tokens saved to persistent storage")
-                logger.info(f"ACCESS_TOKEN=<redacted>")
-                logger.info(f"REFRESH_TOKEN=<redacted>")
-                logger.info(f"TOKEN_EXPIRES_AT={expires_at.isoformat()}")
-                logger.info("="*60)
-                
-                logger.info("Authentication successful")
-                return True
-            return False
+                if not isinstance(tokens, dict) or not tokens.get('access_token'):
+                    logger.error("Token exchange returned no access token")
+                    return None
+                return tokens
+            logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
+            return None
         except Exception as e:
             logger.error(f"Token exchange failed: {e}")
-            return False
-    
+            return None
+
+    def store_tokens(self, tokens):
+        """Persist an allowed sign-in as the app's single sync identity.
+
+        Called only after the caller has accepted the user (allow-list check).
+        Writes memory, the disk cache and the session marker.
+        """
+        with _TOKEN_LOCK:
+            # Store ONLY a small auth marker in the signed session cookie.
+            # The full tokens are large; putting them in the cookie pushed it
+            # past the ~4 KB browser limit, so the browser silently dropped
+            # the cookie and the dashboard login looped. The real tokens live
+            # in env + disk (below), the app's single sync identity.
+            if self._is_in_request_context():
+                session['authenticated'] = True
+            expires_in = tokens.get('expires_in', 3600)
+            expires_at = DateTimeUtils.get_central_time() + timedelta(seconds=expires_in - 300)
+
+            # Also update environment variables + persistent storage
+            self.env_access_token = tokens.get('access_token')
+            self.env_refresh_token = tokens.get('refresh_token')
+
+            # Store expiration time in environment for background threads
+            os.environ['TOKEN_EXPIRES_AT'] = expires_at.isoformat()
+
+            # Save to persistent storage instead of logging full tokens
+            self._save_tokens_to_disk(tokens.get('access_token'), tokens.get('refresh_token'), expires_at)
+
+            # Log a truncated version for debugging
+            logger.info("="*60)
+            logger.info("AUTHENTICATION SUCCESSFUL - Tokens saved to persistent storage")
+            logger.info(f"ACCESS_TOKEN=<redacted>")
+            logger.info(f"REFRESH_TOKEN=<redacted>")
+            logger.info(f"TOKEN_EXPIRES_AT={expires_at.isoformat()}")
+            logger.info("="*60)
+
+            logger.info("Authentication successful")
+
     def clear_tokens(self):
-        """Clear all tokens"""
+        """Discard the persistent sync credential (memory and disk).
+
+        This is the invalid_grant path: Microsoft has said the refresh token
+        is dead. A browser logout must NOT call this; it only ends a session.
+        """
         logger.info("Clearing authentication tokens")
         if self._is_in_request_context():
             session.pop('authenticated', None)
             session.pop('access_token', None)
             session.pop('refresh_token', None)
             session.pop('token_expires_at', None)
-        
-        # Clear persistent storage
-        try:
-            if os.path.exists(self.token_file):
-                os.remove(self.token_file)
-                logger.info("Cleared persistent token cache")
-        except Exception as e:
-            logger.warning(f"Failed to clear persistent token cache: {e}")
-        
-        # Don't clear environment tokens as they're still needed for scheduler
+
+        with _TOKEN_LOCK:
+            self.env_access_token = None
+            self.env_refresh_token = None
+            # Clear persistent storage
+            try:
+                if os.path.exists(self.token_file):
+                    os.remove(self.token_file)
+                    logger.info("Cleared persistent token cache")
+            except Exception as e:
+                logger.warning(f"Failed to clear persistent token cache: {e}")
 
 class RequestSigner:
     """
@@ -711,7 +769,11 @@ class AuthManager:
     
     def handle_callback(self, auth_code: str) -> bool:
         """Handle OAuth callback"""
-        return self.microsoft_auth.exchange_code_for_token(auth_code)
+        tokens = self.microsoft_auth.exchange_code_for_token(auth_code)
+        if not tokens:
+            return False
+        self.microsoft_auth.store_tokens(tokens)
+        return True
     
     def get_headers(self) -> Optional[Dict[str, str]]:
         """Get authenticated headers for API requests"""

@@ -834,7 +834,11 @@ class SyncEngine:
         self.auth = auth_manager
         self.reader = CalendarReader(auth_manager)
         self.writer = CalendarWriter(auth_manager)
-        
+        # Lets the writer's MASTER_CALENDAR_PROTECTION guard resolve the
+        # master calendar's Graph id through the same cached lookup the pair
+        # already made, instead of a lookup of its own.
+        self.writer.reader = self.reader
+
         # Sync state
         self.sync_lock = Lock()
         self.last_sync_time = None
@@ -869,6 +873,15 @@ class SyncEngine:
         Returns dict with events to add/update/delete.
         """
         try:
+            # The writer is shared with the background sync, and the copy_body
+            # assignment below would flip it under a pair that is mid-write,
+            # stripping descriptions from whatever that pair creates next.
+            # Refuse before touching anything; the route reports this as 409.
+            with self.sync_lock:
+                busy = self.sync_in_progress
+            if busy:
+                raise Exception("Sync in progress, try again shortly")
+
             # Get calendar IDs
             source_id = self.reader.find_calendar_id(config.SOURCE_CALENDAR)
             target_id = self.reader.find_calendar_id(config.TARGET_CALENDAR)
@@ -951,6 +964,7 @@ class SyncEngine:
                 formatted_to_add.append({
                     'subject': event.get('subject', 'No Subject'),
                     'start': event.get('start', {}),
+                    'isAllDay': event.get('isAllDay', False),
                     'location': event.get('location', {}),
                     'type': event.get('type', 'singleInstance'),
                     'signature': self._create_event_signature(event)
@@ -961,6 +975,7 @@ class SyncEngine:
                 formatted_to_update.append({
                     'subject': source_event.get('subject', 'No Subject'),
                     'start': source_event.get('start', {}),
+                    'isAllDay': source_event.get('isAllDay', False),
                     'location': source_event.get('location', {}),
                     'signature': self._create_event_signature(source_event),
                     'changes': self._get_change_summary(source_event, target_event)
@@ -971,6 +986,7 @@ class SyncEngine:
                 formatted_to_delete.append({
                     'subject': event.get('subject', 'No Subject'),
                     'start': event.get('start', {}),
+                    'isAllDay': event.get('isAllDay', False),
                     'signature': self._create_event_signature(event)
                 })
             
@@ -1647,6 +1663,7 @@ class SyncEngine:
             'actually_updated': 0,
             'actually_deleted': 0,
             'failed_updates': 0,
+            'left_alone_unsynced': 0,
             'events_to_update': [],
             'events_to_delete': [],
             'unmatched_events': []
@@ -1687,14 +1704,25 @@ class SyncEngine:
             else:
                 # No match - event exists in public but not in source
                 stats['no_match_found'] += 1
+
+                # Deletions only ever touch events this service created. An
+                # unmatched event with no sync marker is something a person
+                # entered on the target calendar by hand; report it, never
+                # queue it.
+                if not self._is_synced_event(target_event):
+                    stats['left_alone_unsynced'] += 1
+                    logger.info(f"ℹ️ NO MATCH, left alone (not created by sync): {subject}")
+                    logger.info(f"   Target ID: {target_id}")
+                    continue
+
                 stats['would_delete'] += 1
-                
+
                 stats['events_to_delete'].append({
                     'target_id': target_id,
                     'subject': subject,
                     'signature': sig
                 })
-                
+
                 logger.warning(f"⚠️ NO MATCH: {subject} (signature: {sig})")
                 logger.warning(f"   This event exists in public calendar but NOT in source")
                 logger.warning(f"   Target ID: {target_id}")
@@ -1707,6 +1735,7 @@ class SyncEngine:
         logger.info(f"Already have extended properties: {stats['already_have_extended_props']}")
         logger.info(f"Matched by signature: {stats['matched_by_signature']}")
         logger.info(f"No match found (orphaned): {stats['no_match_found']}")
+        logger.info(f"Of those, left alone as not created by sync: {stats['left_alone_unsynced']}")
         logger.info(f"")
         logger.info(f"WOULD UPDATE with sourceEventId: {stats['would_update']}")
         logger.info(f"WOULD DELETE (orphaned): {stats['would_delete']}")
@@ -2249,9 +2278,12 @@ class SyncEngine:
         # If we get here, there are changes - do detailed comparison using prepared data
         logger.info(f"🔍 Checking if '{subject}' needs update (modified times differ)")
         
-        # Compare normalized subject
-        prepared_subject = prepared_source_data.get('subject', '').strip().lower()
-        target_subject = target_event.get('subject', '').strip().lower()
+        # Compare subject exactly, apart from surrounding whitespace. The
+        # signature lowercases, so a case-only retitle on the source still
+        # lands here instead of in delete-plus-add; lowercasing here too meant
+        # it matched and the old capitalization stayed on the target forever.
+        prepared_subject = prepared_source_data.get('subject', '').strip()
+        target_subject = target_event.get('subject', '').strip()
         
         if prepared_subject != target_subject:
             logger.info(f"  📝 Subject changed: '{prepared_subject}' != '{target_subject}'")
@@ -2416,10 +2448,24 @@ class SyncEngine:
         # Count all-day events processed
         all_day_added = sum(1 for event in to_add if event.get('isAllDay', False))
         all_day_updated = sum(1 for source_event, _ in to_update if source_event.get('isAllDay', False))
-        
-        return {
-            'success': True,
-            'message': f'Sync complete: {successful}/{total} operations successful',
+
+        # A run that planned writes and landed none of them is a failed sync,
+        # not a successful one with a sad message: _do_sync advances
+        # last_sync_time and the history records success from this flag, so
+        # a throttled hour used to read as "calendars up to date". A run with
+        # nothing to do is still a success. Partial failures stay a success
+        # with the counts visible, because one permanently malformed source
+        # event must not mark every run failed and freeze the freshness clock.
+        success = successful > 0 or total == 0
+        if success:
+            message = f'Sync complete: {successful}/{total} operations successful'
+        else:
+            message = (f'Sync failed: {successful}/{total} operations successful, '
+                       f'{failed} failed')
+
+        result = {
+            'success': success,
+            'message': message,
             'successful_operations': successful,
             'failed_operations': failed,
             'added': operation_details['add_success'],
@@ -2433,7 +2479,12 @@ class SyncEngine:
                 'total_processed': all_day_added + all_day_updated
             }
         }
-    
+        if not success:
+            # Both keys, as _pair_failure does: the dashboard reads one and
+            # the debug endpoints and history read the other.
+            result['error'] = message
+        return result
+
     def _handle_cancelled_occurrences(self, source_id: str, target_id: str) -> int:
         """Delete occurrences that are cancelled on the master calendar."""
         try:
@@ -2489,6 +2540,14 @@ class SyncEngine:
             for inst in target_instances:
                 if inst.get('isCancelled', False):
                     # Already cancelled; skip
+                    continue
+
+                # Same gate as the missing-instance loop below. A series staff
+                # typed directly into a target calendar can share a subject and
+                # slot with a master series, and a cancellation on the master
+                # must not reach into it.
+                if not self._is_synced_event(inst):
+                    logger.debug(f"  Leaving hand-created occurrence alone: {inst.get('subject')}")
                     continue
 
                 key = _make_key(inst)
@@ -2666,54 +2725,79 @@ class SyncScheduler:
         self.scheduler_lock = Lock()
         self.scheduler_running = False
         self.scheduler_thread = None
+        # Set by stop() to wake the loop out of its sleep. One per thread:
+        # start() hands each new thread its own, so an old thread that is
+        # still finishing a sync can never be revived by a later start().
+        self._stop_event = threading.Event()
         # ADD THESE LINES:
         self.last_scheduled_sync = None
         self.next_scheduled_sync = None
         self.scheduled_sync_count = 0
         self.scheduled_sync_history = []  # Keep last 10 scheduled syncs
-    
+
     def start(self):
         """Start the scheduler"""
         with self.scheduler_lock:
-            if self.scheduler_thread is None or not self.scheduler_thread.is_alive():
-                logger.info(f"Starting scheduler thread at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}...")
-                self.scheduler_running = True
-                self.scheduler_thread = threading.Thread(target=self._run_scheduler, daemon=True)
-                self.scheduler_thread.start()
-            else:
+            old_thread = self.scheduler_thread
+            if self.scheduler_running and old_thread is not None and old_thread.is_alive():
                 logger.info("Scheduler already running")
-    
+                return
+
+            # Stopped, but the old loop may still be inside its sleep or
+            # mid-sync. It used to be treated as "already running", which
+            # left the scheduler dead after a pause/resume inside one
+            # minute. Wake it, give it a moment, then start a fresh thread
+            # regardless; the engine's own sync_in_progress guard keeps two
+            # loops from syncing at once.
+            if old_thread is not None and old_thread.is_alive():
+                self._stop_event.set()
+                old_thread.join(timeout=5)
+
+            logger.info(f"Starting scheduler thread at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}...")
+            self._stop_event = threading.Event()
+            self.scheduler_running = True
+            self.scheduler_thread = threading.Thread(
+                target=self._run_scheduler, args=(self._stop_event,), daemon=True
+            )
+            self.scheduler_thread.start()
+
     def stop(self):
         """Stop the scheduler"""
         with self.scheduler_lock:
             self.scheduler_running = False
-        
+            self._stop_event.set()
+
         logger.info(f"Stopping scheduler at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}...")
-    
+
     def is_running(self):
         """Check if scheduler is running"""
         with self.scheduler_lock:
             return self.scheduler_running and self.scheduler_thread and self.scheduler_thread.is_alive()
-    
-    def _run_scheduler(self):
+
+    def _run_scheduler(self, stop_event=None):
         """Run the scheduler loop"""
-        # Schedule sync to run every 23 minutes with built-in health check
+        if stop_event is None:
+            stop_event = self._stop_event
+
+        # Schedule sync to run every 23 minutes with built-in health check.
+        # The registry is module-global and nothing ever removed from it, so
+        # every pause/resume and /restart-scheduler added one more job and
+        # each tick ran one more full sync. Clear first: this loop is the
+        # only thing that should be registered.
+        schedule.clear()
         schedule.every(23).minutes.do(self._scheduled_sync_with_health_check)
-        
+
         logger.info(f"Scheduler started - sync with health check every 23 minutes (CT) - started at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}")
-        
-        # Add startup delay to prevent immediate sync after deployment
+
+        # Add startup delay to prevent immediate sync after deployment.
+        # Event waits instead of sleeps so stop() ends them at once.
         logger.info("⏳ Waiting 2 minutes before first scheduled sync to allow deployment to stabilize...")
-        time.sleep(120)  # Wait 2 minutes before first sync
-        
-        while True:
-            with self.scheduler_lock:
-                if not self.scheduler_running:
-                    break
-            
+        stopped = stop_event.wait(120)  # Wait 2 minutes before first sync
+
+        while not stopped:
             schedule.run_pending()
-            time.sleep(60)  # Check every minute
-        
+            stopped = stop_event.wait(60)  # Check every minute
+
         logger.info(f"Scheduler stopped at {DateTimeUtils.format_central_time(DateTimeUtils.get_central_time())}")
     
     def get_scheduler_status(self):
