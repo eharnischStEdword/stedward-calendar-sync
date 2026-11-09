@@ -863,13 +863,11 @@ def bulletin_day_header(day: date) -> str:
     """
     Heading for one day of the weekly bulletin.
 
-    Sunday is the bulletin's own date, so it reads "Sunday at St. Edward" with
-    no date (the range line above already starts with it). Every other day
-    reads like "Monday, November 3".
+    Sunday reads "Sunday at St. Edward, November 2"; every other day reads
+    like "Monday, November 3".
     """
-    if day.weekday() == 6:
-        return "Sunday at St. Edward"
-    return f"{day:%A}, {bulletin_date(day)}"
+    name = "Sunday at St. Edward" if day.weekday() == 6 else f"{day:%A}"
+    return f"{name}, {bulletin_date(day)}"
 
 # Export main utilities
 __all__ = [

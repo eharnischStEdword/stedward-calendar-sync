@@ -6,7 +6,7 @@
 Tests for the text the weekly bulletin page prints and copies.
 
 Eric asked on 2026-11-09 for three things: the Sunday heading reads
-"Sunday at St. Edward", the "PARISH EVENTS" title line is gone (he deleted it
+"Sunday at St. Edward, November 8", the "PARISH EVENTS" title line is gone (he deleted it
 by hand every week), and day numbers carry no leading zero ("November 3",
 never "November 03"). The template prints everything twice, once for display
 and once in the hidden block the Copy button reads, so the render test checks
@@ -41,7 +41,7 @@ class TestBulletinDate:
 @pytest.mark.unit
 class TestBulletinDayHeader:
     def test_sunday_reads_sunday_at_st_edward(self):
-        assert bulletin_day_header(date(2026, 11, 8)) == "Sunday at St. Edward"
+        assert bulletin_day_header(date(2026, 11, 8)) == "Sunday at St. Edward, November 8"
 
     def test_other_days_carry_the_date(self):
         assert bulletin_day_header(date(2026, 11, 9)) == "Monday, November 9"
@@ -88,7 +88,7 @@ class TestBulletinTemplate:
 
     def test_sunday_header_in_display_and_plaintext(self):
         html = _render_week()
-        assert html.count("Sunday at St. Edward") == 2
+        assert html.count("Sunday at St. Edward, November 1") == 2
         assert "Sunday, November" not in html
 
     def test_no_leading_zero_anywhere(self):
