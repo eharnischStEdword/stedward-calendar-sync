@@ -3562,7 +3562,7 @@ def bulletin_events():
             raise
         
         # Process events for bulletin
-        from utils import normalize_location, is_omitted_from_bulletin
+        from utils import normalize_location, is_omitted_from_bulletin, bulletin_date, bulletin_day_header
 
         def graph_datetime_to_utc(dt_dict):
             """
@@ -3758,7 +3758,8 @@ def bulletin_events():
             day_info = {
                 'date': current_date,
                 'day_name': current_date.strftime('%A'),
-                'date_str': current_date.strftime('%B %d'),
+                'date_str': bulletin_date(current_date),
+                'header': bulletin_day_header(current_date),
                 'events': day_events
             }
             formatted_days.append(day_info)
@@ -3778,8 +3779,8 @@ def bulletin_events():
         
         # Render the bulletin template — always use full week boundaries for the date range
         return render_template('bulletin_events.html',
-                             start_date=start_date.strftime('%B %d'),
-                             end_date=end_date.strftime('%B %d, %Y'),
+                             start_date=bulletin_date(start_date),
+                             end_date=bulletin_date(end_date, with_year=True),
                              days=formatted_days,
                              week_label=week_label,
                              week_param=week_param,

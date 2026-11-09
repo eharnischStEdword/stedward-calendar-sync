@@ -188,13 +188,12 @@
         </div>
 
         <div class="bulletin-content" id="bulletin-display">
-            <div class="bulletin-title">PARISH EVENTS</div>
             <div class="bulletin-title">{{ start_date }} - {{ end_date }}</div>
             <br>
             
             {% for day in days %}
             <div class="day-section">
-                <div class="day-header">{{ day.day_name }}, {{ day.date_str }}</div>
+                <div class="day-header">{{ day.header }}</div>
                 {% if day.events %}
                     {% for event in day.events %}
                     <div class="event-item">
@@ -232,10 +231,9 @@
     </div>
 
     <!-- Plain text content for copying -->
-    <div id="plaintext-content">PARISH EVENTS
-{{ start_date }} - {{ end_date }}
+    <div id="plaintext-content">{{ start_date }} - {{ end_date }}
 
-{% for day in days %}{{ day.day_name }}, {{ day.date_str }}
+{% for day in days %}{{ day.header }}
 {% if day.events %}{% for event in day.events %}• {% if event.is_all_day %}All Day{% else %}{{ event.start.strftime('%-I:%M %p') }}{% endif %} - {{ event.subject }}{% if event.location %} ({{ event.location }}){% endif %}
 {% endfor %}{% else %}• No events scheduled
 {% endif %}

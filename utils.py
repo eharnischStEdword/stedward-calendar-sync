@@ -13,7 +13,7 @@ import random
 import time
 import threading
 import subprocess
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from functools import wraps
 from typing import Dict, List, Optional, Any, Callable
 from zoneinfo import ZoneInfo
@@ -853,11 +853,30 @@ def is_omitted_from_bulletin(subject: str, starts_at_utc: datetime, location: st
 
     return False
 
+def bulletin_date(day: date, with_year: bool = False) -> str:
+    """"November 3" or "November 3, 2026": the day number is never zero-padded."""
+    text = f"{day:%B} {day.day}"
+    return f"{text}, {day.year}" if with_year else text
+
+
+def bulletin_day_header(day: date) -> str:
+    """
+    Heading for one day of the weekly bulletin.
+
+    Sunday is the bulletin's own date, so it reads "Sunday at St. Edward" with
+    no date (the range line above already starts with it). Every other day
+    reads like "Monday, November 3".
+    """
+    if day.weekday() == 6:
+        return "Sunday at St. Edward"
+    return f"{day:%A}, {bulletin_date(day)}"
+
 # Export main utilities
 __all__ = [
     'DateTimeUtils', 'ValidationUtils', 'MetricsUtils',
     'ResilientAPIClient', 'RetryUtils', 'StructuredLogger',
     'CacheManager', 'require_auth', 'handle_api_errors', 'rate_limit',
     'cache_manager', 'structured_logger', 'get_version_info',
-    'normalize_location', 'is_omitted_from_bulletin'
+    'normalize_location', 'is_omitted_from_bulletin',
+    'bulletin_date', 'bulletin_day_header'
 ] 
